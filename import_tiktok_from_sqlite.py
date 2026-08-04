@@ -3,7 +3,6 @@ from datetime import datetime
 from typing import Any
 from neo4j import GraphDatabase
 
-
 SQLITE_DB_PATH = "/media/pc1799/New Volume/huan/Tiktok-Api/data/tiktok.db"
 
 NEO4J_URI = "bolt://localhost:7687"
@@ -32,8 +31,7 @@ def get_posts() -> list[dict[str, Any]]:
     connection.row_factory = sqlite3.Row
 
     try:
-        cursor = connection.execute(
-            """
+        cursor = connection.execute("""
             SELECT
                 p.tiktok_video_id AS post_platform_id,
                 p.tiktok_url AS post_url,
@@ -56,8 +54,7 @@ def get_posts() -> list[dict[str, Any]]:
               AND COALESCE(p.is_deleted, 0) = 0
             ORDER BY p.posted_at DESC
             LIMIT 500
-            """
-        )
+            """)
 
         posts = [dict(row) for row in cursor.fetchall()]
         for post in posts:
@@ -86,7 +83,9 @@ def import_post(tx, row: dict[str, Any]) -> None:
             platform_id: $post_platform_id
         })
         ON CREATE SET
-            p.entity_processed = false
+            p.entity_processed = false,
+            p.knowledge_processed = false,
+            p.knowledge_retry_count = 0
         SET
             p.content = $content,
             p.url = $post_url,

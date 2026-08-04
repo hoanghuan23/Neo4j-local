@@ -74,34 +74,12 @@ def import_post(tx, row):
             p.entity_processed = false,
             p.knowledge_processed = false,
             p.knowledge_retry_count = 0
-        WITH s, p,
-             p.content IS NULL OR p.content <> $content AS content_changed
         SET
             p.content = $content,
             p.url = $post_url,
             p.posted_at = $posted_at,
             p.has_images = $has_images,
-            p.has_videos = $has_videos,
-            p.entity_processed = CASE
-                WHEN content_changed THEN false
-                ELSE coalesce(p.entity_processed, false)
-            END,
-            p.knowledge_processed = CASE
-                WHEN content_changed THEN false
-                ELSE coalesce(p.knowledge_processed, false)
-            END,
-            p.knowledge_processed_at = CASE
-                WHEN content_changed THEN null
-                ELSE p.knowledge_processed_at
-            END,
-            p.knowledge_error = CASE
-                WHEN content_changed THEN null
-                ELSE p.knowledge_error
-            END,
-            p.knowledge_retry_count = CASE
-                WHEN content_changed THEN 0
-                ELSE coalesce(p.knowledge_retry_count, 0)
-            END
+            p.has_videos = $has_videos
 
         MERGE (s)-[:PUBLISHED]->(p)
     """,
