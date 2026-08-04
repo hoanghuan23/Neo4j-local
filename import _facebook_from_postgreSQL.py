@@ -1,7 +1,6 @@
 import psycopg2
 from neo4j import GraphDatabase
 
-
 POSTGRES_CONFIG = {
     "host": "localhost",
     "port": 5432,
@@ -40,10 +39,7 @@ def get_posts():
 
             columns = [column[0] for column in cursor.description]
 
-            return [
-                dict(zip(columns, row))
-                for row in cursor.fetchall()
-            ]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
     finally:
         connection.close()
 
@@ -59,7 +55,8 @@ def get_existing_post_ids(session):
 
 
 def import_post(tx, row):
-    tx.run("""
+    tx.run(
+        """
         MERGE (s:Source {
             platform: 'facebook',
             platform_id: $source_platform_id
@@ -73,12 +70,38 @@ def import_post(tx, row):
             platform: 'facebook',
             platform_id: $post_platform_id
         })
+        ON CREATE SET
+            p.entity_processed = false,
+            p.knowledge_processed = false,
+            p.knowledge_retry_count = 0
+        WITH s, p,
+             p.content IS NULL OR p.content <> $content AS content_changed
         SET
             p.content = $content,
             p.url = $post_url,
             p.posted_at = $posted_at,
             p.has_images = $has_images,
-            p.has_videos = $has_videos
+            p.has_videos = $has_videos,
+            p.entity_processed = CASE
+                WHEN content_changed THEN false
+                ELSE coalesce(p.entity_processed, false)
+            END,
+            p.knowledge_processed = CASE
+                WHEN content_changed THEN false
+                ELSE coalesce(p.knowledge_processed, false)
+            END,
+            p.knowledge_processed_at = CASE
+                WHEN content_changed THEN null
+                ELSE p.knowledge_processed_at
+            END,
+            p.knowledge_error = CASE
+                WHEN content_changed THEN null
+                ELSE p.knowledge_error
+            END,
+            p.knowledge_retry_count = CASE
+                WHEN content_changed THEN 0
+                ELSE coalesce(p.knowledge_retry_count, 0)
+            END
 
         MERGE (s)-[:PUBLISHED]->(p)
     """,
@@ -98,10 +121,7 @@ def import_post(tx, row):
 def main():
     posts = get_posts()
 
-    driver = GraphDatabase.driver(
-        NEO4J_URI,
-        auth=(NEO4J_USER, NEO4J_PASSWORD)
-    )
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
     try:
         with driver.session(database="neo4j") as session:
