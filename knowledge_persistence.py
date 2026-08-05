@@ -205,7 +205,8 @@ def upsert_events(
                     participant_key: $participant_key
                 })
                 SET anonymous.post_key = $post_key,
-                    anonymous.participant_text = $participant_text
+                    anonymous.participant_text = $participant_text,
+                    anonymous.name = $participant_text
                 MERGE (p)-[:HAS_ANONYMOUS_PARTICIPANT]->(anonymous)
                 MERGE (event)-[relation:HAS_PARTICIPANT {
                     role: $role
