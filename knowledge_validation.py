@@ -8,6 +8,7 @@ from knowledge_settings import (
     EVENT_ROLES,
     EVENT_STATUSES,
     EVENT_TYPES,
+    MAX_EVENTS_PER_POST,
     RELATION_EVIDENCE_MARKERS,
 )
 from knowledge_extraction import (
@@ -162,6 +163,8 @@ def validate_events(
     generic_participants = entity_validation["generic_participants"]
 
     for raw in raw_events:
+        if len(result["events"]) >= MAX_EVENTS_PER_POST:
+            break
         if not isinstance(raw, dict):
             continue
         local_id = _clean_text(raw.get("local_id"))

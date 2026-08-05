@@ -16,6 +16,7 @@ from knowledge_settings import (
     KNOWLEDGE_SCHEMA,
     LOCATION_NAME_PATTERN,
     LOGGER,
+    MAX_EVENTS_PER_POST,
     NULL_STRINGS,
     OLLAMA_LOG_PREVIEW_CHARS,
     OLLAMA_MAX_ATTEMPTS,
@@ -252,8 +253,16 @@ BƯỚC 1 - ENTITY CÓ TÊN
   canonical_name và type. Chỉ HIGH khi phân giải chắc chắn.
 
 BƯỚC 2 - EVENT CÓ HÀNH ĐỘNG
+- Event là một sự kiện thực tế đã xảy ra, đang xảy ra, hoặc được dự kiến sẽ xảy
+  ra trong thế giới thực, có hành động hoặc thay đổi trạng thái rõ ràng.
+- KHÔNG tạo Event cho cảm xúc, mong muốn, sở thích; câu hỏi, yêu cầu hoặc gợi ý;
+  việc đề cập chung đến một người/vật; hay hành động hội thoại như hỏi, mong chờ,
+  nhắc đến. Với nội dung chỉ thuộc các nhóm này, trả events là [].
 - Không mặc định mỗi câu là Event. Không tạo Event chỉ cho thời gian, địa điểm,
-  sự hiện diện hoặc bối cảnh. Mỗi Event phải có hành động rõ ràng.
+  sự hiện diện hoặc bối cảnh.
+- Tối đa {MAX_EVENTS_PER_POST} Event cho toàn bộ văn bản. Không tạo nhiều Event
+  cho cùng một câu. Nếu nhiều mô tả cùng nói về một hành động thì gộp thành một
+  Event.
 - evidence_text là đoạn nguyên văn ngắn nhất trong văn bản chứng minh hành động.
 - MEETING chỉ là gặp/họp. Nói, cảnh báo, phủ nhận, khuyến nghị là STATEMENT.
 - Đẩy, đánh, tấn công là ASSAULT. Chết đuối là một DROWNING, không thêm DEATH
@@ -281,6 +290,8 @@ BƯỚC 4 - QUAN HỆ EVENT
 Ví dụ sửa lỗi: "A Maryland man pushed another man ... The man drowned" tạo
 ASSAULT và DROWNING với anonymous participants; khuyến nghị của House panel và
 bình luận về Cubs là STATEMENT; một vụ seaplane crash lặp lại chỉ là một ACCIDENT.
+"Bộ phim mà mình cực mong chờ phần 2 mà chưa thấy, bác nào biết phim tương tự k ạ"
+không có sự kiện thực tế, vì vậy trả events là [].
 
 Chỉ trả JSON đúng schema, không giải thích.
 

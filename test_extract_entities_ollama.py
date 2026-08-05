@@ -74,6 +74,7 @@ class ExtractionTests(unittest.TestCase):
         self.assertNotIn("start_years", event_properties)
         self.assertEqual(event_properties["confidence"]["minimum"], 0)
         self.assertEqual(event_properties["confidence"]["maximum"], 1)
+        self.assertEqual(properties["events"]["maxItems"], 5)
 
     def test_knowledge_schema_is_strict_and_uses_bounded_enums(self):
         schema = subject.KNOWLEDGE_SCHEMA
@@ -118,6 +119,24 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertEqual(subject.extract_knowledge("A meeting happened."), expected)
         self.assertIs(call_ollama.call_args.args[1], subject.ENTITY_SCHEMA)
+
+    @patch.object(subject, "call_ollama")
+    def test_prompt_rejects_non_events_and_limits_event_count(self, call_ollama):
+        call_ollama.return_value = {
+            "entities": [],
+            "events": [],
+            "event_relations": [],
+        }
+
+        subject.extract_knowledge(
+            "Bộ phim mà mình cực mong chờ phần 2 mà chưa thấy, "
+            "bác nào biết phim tương tự k ạ"
+        )
+
+        prompt = call_ollama.call_args.args[0]
+        self.assertIn("KHÔNG tạo Event cho cảm xúc, mong muốn, sở thích", prompt)
+        self.assertIn("Tối đa 5 Event", prompt)
+        self.assertIn("trả events là []", prompt)
 
     @patch.object(subject, "call_ollama")
     def test_extract_entities_uses_canonical_schema(self, call_ollama):
@@ -397,6 +416,25 @@ class KnowledgeValidationTests(unittest.TestCase):
         knowledge = subject.validate_knowledge(content, raw)
 
         self.assertEqual([event["local_id"] for event in knowledge["events"]], ["ev1"])
+
+    def test_validation_keeps_at_most_five_events(self):
+        sentences = [f"Alice launched product {index}" for index in range(1, 7)]
+        content = ". ".join(sentences) + "."
+        raw = {
+            "entities": [],
+            "events": [
+                self.event(f"ev{index}", "OTHER", sentence)
+                for index, sentence in enumerate(sentences, start=1)
+            ],
+            "event_relations": [],
+        }
+
+        knowledge = subject.validate_knowledge(content, raw)
+
+        self.assertEqual(
+            [event["local_id"] for event in knowledge["events"]],
+            ["ev1", "ev2", "ev3", "ev4", "ev5"],
+        )
 
     def test_wrong_taxonomy_and_evidence_not_in_post_are_rejected(self):
         content = "Buster Olney spoke about the Chicago Cubs."

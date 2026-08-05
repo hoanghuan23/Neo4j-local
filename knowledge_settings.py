@@ -16,7 +16,7 @@ OLLAMA_MAX_ATTEMPTS = 2
 OLLAMA_LOG_PREVIEW_CHARS = 2_000
 POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
-KNOWLEDGE_PROMPT_VERSION = "knowledge-v2"
+KNOWLEDGE_PROMPT_VERSION = "knowledge-v3"
 KNOWLEDGE_PIPELINE_ENABLED = os.getenv(
     "KNOWLEDGE_PIPELINE_ENABLED", "true"
 ).strip().casefold() not in {"0", "false", "no", "off"}
@@ -66,6 +66,7 @@ EVENT_RELATION_TYPES = {
     "RELATED_TO",
 }
 CONFIDENCE_LEVELS = {"HIGH", "MEDIUM", "LOW"}
+MAX_EVENTS_PER_POST = 5
 
 
 def _strict_object(properties: dict, required: list[str]) -> dict:
@@ -158,7 +159,11 @@ EVENT_RELATION_ITEM_SCHEMA = _strict_object(
 KNOWLEDGE_SCHEMA = _strict_object(
     {
         "entities": {"type": "array", "items": ENTITY_ITEM_SCHEMA},
-        "events": {"type": "array", "items": EVENT_ITEM_SCHEMA},
+        "events": {
+            "type": "array",
+            "items": EVENT_ITEM_SCHEMA,
+            "maxItems": MAX_EVENTS_PER_POST,
+        },
         "event_relations": {
             "type": "array",
             "items": EVENT_RELATION_ITEM_SCHEMA,
