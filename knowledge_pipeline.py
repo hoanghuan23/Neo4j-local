@@ -1,9 +1,11 @@
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from knowledge_settings import (
     KNOWLEDGE_MAX_RETRIES,
     KNOWLEDGE_PIPELINE_ENABLED,
     KNOWLEDGE_PROMPT_VERSION,
+    KNOWLEDGE_WORKERS,
     LOGGER,
     OLLAMA_MODEL,
     POST_LIMIT,
@@ -78,44 +80,76 @@ def process_new_posts(session, extract_knowledge_fn=extract_knowledge) -> None:
         create_entity_schema(session)
 
     posts = _load_posts(session)
-    print(f"Tìm thấy {len(posts)} post để xử lý.")
+    print(
+        f"Tìm thấy {len(posts)} post để xử lý "
+        f"với {KNOWLEDGE_WORKERS} worker."
+    )
 
-    for index, post in enumerate(posts, start=1):
-        platform = post["platform"]
-        post_id = post["post_id"]
-        content = post["content"]
-        print(f"\n[{index}/{len(posts)}] Đang xử lý {platform} post {post_id}")
-        try:
-            raw_knowledge = extract_knowledge_fn(content)
-            if not KNOWLEDGE_PIPELINE_ENABLED:
-                entities = raw_knowledge["entities"]
-                print(json.dumps(entities, ensure_ascii=False, indent=2))
-                saved_count = save_entities(session, platform, post_id, entities)
-                print(f"Đã lưu {saved_count}/{len(entities)} entity hợp lệ.")
-                continue
+    with ThreadPoolExecutor(max_workers=KNOWLEDGE_WORKERS) as executor:
+        future_to_post = {
+            executor.submit(extract_knowledge_fn, post["content"]): (index, post)
+            for index, post in enumerate(posts, start=1)
+        }
+        for completed, future in enumerate(as_completed(future_to_post), start=1):
+            original_index, post = future_to_post[future]
+            _save_extracted_post(
+                session,
+                post,
+                future,
+                original_index=original_index,
+                completed=completed,
+                total=len(posts),
+            )
 
-            knowledge = validate_knowledge(content, raw_knowledge, platform, post_id)
-            print(json.dumps(knowledge, ensure_ascii=False, indent=2))
-            counts = session.execute_write(
-                save_knowledge_tx, platform, post_id, knowledge
-            )
-            print(
-                "Đã lưu "
-                f"{counts['entities']} Entity, {counts['events']} Event, "
-                f"{counts['event_relations']} quan hệ Event."
-            )
-        except Exception as error:
-            LOGGER.exception("Lỗi xử lý post %s", post_id)
-            if KNOWLEDGE_PIPELINE_ENABLED:
-                try:
-                    session.execute_write(
-                        mark_knowledge_failure,
-                        platform,
-                        post_id,
-                        str(error),
-                    )
-                except Exception:
-                    LOGGER.exception(
-                        "Không thể cập nhật trạng thái lỗi cho %s", post_id
-                    )
-            print(f"Lỗi post {post_id}: {error}")
+
+def _save_extracted_post(
+    session,
+    post,
+    future,
+    *,
+    original_index: int,
+    completed: int,
+    total: int,
+) -> None:
+    """Validate and persist one completed extraction on the main thread."""
+    platform = post["platform"]
+    post_id = post["post_id"]
+    content = post["content"]
+    print(
+        f"\n[{completed}/{total}] Hoàn tất trích xuất {platform} post {post_id} "
+        f"(thứ tự ban đầu: {original_index})"
+    )
+    try:
+        raw_knowledge = future.result()
+        if not KNOWLEDGE_PIPELINE_ENABLED:
+            entities = raw_knowledge["entities"]
+            print(json.dumps(entities, ensure_ascii=False, indent=2))
+            saved_count = save_entities(session, platform, post_id, entities)
+            print(f"Đã lưu {saved_count}/{len(entities)} entity hợp lệ.")
+            return
+
+        knowledge = validate_knowledge(content, raw_knowledge, platform, post_id)
+        print(json.dumps(knowledge, ensure_ascii=False, indent=2))
+        counts = session.execute_write(
+            save_knowledge_tx, platform, post_id, knowledge
+        )
+        print(
+            "Đã lưu "
+            f"{counts['entities']} Entity, {counts['events']} Event, "
+            f"{counts['event_relations']} quan hệ Event."
+        )
+    except Exception as error:
+        LOGGER.exception("Lỗi xử lý post %s", post_id)
+        if KNOWLEDGE_PIPELINE_ENABLED:
+            try:
+                session.execute_write(
+                    mark_knowledge_failure,
+                    platform,
+                    post_id,
+                    str(error),
+                )
+            except Exception:
+                LOGGER.exception(
+                    "Không thể cập nhật trạng thái lỗi cho %s", post_id
+                )
+        print(f"Lỗi post {post_id}: {error}")
