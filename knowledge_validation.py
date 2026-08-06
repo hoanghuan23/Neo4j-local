@@ -99,28 +99,45 @@ def _contains_marker(text: str, marker: str) -> bool:
     )
 
 
-def has_actionable_event(event_type: str, evidence_text: str) -> bool:
+def resolve_event_type(event_type: str, evidence_text: str) -> str | None:
     evidence = normalize_name(evidence_text)
     if not evidence:
-        return False
+        return None
     if event_type == "OTHER" and re.fullmatch(
         r"(?:the )?(?:incident|event|scene) (?:occurred|happened|took place) "
         r"(?:on|in|at|near|during) .+",
         evidence.rstrip("."),
     ):
-        return False
-    triggers = EVENT_ACTION_TRIGGERS.get(event_type, set())
-    if any(_contains_marker(evidence, trigger) for trigger in triggers):
-        return True
+        return None
+
+    matching_types = {
+        candidate_type
+        for candidate_type, triggers in EVENT_ACTION_TRIGGERS.items()
+        if any(_contains_marker(evidence, trigger) for trigger in triggers)
+    }
+    if event_type in matching_types:
+        return event_type
+    if len(matching_types) == 1:
+        return next(iter(matching_types))
+    if matching_types:
+        # Evidence with multiple actions is ambiguous. Prefer retaining the event
+        # and the model-provided taxonomy over guessing a replacement type.
+        return event_type
+
     # A conservative fallback for explicit English verb forms in OTHER events.
     if event_type == "OTHER":
         words = re.findall(r"\b[a-z]+\b", make_search_name(evidence))
-        return any(
+        if any(
             len(word) > 4 and word.endswith(("ed", "ing"))
             for word in words
             if word not in {"during", "following", "including", "pending"}
-        )
-    return False
+        ):
+            return event_type
+    return None
+
+
+def has_actionable_event(event_type: str, evidence_text: str) -> bool:
+    return resolve_event_type(event_type, evidence_text) is not None
 
 
 def _participant_signature(participant: dict) -> str:
@@ -182,8 +199,10 @@ def validate_events(
             or not evidence_text
             or confidence is None
             or not _evidence_in_content(evidence_text, content)
-            or not has_actionable_event(event_type, evidence_text)
         ):
+            continue
+        event_type = resolve_event_type(event_type, evidence_text)
+        if event_type is None:
             continue
 
         status = _enum_value(raw.get("status"), EVENT_STATUSES) or "UNKNOWN"

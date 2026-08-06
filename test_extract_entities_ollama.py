@@ -136,6 +136,7 @@ class ExtractionTests(unittest.TestCase):
         prompt = call_ollama.call_args.args[0]
         self.assertIn("KHÔNG tạo Event cho cảm xúc, mong muốn, sở thích", prompt)
         self.assertIn("Tối đa 5 Event", prompt)
+        self.assertIn("hất/tạt/ném vào người là ASSAULT", prompt)
         self.assertIn("trả events là []", prompt)
 
     @patch.object(subject, "call_ollama")
@@ -394,6 +395,54 @@ class KnowledgeValidationTests(unittest.TestCase):
 
         self.assertEqual(len(knowledge["events"]), 1)
         self.assertEqual(knowledge["events"][0]["status"], "UNKNOWN")
+
+    def test_validation_corrects_event_type_from_single_matching_trigger(self):
+        content = "người bán bất ngờ hất cả xô nước về phía người đàn ông"
+        raw = {
+            "entities": [],
+            "events": [self.event("ev1", "STATEMENT", content)],
+            "event_relations": [],
+        }
+
+        knowledge = subject.validate_knowledge(content, raw, "facebook", "post-1")
+        correctly_typed = {
+            **raw,
+            "events": [self.event("ev1", "ASSAULT", content)],
+        }
+        expected = subject.validate_knowledge(
+            content, correctly_typed, "facebook", "post-1"
+        )
+
+        self.assertEqual(len(knowledge["events"]), 1)
+        self.assertEqual(knowledge["events"][0]["type"], "ASSAULT")
+        self.assertEqual(
+            knowledge["events"][0]["event_key"],
+            expected["events"][0]["event_key"],
+        )
+
+    def test_validation_keeps_matching_model_type_when_evidence_has_many_actions(self):
+        content = "Alice warned Bob and attacked him."
+        raw = {
+            "entities": [],
+            "events": [self.event("ev1", "ASSAULT", content.rstrip("."))],
+            "event_relations": [],
+        }
+
+        knowledge = subject.validate_knowledge(content, raw)
+
+        self.assertEqual(knowledge["events"][0]["type"], "ASSAULT")
+
+    def test_validation_keeps_model_type_when_many_other_types_match(self):
+        content = "Alice warned Bob and attacked him."
+        raw = {
+            "entities": [],
+            "events": [self.event("ev1", "MEETING", content.rstrip("."))],
+            "event_relations": [],
+        }
+
+        knowledge = subject.validate_knowledge(content, raw)
+
+        self.assertEqual(knowledge["events"][0]["type"], "MEETING")
 
     def test_duplicate_event_and_context_only_event_are_removed(self):
         content = (

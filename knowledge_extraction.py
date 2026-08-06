@@ -265,8 +265,9 @@ BƯỚC 2 - EVENT CÓ HÀNH ĐỘNG
   Event.
 - evidence_text là đoạn nguyên văn ngắn nhất trong văn bản chứng minh hành động.
 - MEETING chỉ là gặp/họp. Nói, cảnh báo, phủ nhận, khuyến nghị là STATEMENT.
-- Đẩy, đánh, tấn công là ASSAULT. Chết đuối là một DROWNING, không thêm DEATH
-  trùng. Chỉ dùng RESIGNATION hoặc TRANSFER khi nói trực tiếp từ chức/chuyển giao.
+- Đẩy, đánh, tấn công, hất/tạt/ném vào người là ASSAULT. Chết đuối là một
+  DROWNING, không thêm DEATH trùng. Chỉ dùng RESIGNATION hoặc TRANSFER khi nói
+  trực tiếp từ chức/chuyển giao.
 - Thi đấu/giải đấu là SPORTS_EVENT. Loại Event trùng trong cùng Post.
 - Taxonomy duy nhất: STATEMENT, MEETING, APPOINTMENT, APPROVAL, ELECTION,
   RESIGNATION, ARREST, ASSAULT, ACCIDENT, DEATH, DROWNING, INVESTIGATION,
@@ -278,6 +279,10 @@ BƯỚC 2 - EVENT CÓ HÀNH ĐỘNG
 BƯỚC 3 - PARTICIPANT
 - Mỗi participant có đúng một trong entity_id hoặc participant_text; trường còn
   lại là null. Người/nhóm/cơ quan không tên dùng participant_text, không tạo Entity.
+- Phải đưa đẩy đủ các chủ thể chính của hành động vào participants, kể cả người,
+  nhóm hoặc cơ quan không có tên riêng như "cụ bà", "người bán", "vị khách", "nghi phạm", "lực lượng chức năng"...
+- Role phải phản ánh vai trò trong hành động, không dựa chỉ vào loại đối tượng.
+  Ví dụ, cơ quan trực tiếp thực hiện hành động thì dùng ACTOR, không mặc định là ORGANIZATION.
 - Tên của chính giải đấu/sự kiện không phải participant và không được gán role LOCATION.
 - Role duy nhất: ACTOR, TARGET, VICTIM, SPEAKER, SUBJECT, LOCATION,
   ORGANIZATION, PARTICIPANT. Chỉ dùng PARTICIPANT khi không xác định cụ thể hơn.
