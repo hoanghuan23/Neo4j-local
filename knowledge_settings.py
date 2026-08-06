@@ -200,10 +200,15 @@ GENERIC_ENTITY_EXACT = {
     "người mua",
     "người bán",
     "khách hàng",
-    "nạn nhân"
+    "nạn nhân",
     "nghi phạm",
     "tài xế",
-    "tài xế taxi"
+    "tài xế taxi",
+    "xe máy",
+    "xe oto",
+    "camera",
+    "camera an ninh",
+    "cảnh sát",
 }
 GENERIC_PERSON_OR_GROUP_SUFFIXES = {
     "man",
@@ -369,6 +374,9 @@ EVENT_ACTION_TRIGGERS = {
         "tai nạn",
         "va chạm",
         "rơi",
+        "lao vào",
+        "lật",
+        "đâm vào",
     },
     "DEATH": {
         "died",
@@ -454,7 +462,9 @@ EVENT_ACTION_TRIGGERS = {
         "phá hủy",
         "huy động",
         "tìm kiếm",
-        "tham gia"
+        "tham gia",
+        "xét xử",
+        "mở phiên tòa"
     },
 }
 

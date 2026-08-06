@@ -246,6 +246,11 @@ BƯỚC 1 - ENTITY CÓ TÊN
 - Quốc gia, bang/tỉnh, thành phố, quận và địa danh là LOCATION.
 - Công ty, cơ quan, ủy ban có tên riêng, câu lạc bộ và đội thể thao là ORGANIZATION.
 - Tên giải đấu hoặc sự kiện không phải Entity.
+- Tên người đi kèm kính ngữ/chức danh vẫn bắt buộc là PERSON, kể cả chỉ xuất
+  hiện một lần. Ví dụ "ông Đoàn Bảo Châu" phải tạo Entity có name và
+  canonical_name là "Đoàn Bảo Châu"; không đưa "ông" vào tên chuẩn.
+- Một người có tên xuất hiện nhiều lần chỉ tạo một Entity. Mọi lần người đó tham
+  gia Event đều phải tham chiếu cùng local_id của Entity này.
 - Không đưa mô tả chung vào entities: "a man", "Maryland man", "the victim",
   "a House panel", "Italian community". Chúng chỉ có thể là participant_text.
 - Không dịch tên, không tạo tên không có trong văn bản, không lấy hashtag/handle.
@@ -279,6 +284,9 @@ BƯỚC 2 - EVENT CÓ HÀNH ĐỘNG
 BƯỚC 3 - PARTICIPANT
 - Mỗi participant có đúng một trong entity_id hoặc participant_text; trường còn
   lại là null. Người/nhóm/cơ quan không tên dùng participant_text, không tạo Entity.
+- Nếu participant là người có tên riêng, bắt buộc dùng entity_id trỏ tới Entity
+  PERSON và đặt participant_text là null. Không bao giờ đặt họ tên đầy đủ như
+  "ông Đoàn Bảo Châu" vào participant_text.
 - Phải đưa đẩy đủ các chủ thể chính của hành động vào participants, kể cả người,
   nhóm hoặc cơ quan không có tên riêng như "cụ bà", "người bán", "vị khách", "nghi phạm", "lực lượng chức năng"...
 - Role phải phản ánh vai trò trong hành động, không dựa chỉ vào loại đối tượng.
