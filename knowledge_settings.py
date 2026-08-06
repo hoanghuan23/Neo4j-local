@@ -14,7 +14,7 @@ OLLAMA_MODEL = os.getenv("KNOWLEDGE_MODEL", "qwen3.5:4b")
 OLLAMA_TIMEOUT_SECONDS = 600
 OLLAMA_MAX_ATTEMPTS = 2
 OLLAMA_LOG_PREVIEW_CHARS = 2_000
-POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "50"))
+POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "3")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
 KNOWLEDGE_PROMPT_VERSION = "knowledge-v3"
@@ -194,6 +194,16 @@ GENERIC_ENTITY_EXACT = {
     "a house panel",
     "house panel",
     "italian community",
+    "người đàn ông",
+    "người phụ nữ",
+    "người dân",
+    "người mua",
+    "người bán",
+    "khách hàng",
+    "nạn nhân"
+    "nghi phạm",
+    "tài xế",
+    "tài xế taxi"
 }
 GENERIC_PERSON_OR_GROUP_SUFFIXES = {
     "man",
@@ -346,6 +356,9 @@ EVENT_ACTION_TRIGGERS = {
         "đánh",
         "đâm",
         "bắn",
+        "hất",
+        "tạt",
+        "ném"
     },
     "ACCIDENT": {
         "crashed",
@@ -439,6 +452,9 @@ EVENT_ACTION_TRIGGERS = {
         "phát hiện",
         "giải cứu",
         "phá hủy",
+        "huy động",
+        "tìm kiếm",
+        "tham gia"
     },
 }
 
