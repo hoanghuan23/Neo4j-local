@@ -138,6 +138,9 @@ class ExtractionTests(unittest.TestCase):
         self.assertIn("Tối đa 5 Event", prompt)
         self.assertIn("hất/tạt/ném vào người là ASSAULT", prompt)
         self.assertIn("trả events là []", prompt)
+        self.assertIn('"ông Đoàn Bảo Châu" phải tạo Entity', prompt)
+        self.assertIn("bắt buộc dùng entity_id trỏ tới Entity", prompt)
+        self.assertIn("Không bao giờ đặt họ tên đầy đủ", prompt)
 
     @patch.object(subject, "call_ollama")
     def test_extract_entities_uses_canonical_schema(self, call_ollama):
@@ -318,6 +321,127 @@ class KnowledgeValidationTests(unittest.TestCase):
             [{"normalized_name": "maryland man", "type": "PERSON"}],
         )
 
+    def test_conflicting_participant_text_drops_entity_reference(self):
+        content = (
+            "người bán bất ngờ hất cả xô nước về phía cụ bà 89 tuổi "
+            "tại Đồng Nai"
+        )
+        raw = {
+            "entities": [self.entity("e1", "Đồng Nai", "LOCATION", "HIGH")],
+            "events": [
+                self.event(
+                    "ev1",
+                    "ASSAULT",
+                    content,
+                    [
+                        self.participant(
+                            "e1", participant_text="cụ bà 89 tuổi", role="TARGET"
+                        )
+                    ],
+                )
+            ],
+            "event_relations": [],
+        }
+
+        participant = subject.validate_knowledge(content, raw)["events"][0][
+            "participants"
+        ][0]
+
+        self.assertIsNone(participant["entity_id"])
+        self.assertEqual(participant["participant_text"], "cụ bà 89 tuổi")
+        self.assertEqual(participant["role"], "TARGET")
+
+    def test_matching_participant_text_keeps_entity_reference(self):
+        content = "A storm hit Đồng Nai."
+        raw = {
+            "entities": [self.entity("e1", "Đồng Nai", "LOCATION", "HIGH")],
+            "events": [
+                self.event(
+                    "ev1",
+                    "ASSAULT",
+                    content.rstrip("."),
+                    [
+                        self.participant(
+                            "e1", participant_text="  ĐỒNG   NAI ", role="TARGET"
+                        )
+                    ],
+                )
+            ],
+            "event_relations": [],
+        }
+
+        participant = subject.validate_knowledge(content, raw)["events"][0][
+            "participants"
+        ][0]
+
+        self.assertEqual(participant["entity_id"], "e1")
+        self.assertIsNone(participant["participant_text"])
+
+    def test_canonical_participant_text_keeps_entity_reference(self):
+        content = "Tổng thống Trump, tức Donald Trump, warned Iran."
+        raw = {
+            "entities": [
+                {
+                    **self.entity("e1", "Tổng thống Trump", confidence="HIGH"),
+                    "canonical_name": "Donald Trump",
+                }
+            ],
+            "events": [
+                self.event(
+                    "ev1",
+                    "STATEMENT",
+                    content.rstrip("."),
+                    [
+                        self.participant(
+                            "e1", participant_text="Donald Trump", role="SPEAKER"
+                        )
+                    ],
+                )
+            ],
+            "event_relations": [],
+        }
+
+        participant = subject.validate_knowledge(content, raw)["events"][0][
+            "participants"
+        ][0]
+
+        self.assertEqual(participant["entity_id"], "e1")
+        self.assertIsNone(participant["participant_text"])
+
+    def test_deduplicated_entity_id_retains_its_raw_alias_for_participants(self):
+        content = "President Trump warned Iran."
+        raw = {
+            "entities": [
+                self.entity("e1", "Donald Trump", confidence="HIGH"),
+                {
+                    **self.entity("e2", "President Trump", confidence="HIGH"),
+                    "canonical_name": "Donald Trump",
+                },
+            ],
+            "events": [
+                self.event(
+                    "ev1",
+                    "STATEMENT",
+                    content.rstrip("."),
+                    [
+                        self.participant(
+                            "e2", participant_text="President Trump", role="SPEAKER"
+                        )
+                    ],
+                )
+            ],
+            "event_relations": [],
+        }
+
+        knowledge = subject.validate_knowledge(content, raw)
+        participant = knowledge["events"][0]["participants"][0]
+
+        self.assertEqual(
+            [entity["local_id"] for entity in knowledge["entities"]], ["e1"]
+        )
+        self.assertEqual(participant["entity_id"], "e1")
+        self.assertIsNone(participant["participant_text"])
+
     def test_all_known_generic_examples_and_event_names_are_rejected(self):
         entities = [
             self.entity("e1", "a man"),
@@ -331,6 +455,8 @@ class KnowledgeValidationTests(unittest.TestCase):
             self.entity("e7", "Chicago Cubs", "ORGANIZATION", "HIGH"),
             self.entity("e8", "Ukraine", "ORGANIZATION", "HIGH"),
             self.entity("e9", "Manchester City", "ORGANIZATION", "HIGH"),
+            self.entity("e10", "Camera", "ORGANIZATION", "HIGH"),
+            self.entity("e11", "Camera an ninh", "ORGANIZATION", "HIGH"),
         ]
 
         validated = subject.validate_entities(entities)
@@ -444,7 +570,20 @@ class KnowledgeValidationTests(unittest.TestCase):
 
         self.assertEqual(knowledge["events"][0]["type"], "MEETING")
 
-    def test_duplicate_event_and_context_only_event_are_removed(self):
+    def test_validation_keeps_model_type_when_evidence_matches_no_type(self):
+        content = "The incident occurred on Saturday in Bimini."
+        raw = {
+            "entities": [],
+            "events": [self.event("ev1", "OTHER", content.rstrip("."))],
+            "event_relations": [],
+        }
+
+        knowledge = subject.validate_knowledge(content, raw)
+
+        self.assertEqual(len(knowledge["events"]), 1)
+        self.assertEqual(knowledge["events"][0]["type"], "OTHER")
+
+    def test_duplicate_event_is_removed_and_unverified_event_is_kept(self):
         content = (
             "A seaplane crashed in Bimini on Saturday. "
             "The incident occurred on Saturday in Bimini."
@@ -464,7 +603,9 @@ class KnowledgeValidationTests(unittest.TestCase):
 
         knowledge = subject.validate_knowledge(content, raw)
 
-        self.assertEqual([event["local_id"] for event in knowledge["events"]], ["ev1"])
+        self.assertEqual(
+            [event["local_id"] for event in knowledge["events"]], ["ev1", "ev3"]
+        )
 
     def test_validation_keeps_at_most_five_events(self):
         sentences = [f"Alice launched product {index}" for index in range(1, 7)]

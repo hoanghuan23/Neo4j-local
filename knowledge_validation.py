@@ -31,6 +31,7 @@ def validate_entities(raw_entities) -> dict:
         "entities": [],
         "entity_id_map": {},
         "entity_identities": {},
+        "entity_names": {},
         "generic_participants": {},
         "generic_entity_keys": [],
     }
@@ -39,6 +40,7 @@ def validate_entities(raw_entities) -> dict:
 
     seen_local_ids = set()
     seen_entity_keys = {}
+    seen_entity_names = {}
     seen_generic_keys = set()
 
     for raw in raw_entities:
@@ -66,9 +68,17 @@ def validate_entities(raw_entities) -> dict:
         prepared = prepare_entity(raw)
         if prepared is None:
             continue
+        raw_entity_names = {
+            normalized_name
+            for candidate in (name, _clean_text(raw.get("canonical_name")))
+            if (normalized_name := normalize_name(candidate))
+        }
         entity_key = (prepared["normalized_name"], prepared["entity_type"])
         if entity_key in seen_entity_keys:
             kept_local_id = seen_entity_keys[entity_key]
+            shared_entity_names = seen_entity_names[entity_key]
+            shared_entity_names.update(raw_entity_names)
+            result["entity_names"][local_id] = shared_entity_names
             result["entity_id_map"][local_id] = kept_local_id
             result["entity_identities"][local_id] = "|".join(entity_key)
             continue
@@ -83,7 +93,9 @@ def validate_entities(raw_entities) -> dict:
         result["entities"].append(normalized)
         result["entity_id_map"][local_id] = local_id
         result["entity_identities"][local_id] = "|".join(entity_key)
+        result["entity_names"][local_id] = raw_entity_names
         seen_entity_keys[entity_key] = local_id
+        seen_entity_names[entity_key] = raw_entity_names
 
     return result
 
@@ -99,41 +111,20 @@ def _contains_marker(text: str, marker: str) -> bool:
     )
 
 
-def resolve_event_type(event_type: str, evidence_text: str) -> str | None:
+def resolve_event_type(event_type: str, evidence_text: str) -> str:
     evidence = normalize_name(evidence_text)
-    if not evidence:
-        return None
-    if event_type == "OTHER" and re.fullmatch(
-        r"(?:the )?(?:incident|event|scene) (?:occurred|happened|took place) "
-        r"(?:on|in|at|near|during) .+",
-        evidence.rstrip("."),
-    ):
-        return None
-
     matching_types = {
         candidate_type
         for candidate_type, triggers in EVENT_ACTION_TRIGGERS.items()
         if any(_contains_marker(evidence, trigger) for trigger in triggers)
     }
-    if event_type in matching_types:
-        return event_type
     if len(matching_types) == 1:
-        return next(iter(matching_types))
-    if matching_types:
-        # Evidence with multiple actions is ambiguous. Prefer retaining the event
-        # and the model-provided taxonomy over guessing a replacement type.
-        return event_type
-
-    # A conservative fallback for explicit English verb forms in OTHER events.
-    if event_type == "OTHER":
-        words = re.findall(r"\b[a-z]+\b", make_search_name(evidence))
-        if any(
-            len(word) > 4 and word.endswith(("ed", "ing"))
-            for word in words
-            if word not in {"during", "following", "including", "pending"}
-        ):
-            return event_type
-    return None
+        verified_type = next(iter(matching_types))
+        if verified_type != event_type:
+            return verified_type
+    # No match or multiple matches cannot verify a unique replacement. Keep the
+    # model-provided taxonomy instead of dropping the event or guessing its type.
+    return event_type
 
 
 def has_actionable_event(event_type: str, evidence_text: str) -> bool:
@@ -177,6 +168,7 @@ def validate_events(
     seen_local_ids = set()
     seen_signatures = {}
     valid_entity_ids = entity_validation["entity_id_map"]
+    valid_entity_names = entity_validation["entity_names"]
     generic_participants = entity_validation["generic_participants"]
 
     for raw in raw_events:
@@ -202,8 +194,6 @@ def validate_events(
         ):
             continue
         event_type = resolve_event_type(event_type, evidence_text)
-        if event_type is None:
-            continue
 
         status = _enum_value(raw.get("status"), EVENT_STATUSES) or "UNKNOWN"
         participants = []
@@ -226,8 +216,14 @@ def validate_events(
             participant_text = _clean_text(raw_participant.get("participant_text"))
             entity_id = None
             if raw_entity_id in valid_entity_ids:
-                entity_id = valid_entity_ids[raw_entity_id]
-                participant_text = ""
+                text_matches_entity = (
+                    not participant_text
+                    or normalize_name(participant_text)
+                    in valid_entity_names[raw_entity_id]
+                )
+                if text_matches_entity:
+                    entity_id = valid_entity_ids[raw_entity_id]
+                    participant_text = ""
             elif raw_entity_id in generic_participants:
                 participant_text = (
                     participant_text or generic_participants[raw_entity_id]
