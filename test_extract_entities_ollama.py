@@ -140,6 +140,15 @@ class ExtractionTests(unittest.TestCase):
         self.assertIn('"ông Đoàn Bảo Châu" phải tạo Entity', prompt)
         self.assertIn("bắt buộc dùng entity_id trỏ tới Entity", prompt)
         self.assertIn("Không bao giờ đặt họ tên đầy đủ", prompt)
+        self.assertIn("rà lần lượt từng câu trong toàn bộ văn bản", prompt)
+        self.assertIn("không tham gia Event", prompt)
+        self.assertIn("số tiền, mức phạt, số", prompt)
+        self.assertIn("Có thể lấy nhiều câu liền kề", prompt)
+        self.assertIn("35 triệu đồng và trừ 10 điểm", prompt)
+        self.assertIn("Cơ quan A là ACTOR", prompt)
+        self.assertIn("KIỂM TRA ID TRƯỚC KHI TRẢ JSON", prompt)
+        self.assertIn('participant_text = "lực lượng tìm kiếm"', prompt)
+        self.assertIn("tuyệt đối không tạo tham chiếu e2", prompt)
 
     @patch.object(subject, "call_ollama")
     def test_extract_entities_uses_canonical_schema(self, call_ollama):
@@ -757,6 +766,37 @@ class KnowledgeValidationTests(unittest.TestCase):
         )
         self.assertTrue(
             all(event["participants"][0]["entity_id"] is None for event in events)
+        )
+
+    def test_dangling_id_recovers_search_force_as_anonymous_actor(self):
+        content = (
+            "Ngày 5/8, lực lượng tìm kiếm, quy tập hài cốt liệt sĩ "
+            "tiếp tục phát hiện và quy tập 12 bộ hài cốt."
+        )
+        raw = {
+            "entities": [],
+            "events": [
+                self.event(
+                    "ev1",
+                    "OTHER",
+                    content,
+                    [self.participant("e2", role="ACTOR", confidence=1.0)],
+                )
+            ],
+            "event_relations": [],
+        }
+
+        event = subject.validate_knowledge(content, raw)["events"][0]
+
+        self.assertEqual(len(event["participants"]), 1)
+        self.assertEqual(
+            event["participants"][0],
+            {
+                "entity_id": None,
+                "participant_text": "lực lượng tìm kiếm",
+                "role": "ACTOR",
+                "confidence": 1.0,
+            },
         )
 
     def test_anonymous_key_is_shared_across_events_and_roles_in_one_post(self):

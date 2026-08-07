@@ -17,7 +17,7 @@ OLLAMA_LOG_PREVIEW_CHARS = 2_000
 POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "3")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
-KNOWLEDGE_PROMPT_VERSION = "knowledge-v5"
+KNOWLEDGE_PROMPT_VERSION = "knowledge-v7"
 KNOWLEDGE_PIPELINE_ENABLED = os.getenv(
     "KNOWLEDGE_PIPELINE_ENABLED", "true"
 ).strip().casefold() not in {"0", "false", "no", "off"}
@@ -205,6 +205,9 @@ GENERIC_ENTITY_EXACT = {
     "camera",
     "camera an ninh",
     "cảnh sát",
+    "lực lượng tìm kiếm",
+    "lực lượng chức năng",
+    "tổ công tác",
 }
 GENERIC_PERSON_OR_GROUP_SUFFIXES = {
     "man",
@@ -228,7 +231,9 @@ ANONYMOUS_PARTICIPANT_PATTERN = re.compile(
     r"người\s+(?:đàn\s+ông|phụ\s+nữ|dân|mua|bán)|"
     r"cụ\s+bà(?:\s+\d+\s+tuổi)?|"
     r"vị\s+khách|khách\s+hàng|nạn\s+nhân|nghi\s+phạm|"
-    r"lực\s+lượng\s+chức\s+năng|cảnh\s+sát|"
+    r"lực\s+lượng\s+(?:chức\s+năng|tìm\s+kiếm)|"
+    r"(?:tổ\s+công\s+tác|đội\s+tìm\s+kiếm|nhóm\s+tìm\s+kiếm)|"
+    r"cảnh\s+sát|"
     r"(?:a|an|the|another)\s+(?:man|woman|person|individual|"
     r"victim|suspect|resident|official|witness)"
     r")(?!\w)",

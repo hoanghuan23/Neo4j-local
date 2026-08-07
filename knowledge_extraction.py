@@ -243,8 +243,16 @@ Bạn trích xuất tri thức trực tiếp từ văn bản theo đúng JSON sc
 
 BƯỚC 1 - ENTITY CÓ TÊN
 - Chỉ trả PERSON, ORGANIZATION, LOCATION có tên riêng và nhận diện toàn cục.
+- Trước khi tạo Event, rà lần lượt từng câu trong toàn bộ văn bản để lấy đủ mọi
+  PERSON, ORGANIZATION và LOCATION có tên riêng, kể cả Entity chỉ xuất hiện một
+  lần hoặc không tham gia Event. Ưu tiên không bỏ sót Entity có bằng chứng trực
+  tiếp trong văn bản.
 - Quốc gia, bang/tỉnh, thành phố, quận và địa danh là LOCATION.
 - Công ty, cơ quan, ủy ban có tên riêng, câu lạc bộ và đội thể thao là ORGANIZATION.
+- Khi một câu chứa tên lồng nhau, vẫn lấy từng tổ chức hoặc địa điểm có tên riêng.
+  Ví dụ "Đội X (Cục Y, Bộ Z)" có thể chứa ba ORGANIZATION; "xã A (tỉnh B)"
+  chứa hai LOCATION. Không bỏ qua đơn vị cấp trên, cấp dưới hoặc địa danh nằm
+  trong ngoặc.
 - Tên giải đấu hoặc sự kiện không phải Entity.
 - Tên người đi kèm kính ngữ/chức danh vẫn bắt buộc là PERSON, kể cả chỉ xuất
   hiện một lần. Ví dụ "ông Đoàn Bảo Châu" phải tạo Entity có name và
@@ -268,7 +276,19 @@ BƯỚC 2 - EVENT CÓ HÀNH ĐỘNG
 - Tối đa {MAX_EVENTS_PER_POST} Event cho toàn bộ văn bản. Không tạo nhiều Event
   cho cùng một câu. Nếu nhiều mô tả cùng nói về một hành động thì gộp thành một
   Event.
-- evidence_text là đoạn nguyên văn ngắn nhất trong văn bản chứng minh hành động.
+- Phải nhận diện hành động kể cả từ bị chèn ký tự để né kiểm duyệt, 
+  ví dụ "đ/ánh" = "đánh", "b/ắn" = "bắn".
+- Các cụm như "xác minh video", "video ghi lại", "hình ảnh cho thấy" không làm mất sự kiện được mô tả bên trong nội dung
+- Khi nội dung có chủ thể thực hiện hành động và đối tượng chịu tác động, bắt buộc phải tạo Event, kể cả khi chủ thể không có tên riêng.
+- description phải là bản tóm tắt tự đầy đủ của Event. Ngoài hành động chính,
+  phải giữ các chi tiết quan trọng được nói trực tiếp như số tiền, mức phạt, số
+  điểm, số lượng, khoảng cách, thời hạn và hậu quả. Không bịa hoặc suy diễn chi tiết.
+- Nếu câu kế tiếp bổ sung số tiền, số điểm, số lượng, khoảng cách hoặc hậu quả
+  cho hành động ở câu trước, hãy gộp chi tiết đó vào cùng Event; không tạo Event
+  riêng chỉ cho câu bổ sung và không bỏ chi tiết vì câu đó lược chủ ngữ.
+- evidence_text là đoạn nguyên văn ngắn nhất chứng minh cả hành động và các chi
+  tiết quan trọng trong description. Có thể lấy nhiều câu liền kề khi thông tin
+  của cùng Event nằm ở các câu đó.
 - MEETING chỉ là gặp/họp. Nói, cảnh báo, phủ nhận, khuyến nghị là STATEMENT.
 - Đẩy, đánh, tấn công, hất/tạt/ném vào người là ASSAULT. Chết đuối là một
   DROWNING, không thêm DEATH trùng. Chỉ dùng RESIGNATION hoặc TRANSFER khi nói
@@ -287,7 +307,7 @@ BƯỚC 3 - PARTICIPANT
 - Mọi entity_id trong participants bắt buộc phải trùng với local_id của một Entity
   đã tồn tại trong mảng entities. Tuyệt đối không tạo entity_id giả hoặc tham chiếu tới Entity không tồn tại.
 - Người/nhóm/cơ quan không tên dùng participant_text và không tạo Entity. Ví dụ: "nữ tài xế", "cụ bà", "người bán",
-  "vị khách", "nghi phạm"...
+  "vị khách", "nghi phạm", "lực lượng tìm kiếm", "tổ công tác"...
 - Với participant không có tên riêng, bắt buộc đặt:
   entity_id = null
   participant_text = nguyên văn cụm mô tả xuất hiện trong bài
@@ -295,6 +315,9 @@ BƯỚC 3 - PARTICIPANT
   và đặt participant_text = null. Không bao giờ đặt họ tên đầy đủ như
   "ông Đoàn Bảo Châu" vào participant_text.
 - Phải đưa đầy đủ các chủ thể chính của hành động vào participants
+- Không gộp hai chủ thể khác nhau vào một participant. Nếu một tổ chức thực hiện
+  hành động đối với một người không tên, tạo riêng participant dùng entity_id
+  cho tổ chức và participant dùng participant_text cho người không tên.
 - Role phản ánh vai trò trong hành động, không chỉ dựa vào loại đối tượng
 - Tên của chính giải đấu hoặc sự kiện không phải participant và không được gán role LOCATION.
 - Role duy nhất: ACTOR, TARGET, VICTIM, SPEAKER, SUBJECT, LOCATION,
@@ -305,9 +328,23 @@ BƯỚC 4 - QUAN HỆ EVENT
   nói trực tiếp quan hệ. Không suy ra nhân quả từ thứ tự câu hoặc đồng xuất hiện.
 - Mọi reference phải trỏ tới local_id trong cùng JSON. Không có thì trả mảng rỗng.
 
+BƯỚC 5 - KIỂM TRA ID TRƯỚC KHI TRẢ JSON
+- Lập danh sách toàn bộ local_id thực sự có trong entities. Kiểm tra lại từng
+  entity_id của participants; không được dùng bất kỳ ID nào ngoài danh sách đó.
+- Nếu participant là cụm không có tên riêng như "lực lượng tìm kiếm" hoặc
+  "tổ công tác", luôn sửa thành entity_id = null và participant_text = cụm
+  nguyên văn. Không gán ID của một Entity khác chỉ vì Entity đó có trong bài.
+- Ví dụ: nếu entities chỉ có e1 là "Mặt trận Dân tộc Giải phóng Miền Nam Việt Nam"
+  nhưng actor là "lực lượng tìm kiếm", actor phải dùng entity_id = null,
+  participant_text = "lực lượng tìm kiếm"; tuyệt đối không tạo tham chiếu e2.
+
 Ví dụ sửa lỗi: "A Maryland man pushed another man ... The man drowned" tạo
 ASSAULT và DROWNING với anonymous participants; khuyến nghị của House panel và
 bình luận về Cubs là STATEMENT; một vụ seaplane crash lặp lại chỉ là một ACCIDENT.
+Ví dụ: "Cơ quan A đã xử phạt một nữ tài xế. Mức xử phạt là 35 triệu đồng và
+trừ 10 điểm giấy phép lái xe." phải tạo một Event có description giữ đủ mức phạt
+35 triệu đồng và trừ 10 điểm; participants gồm Cơ quan A là ACTOR và
+"nữ tài xế" là TARGET; evidence_text gồm hai câu liền kề này.
 "Bộ phim mà mình cực mong chờ phần 2 mà chưa thấy, bác nào biết phim tương tự k ạ"
 không có sự kiện thực tế, vì vậy trả events là [].
 
