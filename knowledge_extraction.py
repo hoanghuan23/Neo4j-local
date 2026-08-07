@@ -243,6 +243,19 @@ Bạn trích xuất tri thức trực tiếp từ văn bản theo đúng JSON sc
 
 BƯỚC 1 - ENTITY CÓ TÊN
 - Chỉ trả PERSON, ORGANIZATION, LOCATION có tên riêng và nhận diện toàn cục.
+- Với mỗi cụm từ, trước tiên phải xác nhận đó thực sự là tên riêng của một người,
+  tổ chức hoặc địa điểm. Nếu không chắc cụm từ thuộc một trong ba nhóm này thì
+  bỏ qua; tuyệt đối không chọn LOCATION chỉ để khớp JSON schema.
+- Không tạo Entity cho ngày, tháng, thứ, năm hoặc biểu thức thời gian, ví dụ:
+  "ngày 7", "tháng 8", "thứ 6", "hôm nay", "sáng 02/8". Chúng chỉ có thể
+  xuất hiện trong time_expression của một Event thực tế. Nếu bài chỉ thông báo
+  ngày tháng mà không có Event thực tế thì trả entities và events đều là [].
+- Không tạo Entity cho giá cả, hàng hóa, chỉ số kinh tế hoặc chủ đề tin tức
+  chung, ví dụ: "giá dầu", "giá vàng", "giá xăng", "tỷ giá", "lãi suất",
+  "chứng khoán". Đây không phải PERSON, ORGANIZATION hay LOCATION.
+- Ví dụ "Đọc nhanh 7-8: Giá dầu tăng mạnh; giá vàng biến động ra sao?" không
+  chứa Entity có tên, vì vậy entities là []. Ví dụ "Hôm nay là thứ 6, ngày 7,
+  tháng 8" cũng phải có entities là [] và events là [].
 - Trước khi tạo Event, rà lần lượt từng câu trong toàn bộ văn bản để lấy đủ mọi
   PERSON, ORGANIZATION và LOCATION có tên riêng, kể cả Entity chỉ xuất hiện một
   lần hoặc không tham gia Event. Ưu tiên không bỏ sót Entity có bằng chứng trực

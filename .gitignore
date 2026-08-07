@@ -53,3 +53,5 @@ Thumbs.db
 # Local AI-agent settings
 .agents/
 .codex/
+
+.env

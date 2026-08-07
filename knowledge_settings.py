@@ -10,7 +10,7 @@ NEO4J_USER = "neo4j"
 NEO4J_PASSWORD = "huanhoang"
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = os.getenv("KNOWLEDGE_MODEL", "qwen3.5:4b")
+OLLAMA_MODEL = os.getenv("KNOWLEDGE_MODEL", "gemma4:e2b")
 OLLAMA_TIMEOUT_SECONDS = 600
 OLLAMA_MAX_ATTEMPTS = 2
 OLLAMA_LOG_PREVIEW_CHARS = 2_000
