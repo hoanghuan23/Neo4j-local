@@ -17,7 +17,7 @@ OLLAMA_LOG_PREVIEW_CHARS = 2_000
 POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "3")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
-KNOWLEDGE_PROMPT_VERSION = "knowledge-v3"
+KNOWLEDGE_PROMPT_VERSION = "knowledge-v5"
 KNOWLEDGE_PIPELINE_ENABLED = os.getenv(
     "KNOWLEDGE_PIPELINE_ENABLED", "true"
 ).strip().casefold() not in {"0", "false", "no", "off"}
@@ -121,8 +121,6 @@ EVENT_ITEM_SCHEMA = _strict_object(
         "evidence_text": {"type": "string"},
         "status": {"type": "string", "enum": sorted(EVENT_STATUSES)},
         "time_expression": {"type": ["string", "null"]},
-        "start_year": {"type": ["integer", "null"]},
-        "end_year": {"type": ["integer", "null"]},
         "confidence": {
             "type": "number",
             "minimum": 0,
@@ -140,8 +138,6 @@ EVENT_ITEM_SCHEMA = _strict_object(
         "evidence_text",
         "status",
         "time_expression",
-        "start_year",
-        "end_year",
         "confidence",
         "participants",
     ],
@@ -221,6 +217,23 @@ GENERIC_PERSON_OR_GROUP_SUFFIXES = {
     "official",
     "officials",
 }
+
+# Used only to recover a participant when the model emits a dangling entity_id
+# without participant_text. Recovery is deliberately conservative: validation
+# accepts it only when one unique anonymous description occurs in the event.
+ANONYMOUS_PARTICIPANT_PATTERN = re.compile(
+    r"(?<!\w)(?:"
+    r"(?:nam|nữ)\s+tài\s+xế(?:\s+taxi)?|"
+    r"tài\s+xế(?:\s+taxi)?|"
+    r"người\s+(?:đàn\s+ông|phụ\s+nữ|dân|mua|bán)|"
+    r"cụ\s+bà(?:\s+\d+\s+tuổi)?|"
+    r"vị\s+khách|khách\s+hàng|nạn\s+nhân|nghi\s+phạm|"
+    r"lực\s+lượng\s+chức\s+năng|cảnh\s+sát|"
+    r"(?:a|an|the|another)\s+(?:man|woman|person|individual|"
+    r"victim|suspect|resident|official|witness)"
+    r")(?!\w)",
+    re.IGNORECASE,
+)
 EVENT_NAME_PATTERN = re.compile(
     r"\b(championships?|tournaments?|grand prix|olympics|games|world cup)\b$",
     re.IGNORECASE,

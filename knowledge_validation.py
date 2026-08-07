@@ -2,6 +2,7 @@ import hashlib
 import re
 
 from knowledge_settings import (
+    ANONYMOUS_PARTICIPANT_PATTERN,
     EVENT_ACTION_TRIGGERS,
     EVENT_NAME_PATTERN,
     EVENT_RELATION_TYPES,
@@ -141,6 +142,19 @@ def _participant_signature(participant: dict) -> str:
     return f"{identity}:{participant['role']}"
 
 
+def _infer_anonymous_participant_text(raw_event: dict) -> str:
+    """Recover one unambiguous anonymous description from an event."""
+    candidates = {}
+    for field in ("description", "evidence_text"):
+        text = _clean_text(raw_event.get(field))
+        for match in ANONYMOUS_PARTICIPANT_PATTERN.finditer(text):
+            candidate = _clean_text(match.group(0))
+            candidates.setdefault(normalize_name(candidate), candidate)
+    if len(candidates) == 1:
+        return next(iter(candidates.values()))
+    return ""
+
+
 def _event_signature(event: dict) -> str:
     participants = sorted(
         _participant_signature(participant) for participant in event["participants"]
@@ -229,8 +243,9 @@ def validate_events(
                     participant_text or generic_participants[raw_entity_id]
                 )
             elif raw_entity_id:
-                # An unresolved reference is only salvageable when text exists.
                 entity_id = None
+                if not participant_text:
+                    participant_text = _infer_anonymous_participant_text(raw)
 
             if participant_text and EVENT_NAME_PATTERN.search(participant_text):
                 continue
@@ -255,14 +270,6 @@ def validate_events(
         time_expression = normalize_null(raw.get("time_expression"))
         if time_expression is not None:
             time_expression = _clean_text(time_expression) or None
-        start_year = normalize_null(raw.get("start_year"))
-        end_year = normalize_null(raw.get("end_year"))
-        if isinstance(start_year, bool) or not isinstance(
-            start_year, (int, type(None))
-        ):
-            start_year = None
-        if isinstance(end_year, bool) or not isinstance(end_year, (int, type(None))):
-            end_year = None
 
         event = {
             "local_id": local_id,
@@ -271,8 +278,6 @@ def validate_events(
             "evidence_text": evidence_text,
             "status": status,
             "time_expression": time_expression,
-            "start_year": start_year,
-            "end_year": end_year,
             "confidence": confidence,
             "participants": participants,
         }
@@ -358,9 +363,7 @@ def build_anonymous_participant_key(
         [
             platform,
             post_id,
-            event_key,
             normalize_name(participant["participant_text"]),
-            participant["role"],
         ]
     )
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()

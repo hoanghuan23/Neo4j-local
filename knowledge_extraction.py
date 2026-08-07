@@ -283,15 +283,20 @@ BƯỚC 2 - EVENT CÓ HÀNH ĐỘNG
 
 BƯỚC 3 - PARTICIPANT
 - Mỗi participant có đúng một trong entity_id hoặc participant_text; trường còn
-  lại là null. Người/nhóm/cơ quan không tên dùng participant_text, không tạo Entity.
-- Nếu participant là người có tên riêng, bắt buộc dùng entity_id trỏ tới Entity
-  PERSON và đặt participant_text là null. Không bao giờ đặt họ tên đầy đủ như
+  lại là null.
+- Mọi entity_id trong participants bắt buộc phải trùng với local_id của một Entity
+  đã tồn tại trong mảng entities. Tuyệt đối không tạo entity_id giả hoặc tham chiếu tới Entity không tồn tại.
+- Người/nhóm/cơ quan không tên dùng participant_text và không tạo Entity. Ví dụ: "nữ tài xế", "cụ bà", "người bán",
+  "vị khách", "nghi phạm"...
+- Với participant không có tên riêng, bắt buộc đặt:
+  entity_id = null
+  participant_text = nguyên văn cụm mô tả xuất hiện trong bài
+- Nếu participant là người có tên riêng, bắt buộc dùng entity_id trỏ tới Entity PERSON
+  và đặt participant_text = null. Không bao giờ đặt họ tên đầy đủ như
   "ông Đoàn Bảo Châu" vào participant_text.
-- Phải đưa đẩy đủ các chủ thể chính của hành động vào participants, kể cả người,
-  nhóm hoặc cơ quan không có tên riêng như "cụ bà", "người bán", "vị khách", "nghi phạm", "lực lượng chức năng"...
-- Role phải phản ánh vai trò trong hành động, không dựa chỉ vào loại đối tượng.
-  Ví dụ, cơ quan trực tiếp thực hiện hành động thì dùng ACTOR, không mặc định là ORGANIZATION.
-- Tên của chính giải đấu/sự kiện không phải participant và không được gán role LOCATION.
+- Phải đưa đầy đủ các chủ thể chính của hành động vào participants
+- Role phản ánh vai trò trong hành động, không chỉ dựa vào loại đối tượng
+- Tên của chính giải đấu hoặc sự kiện không phải participant và không được gán role LOCATION.
 - Role duy nhất: ACTOR, TARGET, VICTIM, SPEAKER, SUBJECT, LOCATION,
   ORGANIZATION, PARTICIPANT. Chỉ dùng PARTICIPANT khi không xác định cụ thể hơn.
 

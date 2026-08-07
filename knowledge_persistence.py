@@ -140,12 +140,11 @@ def upsert_events(
                 event.evidence_text = $evidence_text,
                 event.status = $status,
                 event.time_expression = $time_expression,
-                event.start_year = $start_year,
-                event.end_year = $end_year,
                 event.confidence = $confidence,
                 event.knowledge_model = $knowledge_model,
                 event.knowledge_prompt_version = $knowledge_prompt_version,
                 event.updated_at = datetime()
+            REMOVE event.start_year, event.end_year
             MERGE (p)-[:DESCRIBES]->(event)
             WITH event
             OPTIONAL MATCH (event)-[participant:HAS_PARTICIPANT]->()
@@ -159,8 +158,6 @@ def upsert_events(
             evidence_text=event["evidence_text"],
             status=event["status"],
             time_expression=event["time_expression"],
-            start_year=event["start_year"],
-            end_year=event["end_year"],
             confidence=event["confidence"],
             knowledge_model=OLLAMA_MODEL,
             knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,

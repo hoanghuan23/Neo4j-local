@@ -70,7 +70,8 @@ class ExtractionTests(unittest.TestCase):
         )
         self.assertIn("event_relations", properties)
         self.assertNotIn("event_realations", properties)
-        self.assertIn("start_year", event_properties)
+        self.assertNotIn("start_year", event_properties)
+        self.assertNotIn("end_year", event_properties)
         self.assertNotIn("start_years", event_properties)
         self.assertEqual(event_properties["confidence"]["minimum"], 0)
         self.assertEqual(event_properties["confidence"]["maximum"], 1)
@@ -107,8 +108,6 @@ class ExtractionTests(unittest.TestCase):
                     "description": "A meeting",
                     "status": None,
                     "time_expression": None,
-                    "start_year": None,
-                    "end_year": None,
                     "confidence": 0.8,
                     "participants": [],
                 }
@@ -265,8 +264,6 @@ class KnowledgeValidationTests(unittest.TestCase):
             "evidence_text": evidence,
             "status": status,
             "time_expression": None,
-            "start_year": None,
-            "end_year": None,
             "confidence": confidence,
             "participants": participants or [],
         }
@@ -730,6 +727,55 @@ class KnowledgeValidationTests(unittest.TestCase):
         self.assertEqual(participants[0]["participant_text"], "a man")
         self.assertEqual(participants[0]["confidence"], 0)
 
+    def test_dangling_entity_id_recovers_unique_anonymous_participant(self):
+        content = "nữ tài xế cho biết đã lùi xe và nữ tài xế bị phạt."
+        raw = {
+            "entities": [],
+            "events": [
+                self.event(
+                    "ev1",
+                    "STATEMENT",
+                    "nữ tài xế cho biết đã lùi xe",
+                    [self.participant("e3", role="SPEAKER", confidence=1.0)],
+                ),
+                self.event(
+                    "ev2",
+                    "OTHER",
+                    "nữ tài xế bị phạt",
+                    [self.participant("e3", role="TARGET", confidence=1.0)],
+                ),
+            ],
+            "event_relations": [],
+        }
+
+        events = subject.validate_knowledge(content, raw)["events"]
+
+        self.assertEqual(len(events), 2)
+        self.assertEqual(
+            [event["participants"][0]["participant_text"] for event in events],
+            ["nữ tài xế", "nữ tài xế"],
+        )
+        self.assertTrue(
+            all(event["participants"][0]["entity_id"] is None for event in events)
+        )
+
+    def test_anonymous_key_is_shared_across_events_and_roles_in_one_post(self):
+        participant = {
+            "entity_id": None,
+            "participant_text": "nữ tài xế",
+            "role": "SPEAKER",
+            "confidence": 1.0,
+        }
+        first = subject.build_anonymous_participant_key(
+            "facebook", "post-1", "event-1", participant
+        )
+        participant["role"] = "TARGET"
+        second = subject.build_anonymous_participant_key(
+            "facebook", "post-1", "event-2", participant
+        )
+
+        self.assertEqual(first, second)
+
 
 class PersistenceTests(unittest.TestCase):
     def test_create_entity_schema_creates_constraint_and_index(self):
@@ -773,6 +819,30 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(save_call.kwargs["normalized_name"], "donald trump")
         self.assertEqual(save_call.kwargs["name"], "Tổng thống Trump")
         self.assertTrue(save_call.kwargs["is_canonical"])
+
+    def test_upsert_event_removes_legacy_year_properties(self):
+        tx = Mock()
+        tx.run.return_value.consume.return_value = None
+        event = {
+            "event_key": "event-1",
+            "type": "OTHER",
+            "description": "nữ tài xế bị xử phạt",
+            "evidence_text": "nữ tài xế bị xử phạt",
+            "status": "COMPLETED",
+            "time_expression": None,
+            "confidence": 1.0,
+            "participants": [],
+        }
+
+        subject.upsert_events(tx, "facebook", "post-1", [event], {})
+
+        queries = "\n".join(call.args[0] for call in tx.run.call_args_list)
+        self.assertIn("REMOVE event.start_year, event.end_year", queries)
+        event_call = next(
+            call for call in tx.run.call_args_list if "MERGE (event:Event" in call.args[0]
+        )
+        self.assertNotIn("start_year", event_call.kwargs)
+        self.assertNotIn("end_year", event_call.kwargs)
 
     def test_save_knowledge_marks_success_inside_same_transaction(self):
         tx = Mock()
@@ -900,8 +970,6 @@ class Neo4jIntegrationTests(unittest.TestCase):
                     "evidence_text": "Smoke Test Organization said hello",
                     "status": "COMPLETED",
                     "time_expression": None,
-                    "start_year": None,
-                    "end_year": None,
                     "confidence": 0.9,
                     "participants": [
                         {
@@ -919,8 +987,6 @@ class Neo4jIntegrationTests(unittest.TestCase):
                     "evidence_text": "a witness approved the plan",
                     "status": "COMPLETED",
                     "time_expression": None,
-                    "start_year": None,
-                    "end_year": None,
                     "confidence": 0.85,
                     "participants": [
                         {
