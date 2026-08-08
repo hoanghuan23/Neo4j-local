@@ -177,6 +177,9 @@ GENERIC_ENTITY_EXACT = {
     "a man",
     "a woman",
     "a person",
+    "a boy",
+    "a girl",
+    "a driver"
     "an individual",
     "the man",
     "the woman",
@@ -191,6 +194,17 @@ GENERIC_ENTITY_EXACT = {
     "house panel",
     "italian community",
     "người đàn ông",
+    "nam thanh niên",
+    "nữ thanh niên",
+    "bé trai",
+    "bé gái",
+    "trẻ em",
+    "người già",
+    "bị cáo",
+    "người lái xe",
+    "công nhân",
+    "học sinh",
+    "sinh viên",
     "người phụ nữ",
     "người dân",
     "người mua",
@@ -308,6 +322,18 @@ EVENT_ACTION_TRIGGERS = {
         "phủ nhận",
         "khuyến nghị",
         "tuyên bố",
+        "cho biết",
+        "cho hay",
+        "tiết lộ",
+        "thừa nhận",
+        "khẳng định",
+        "nhấn mạnh",
+        "bày tỏ",
+        "kêu gọi",
+        "yêu cầu",
+        "giải thích",
+        "chia sẻ",
+        "nhận định"
     },
     "MEETING": {
         "met",
@@ -315,10 +341,17 @@ EVENT_ACTION_TRIGGERS = {
         "meeting",
         "held talks",
         "convened",
+        "discussed",
+        "talked",
         "gặp",
         "cuộc họp",
         "họp",
         "hội đàm",
+        "hội nghị",
+        "làm việc với",
+        "trao đổi",
+        "tiếp xúc"
+        "đàm phán"
     },
     "APPOINTMENT": {
         "appointed",
@@ -327,6 +360,12 @@ EVENT_ACTION_TRIGGERS = {
         "selected",
         "bổ nhiệm",
         "đề cử",
+        "được bổ nhiệm",
+        "chỉ định",
+        "phân công",
+        "bầu làm",
+        "thăng chức",
+        "nhậm chức"
     },
     "APPROVAL": {
         "approved",
@@ -338,6 +377,12 @@ EVENT_ACTION_TRIGGERS = {
         "phê duyệt",
         "chấp thuận",
         "thông qua",
+        "đồng ý",
+        "đồng thuận",
+        "được phê duyệt",
+        "được thông qua",
+        "phê chuẩn",
+        "cấp phép"
     },
     "ELECTION": {
         "elected",
@@ -347,6 +392,9 @@ EVENT_ACTION_TRIGGERS = {
         "bầu cử",
         "đắc cử",
         "bỏ phiếu",
+        "tái cử",
+        "tranh cử",
+        "ứng cử"
     },
     "RESIGNATION": {
         "resigned",
@@ -354,6 +402,7 @@ EVENT_ACTION_TRIGGERS = {
         "stepped down",
         "quit office",
         "từ chức",
+        "rời chức",
     },
     "ARREST": {
         "arrested",
@@ -361,6 +410,12 @@ EVENT_ACTION_TRIGGERS = {
         "taken into custody",
         "bắt giữ",
         "tạm giữ",
+        "bị tạm giữ",
+        "tạm giam",
+        "bị tạm giam",
+        "bị bắt",
+        "bị bắt giữ",
+        "khống chế"
     },
     "ASSAULT": {
         "attacked",
@@ -381,7 +436,13 @@ EVENT_ACTION_TRIGGERS = {
         "bắn",
         "hất",
         "tạt",
-        "ném"
+        "ném",
+        "đá",
+        "chém",
+        "tát",
+        "xô xát",
+        "ẩu đả",
+        "nổ súng"
     },
     "ACCIDENT": {
         "crashed",
@@ -395,6 +456,13 @@ EVENT_ACTION_TRIGGERS = {
         "lao vào",
         "lật",
         "đâm vào",
+        "tông",
+        "đụng",
+        "ngã",
+        "rơi xuống",
+        "chìm",
+        "cháy"
+        "phát nổ"
     },
     "DEATH": {
         "died",
@@ -404,12 +472,18 @@ EVENT_ACTION_TRIGGERS = {
         "qua đời",
         "thiệt mạng",
         "tử vong",
+        "chết",
+        "hy sinh",
+        "không qua khỏi",
+        "mất mạng"
     },
     "DROWNING": {
         "drowned",
         "drowning",
         "chết đuối",
         "đuối nước",
+        "bị đuối nước",
+        "nước cuốn"
     },
     "INVESTIGATION": {
         "investigated",
@@ -417,14 +491,24 @@ EVENT_ACTION_TRIGGERS = {
         "probe",
         "inquiry",
         "điều tra",
+        "tiến hành điều tra",
+        "xác minh",
+        "đang xác minh",
+        "làm rõ",
+        "khởi tố điều tra"
     },
     "PROTEST": {
         "protested",
         "protest",
         "demonstrated",
+        "demonstration",
+        "rallied"
         "rally",
         "biểu tình",
         "tuần hành",
+        "tụ tập",
+        "đình công",
+        "bãi công"
     },
     "SPORTS_EVENT": {
         "competed",
@@ -439,6 +523,10 @@ EVENT_ACTION_TRIGGERS = {
         "thi đấu",
         "trận đấu",
         "giải đấu",
+        "ghi bàn",
+        "lập công"
+        "kiến tạo"
+        "đối đầu"
     },
     "TRANSFER": {
         "transferred",
@@ -448,6 +536,11 @@ EVENT_ACTION_TRIGGERS = {
         "chuyển giao",
         "chuyển nhượng",
         "điều chuyển",
+        "gia nhập",
+        "đầu quân",
+        "mượn",
+        "chiêu mộ",
+        "chuyển sang"
     },
     "OTHER": {
         "created",
