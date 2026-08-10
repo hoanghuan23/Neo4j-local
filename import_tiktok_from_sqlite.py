@@ -1,13 +1,13 @@
 import sqlite3
 from datetime import datetime
 from typing import Any
+
 from neo4j import GraphDatabase
+
+from knowledge_settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 
 SQLITE_DB_PATH = "/media/pc1799/New Volume/huan/Tiktok-Api/data/tiktok.db"
 
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "huanhoang"
 NEO4J_DATABASE = "neo4j"
 
 IMPORT_LIMIT = 500

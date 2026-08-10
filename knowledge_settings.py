@@ -2,14 +2,18 @@ import logging
 import os
 import re
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 logging.getLogger("neo4j").setLevel(logging.ERROR)
 LOGGER = logging.getLogger(__name__)
 
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "huanhoang"
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.environ["NEO4J_PASSWORD"]
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.getenv("KNOWLEDGE_MODEL", "gemma4:e2b")
 OLLAMA_TIMEOUT_SECONDS = 600
 OLLAMA_MAX_ATTEMPTS = 2
@@ -179,7 +183,7 @@ GENERIC_ENTITY_EXACT = {
     "a person",
     "a boy",
     "a girl",
-    "a driver"
+    "a driver",
     "an individual",
     "the man",
     "the woman",
@@ -360,7 +364,7 @@ EVENT_ACTION_TRIGGERS = {
         "hội nghị",
         "làm việc với",
         "trao đổi",
-        "tiếp xúc"
+        "tiếp xúc",
         "đàm phán"
     },
     "APPOINTMENT": {

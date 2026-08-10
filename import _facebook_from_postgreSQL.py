@@ -1,17 +1,20 @@
+import os
+
 import psycopg2
 from neo4j import GraphDatabase
+from dotenv import load_dotenv
+
+from knowledge_settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+
+load_dotenv()
 
 POSTGRES_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "database": "facebook_scraper",
-    "user": "scraper",
-    "password": "hoanghuan",
+    "host": os.getenv("POSTGRES_HOST", "localhost"),
+    "port": int(os.getenv("POSTGRES_PORT", "5432")),
+    "database": os.getenv("POSTGRES_DB", "facebook_scraper"),
+    "user": os.getenv("POSTGRES_USER", "scraper"),
+    "password": os.environ["POSTGRES_PASSWORD"],
 }
-
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "huanhoang"
 
 
 def get_posts():
