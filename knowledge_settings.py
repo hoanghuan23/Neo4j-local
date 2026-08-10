@@ -17,7 +17,7 @@ OLLAMA_LOG_PREVIEW_CHARS = 2_000
 POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "3")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
-KNOWLEDGE_PROMPT_VERSION = "knowledge-v7"
+KNOWLEDGE_PROMPT_VERSION = "knowledge-v8"
 KNOWLEDGE_PIPELINE_ENABLED = os.getenv(
     "KNOWLEDGE_PIPELINE_ENABLED", "true"
 ).strip().casefold() not in {"0", "false", "no", "off"}
@@ -294,6 +294,16 @@ COUNTRY_NAME_FALLBACKS = {
     "u.s.a.",
     "vietnam",
     "viet nam",
+}
+
+# Country spellings that the local model has been observed to omit.  These are
+# recovered only when the spelling occurs explicitly in the source text; they
+# are not geographic inferences.
+COUNTRY_ENTITY_ALIASES = {
+    "việt nam": "Việt Nam",
+    "viet nam": "Việt Nam",
+    "vietnam": "Việt Nam",
+    "Trung Quốc": "Trung Quốc"
 }
 
 EVENT_ACTION_TRIGGERS = {

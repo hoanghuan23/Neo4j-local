@@ -154,6 +154,43 @@ class ExtractionTests(unittest.TestCase):
         self.assertIn("KIỂM TRA ID TRƯỚC KHI TRẢ JSON", prompt)
         self.assertIn('participant_text = "lực lượng tìm kiếm"', prompt)
         self.assertIn("tuyệt đối không tạo tham chiếu e2", prompt)
+        self.assertIn('bắt buộc có đủ ba LOCATION riêng:', prompt)
+        self.assertIn('"Việt Nam", "Hoành Mô" và "Quảng Ninh"', prompt)
+
+    def test_extract_knowledge_recovers_explicit_vietnam_when_model_omits_it(self):
+        content = (
+            "Gần 500 bình khí cười được vận chuyển từ nước ngoài vào Việt Nam "
+            "qua khu vực biên giới Hoành Mô (Quảng Ninh)."
+        )
+        raw = {
+            "entities": [
+                {
+                    "local_id": "e1",
+                    "name": "Hoành Mô",
+                    "canonical_name": "Hoành Mô",
+                    "type": "LOCATION",
+                    "resolution_confidence": "HIGH",
+                },
+                {
+                    "local_id": "e2",
+                    "name": "Quảng Ninh",
+                    "canonical_name": "Quảng Ninh",
+                    "type": "LOCATION",
+                    "resolution_confidence": "HIGH",
+                },
+            ],
+            "events": [{"local_id": "e3"}],
+            "event_relations": [],
+        }
+
+        knowledge = subject._extraction.extract_knowledge(
+            content, call_model=lambda _prompt, _schema: raw
+        )
+
+        vietnam = knowledge["entities"][-1]
+        self.assertEqual(vietnam["name"], "Việt Nam")
+        self.assertEqual(vietnam["type"], "LOCATION")
+        self.assertEqual(vietnam["local_id"], "e4")
 
     @patch.object(subject, "call_ollama")
     def test_extract_entities_uses_canonical_schema(self, call_ollama):
@@ -374,6 +411,34 @@ class KnowledgeValidationTests(unittest.TestCase):
                     [
                         self.participant(
                             "e1", participant_text="  ĐỒNG   NAI ", role="TARGET"
+                        )
+                    ],
+                )
+            ],
+            "event_relations": [],
+        }
+
+        participant = subject.validate_knowledge(content, raw)["events"][0][
+            "participants"
+        ][0]
+
+        self.assertEqual(participant["entity_id"], "e1")
+        self.assertIsNone(participant["participant_text"])
+
+    def test_location_reference_accepts_entity_inside_descriptive_phrase(self):
+        content = "Hàng được vận chuyển qua khu vực biên giới Hoành Mô."
+        raw = {
+            "entities": [self.entity("e1", "Hoành Mô", "LOCATION", "HIGH")],
+            "events": [
+                self.event(
+                    "ev1",
+                    "OTHER",
+                    content.rstrip("."),
+                    [
+                        self.participant(
+                            "e1",
+                            participant_text="khu vực biên giới Hoành Mô",
+                            role="LOCATION",
                         )
                     ],
                 )

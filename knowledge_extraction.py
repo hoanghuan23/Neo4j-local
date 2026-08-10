@@ -8,6 +8,7 @@ import requests
 
 from knowledge_settings import (
     CONFIDENCE_LEVELS,
+    COUNTRY_ENTITY_ALIASES,
     COUNTRY_NAME_FALLBACKS,
     ENTITY_TYPES,
     EVENT_NAME_PATTERN,
@@ -137,6 +138,64 @@ def is_generic_entity(entity: dict) -> bool:
     return False
 
 
+def _source_contains_name(content: str, name: str) -> bool:
+    """Match a complete, explicitly written name after text normalization."""
+    return (
+        re.search(
+            rf"(?<!\w){re.escape(normalize_name(name))}(?!\w)",
+            normalize_name(content),
+        )
+        is not None
+    )
+
+
+def recover_explicit_country_entities(content: str, result: dict) -> dict:
+    """Add configured countries that the model omitted despite direct evidence."""
+    entities = result.get("entities")
+    if not isinstance(entities, list):
+        entities = []
+        result["entities"] = entities
+
+    known_names = {
+        make_search_name(candidate)
+        for entity in entities
+        if isinstance(entity, dict)
+        for candidate in (
+            _clean_text(entity.get("name")),
+            _clean_text(entity.get("canonical_name")),
+        )
+        if candidate
+    }
+    used_ids = {
+        _clean_text(item.get("local_id"))
+        for section in ("entities", "events")
+        for item in result.get(section, [])
+        if isinstance(item, dict) and _clean_text(item.get("local_id"))
+    }
+
+    next_id = 1
+    for source_name, canonical_name in COUNTRY_ENTITY_ALIASES.items():
+        identity = make_search_name(canonical_name)
+        if identity in known_names or not _source_contains_name(content, source_name):
+            continue
+        while f"e{next_id}" in used_ids:
+            next_id += 1
+        local_id = f"e{next_id}"
+        entities.append(
+            {
+                "local_id": local_id,
+                "name": canonical_name,
+                "canonical_name": canonical_name,
+                "type": "LOCATION",
+                "resolution_confidence": "HIGH",
+            }
+        )
+        used_ids.add(local_id)
+        known_names.add(identity)
+
+    return result
+
+
 def parse_ollama_payload(payload: dict) -> dict:
     raw_response = payload.get("response", "")
     if not isinstance(raw_response, str) or not raw_response.strip():
@@ -261,6 +320,11 @@ BƯỚC 1 - ENTITY CÓ TÊN
   lần hoặc không tham gia Event. Ưu tiên không bỏ sót Entity có bằng chứng trực
   tiếp trong văn bản.
 - Quốc gia, bang/tỉnh, thành phố, quận và địa danh là LOCATION.
+- LOCATION vẫn phải được lấy khi nó chỉ hướng di chuyển, nơi xuất phát, điểm đến
+  hoặc tuyến đường của Event. Ví dụ câu "vận chuyển từ nước ngoài vào Việt Nam
+  qua khu vực biên giới Hoành Mô (Quảng Ninh)" bắt buộc có đủ ba LOCATION riêng:
+  "Việt Nam", "Hoành Mô" và "Quảng Ninh"; không được chỉ lấy địa điểm gần động
+  từ nhất.
 - Công ty, cơ quan, ủy ban có tên riêng, câu lạc bộ và đội thể thao là ORGANIZATION.
 - Khi một câu chứa tên lồng nhau, vẫn lấy từng tổ chức hoặc địa điểm có tên riêng.
   Ví dụ "Đội X (Cục Y, Bộ Z)" có thể chứa ba ORGANIZATION; "xã A (tỉnh B)"
@@ -372,11 +436,12 @@ Văn bản:
     if call_model is None:
         call_model = call_ollama
     result = call_model(prompt, KNOWLEDGE_SCHEMA)
-    return {
+    knowledge = {
         "entities": result.get("entities", []),
         "events": result.get("events", []),
         "event_relations": result.get("event_relations", []),
     }
+    return recover_explicit_country_entities(content, knowledge)
 
 
 def extract_entities(content: str) -> list[dict]:

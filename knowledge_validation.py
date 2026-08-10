@@ -33,6 +33,7 @@ def validate_entities(raw_entities) -> dict:
         "entity_id_map": {},
         "entity_identities": {},
         "entity_names": {},
+        "entity_types": {},
         "generic_participants": {},
         "generic_entity_keys": [],
     }
@@ -82,6 +83,7 @@ def validate_entities(raw_entities) -> dict:
             result["entity_names"][local_id] = shared_entity_names
             result["entity_id_map"][local_id] = kept_local_id
             result["entity_identities"][local_id] = "|".join(entity_key)
+            result["entity_types"][local_id] = prepared["entity_type"]
             continue
 
         normalized = {
@@ -95,6 +97,7 @@ def validate_entities(raw_entities) -> dict:
         result["entity_id_map"][local_id] = local_id
         result["entity_identities"][local_id] = "|".join(entity_key)
         result["entity_names"][local_id] = raw_entity_names
+        result["entity_types"][local_id] = prepared["entity_type"]
         seen_entity_keys[entity_key] = local_id
         seen_entity_names[entity_key] = raw_entity_names
 
@@ -183,6 +186,7 @@ def validate_events(
     seen_signatures = {}
     valid_entity_ids = entity_validation["entity_id_map"]
     valid_entity_names = entity_validation["entity_names"]
+    valid_entity_types = entity_validation["entity_types"]
     generic_participants = entity_validation["generic_participants"]
 
     for raw in raw_events:
@@ -230,10 +234,18 @@ def validate_events(
             participant_text = _clean_text(raw_participant.get("participant_text"))
             entity_id = None
             if raw_entity_id in valid_entity_ids:
+                normalized_participant = normalize_name(participant_text)
                 text_matches_entity = (
                     not participant_text
-                    or normalize_name(participant_text)
-                    in valid_entity_names[raw_entity_id]
+                    or normalized_participant in valid_entity_names[raw_entity_id]
+                    or (
+                        role == "LOCATION"
+                        and valid_entity_types[raw_entity_id] == "LOCATION"
+                        and any(
+                            _contains_marker(normalized_participant, entity_name)
+                            for entity_name in valid_entity_names[raw_entity_id]
+                        )
+                    )
                 )
                 if text_matches_entity:
                     entity_id = valid_entity_ids[raw_entity_id]
