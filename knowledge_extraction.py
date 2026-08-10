@@ -332,8 +332,8 @@ BƯỚC 1 - ENTITY CÓ TÊN
   trong ngoặc.
 - Tên giải đấu hoặc sự kiện không phải Entity.
 - Tên người đi kèm kính ngữ/chức danh vẫn bắt buộc là PERSON, kể cả chỉ xuất
-  hiện một lần. Ví dụ "ông Đoàn Bảo Châu" phải tạo Entity có name và
-  canonical_name là "Đoàn Bảo Châu"; không đưa "ông" vào tên chuẩn.
+  hiện một lần. Ví dụ "ông Đoàn Bảo Châu", "ông Nguyễn Văn Nhỏ", "bà Nhật Kim Anh" phải tạo Entity có name và
+  canonical_name là "Đoàn Bảo Châu"; không đưa "ông/bà" vào tên chuẩn.
 - Một người có tên xuất hiện nhiều lần chỉ tạo một Entity. Mọi lần người đó tham
   gia Event đều phải tham chiếu cùng local_id của Entity này.
 - Không đưa mô tả chung vào entities: "a man", "Maryland man", "the victim",
