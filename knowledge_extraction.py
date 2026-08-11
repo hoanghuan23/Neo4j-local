@@ -3,7 +3,7 @@ import math
 import re
 import unicodedata
 from functools import lru_cache
-
+from groq import Groq
 import requests
 
 from knowledge_settings import (
@@ -14,6 +14,10 @@ from knowledge_settings import (
     EVENT_NAME_PATTERN,
     GENERIC_ENTITY_EXACT,
     GENERIC_PERSON_OR_GROUP_SUFFIXES,
+    GROQ_API_KEY,
+    GROQ_MODEL,
+    GROQ_TIMEOUT_SECONDS,
+    GROQ_MAX_ATTEMPTS,
     KNOWLEDGE_SCHEMA,
     LOCATION_NAME_PATTERN,
     LOGGER,
@@ -295,6 +299,69 @@ def call_ollama(prompt: str, output_schema: dict) -> dict:
     )
     raise ValueError(message) from last_error
 
+def call_groq(prompt: str, output_schema: dict) -> dict:
+    if not GROQ_API_KEY:
+        raise ValueError("Chưa cấu hình GROQ_API_KEY trong .env")
+
+    client = Groq(
+        api_key = GROQ_API_KEY,
+        timeout = GROQ_TIMEOUT_SECONDS,
+    )
+
+    last_error = None
+
+    for attempt in range(1, GROQ_MAX_ATTEMPTS + 1):
+        try:
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0,
+                reasoning_effort="low",
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "knowledge_extraction",
+                        "strict": True,
+                        "schema": output_schema,
+                    },
+                },
+            )
+
+            raw_response = response.choices[0].message.content
+            if not raw_response:
+                raise ValueError("Groq trả về content rỗng")
+
+            LOGGER.info(
+                "Groq hoàn tất | model=%s | attempt=%s/%s | "
+                "prompt_tokens=%s | output_tokens=%s",
+
+                GROQ_MODEL,
+                attempt,
+                GROQ_MAX_ATTEMPTS,
+                getattr(response.usage, "prompt_tokens", None),
+                getattr(response.usage, "completion_tokens", None)
+            )
+
+            return json.loads(raw_response)
+        except Exception as error:
+            last_error = error
+
+            LOGGER.warning(
+                "Groq lỗi | model=%s | attempt=%s/%s | error=%s",
+                GROQ_MODEL,
+                attempt,
+                GROQ_MAX_ATTEMPTS,
+                error
+            )
+    raise ValueError(
+        f"Groq không trả về kết quả hợp lệ sau "
+        f"{GROQ_MAX_ATTEMPTS} lần thử: {last_error}"
+    ) from last_error
 
 def extract_knowledge(content: str, call_model=None) -> dict:
     prompt = f"""

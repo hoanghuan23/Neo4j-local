@@ -15,8 +15,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("post_id", help="Giá trị platform_id của Post")
     parser.add_argument(
         "--model",
-        default="gemma4:e2b",
-        help="Tên model Ollama (mặc định: gemma4:e2b)",
+        default="openai/gpt-oss-20b",
+        help="Tên model Groq (mặc định: openai/gpt-oss-20b)",
     )
     return parser.parse_args()
 
@@ -26,11 +26,11 @@ def main() -> None:
 
     # knowledge_settings đọc model khi được import, vì vậy phải đặt biến môi
     # trường trước khi import các module của knowledge pipeline.
-    os.environ["KNOWLEDGE_MODEL"] = args.model
+    os.environ["GROQ_MODEL"] = args.model
 
     from neo4j import GraphDatabase
 
-    from knowledge_extraction import extract_knowledge
+    from knowledge_extraction import extract_knowledge, call_groq
     from knowledge_settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
     from knowledge_validation import validate_knowledge
 
@@ -65,7 +65,7 @@ def main() -> None:
     print(f"\nNội dung:\n{content}")
 
     started_at = time.perf_counter()
-    raw_result = extract_knowledge(content)
+    raw_result = extract_knowledge(content, call_model=call_groq)
     elapsed_seconds = time.perf_counter() - started_at
 
     print("\n--- RAW MODEL OUTPUT ---")
