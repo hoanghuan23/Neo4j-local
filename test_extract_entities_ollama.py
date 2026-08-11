@@ -927,8 +927,37 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(saved_count, 1)
         save_call = session.run.call_args_list[0]
         self.assertEqual(save_call.kwargs["normalized_name"], "donald trump")
+        self.assertEqual(
+            save_call.kwargs["identity_names"],
+            ["tổng thống trump", "donald trump"],
+        )
         self.assertEqual(save_call.kwargs["name"], "Tổng thống Trump")
         self.assertTrue(save_call.kwargs["is_canonical"])
+
+    def test_merge_entity_returns_identity_resolved_from_alias(self):
+        tx = Mock()
+        tx.run.return_value.single.return_value = {
+            "normalized_name": "donald trump",
+            "entity_type": "PERSON",
+        }
+
+        prepared = subject.upsert_entities(
+            tx,
+            "facebook",
+            "post-1",
+            [{
+                "local_id": "e1",
+                "name": "Trump",
+                "canonical_name": "Trump",
+                "type": "PERSON",
+                "resolution_confidence": "HIGH",
+            }],
+        )["e1"]
+
+        self.assertEqual(prepared["normalized_name"], "donald trump")
+        query = tx.run.call_args.args[0]
+        self.assertIn("candidate.aliases", query)
+        self.assertNotIn("normalized_aliases", query)
 
     def test_upsert_event_removes_legacy_year_properties(self):
         tx = Mock()

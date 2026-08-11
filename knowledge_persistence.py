@@ -14,36 +14,64 @@ MATCH (p:Post {
     platform_id: $post_id
 })
 
-MERGE (e:Entity {
-    normalized_name: $normalized_name,
-    type: $entity_type
-})
-ON CREATE SET
-    e.name = $display_name,
-    e.search_name = $search_name,
-    e.aliases = [$name],
-    e.resolution_confidence = $confidence,
-    e.needs_review = NOT $is_canonical
-ON MATCH SET
-    e.aliases = CASE
-        WHEN e.aliases IS NULL THEN [e.name, $name]
-        WHEN NOT $name IN e.aliases THEN e.aliases + $name
-        ELSE e.aliases
-    END,
+// Prefer the canonical key, but also resolve an incoming spelling through an
+// already-known alias. The toLower/trim fallback supports aliases written by
+// older versions before aliases were normalized on write.
+OPTIONAL MATCH (candidate:Entity {type: $entity_type})
+WHERE candidate.normalized_name IN $identity_names
+   OR any(alias IN coalesce(candidate.aliases, [])
+          WHERE alias IN $identity_names
+             OR toLower(trim(alias)) IN $identity_names)
+WITH p, candidate,
+     CASE
+         WHEN candidate.normalized_name = $normalized_name THEN 0
+         WHEN candidate.normalized_name IN $identity_names THEN 1
+         ELSE 2
+     END AS match_priority
+ORDER BY match_priority
+WITH p, head(collect(candidate)) AS existing
+
+CALL (p, existing) {
+    WITH p, existing
+    WHERE existing IS NOT NULL
+    RETURN existing AS e, false AS created
+
+    UNION
+
+    WITH p, existing
+    WHERE existing IS NULL
+    MERGE (new_entity:Entity {
+        normalized_name: $normalized_name,
+        type: $entity_type
+    })
+    RETURN new_entity AS e, true AS created
+}
+
+SET e.aliases = reduce(
+        aliases = [],
+        alias IN [existing_alias IN coalesce(e.aliases, []) |
+                  toLower(trim(existing_alias))]
+                 + $identity_names |
+        CASE WHEN alias IN aliases THEN aliases ELSE aliases + alias END
+    ),
     e.name = CASE
-        WHEN $is_canonical THEN $display_name
+        WHEN created OR e.name IS NULL THEN $display_name
+        WHEN $is_canonical AND e.normalized_name = $normalized_name
+        THEN $display_name
         ELSE e.name
     END,
     e.search_name = CASE
-        WHEN $is_canonical THEN $search_name
-        ELSE coalesce(e.search_name, $search_name)
+        WHEN created OR e.search_name IS NULL THEN $search_name
+        WHEN $is_canonical AND e.normalized_name = $normalized_name
+        THEN $search_name
+        ELSE e.search_name
     END,
     e.resolution_confidence = CASE
         WHEN e.resolution_confidence = 'HIGH' OR $confidence = 'HIGH'
         THEN 'HIGH'
         WHEN e.resolution_confidence = 'MEDIUM' OR $confidence = 'MEDIUM'
         THEN 'MEDIUM'
-        ELSE 'LOW'
+        ELSE $confidence
     END,
     e.needs_review = CASE
         WHEN e.resolution_confidence = 'HIGH' OR $confidence = 'HIGH'
@@ -52,6 +80,7 @@ ON MATCH SET
     END
 
 MERGE (p)-[:MENTIONS]->(e)
+RETURN e.normalized_name AS normalized_name, e.type AS entity_type
 """
 
 
@@ -59,12 +88,20 @@ def _merge_entity(tx, platform: str, post_id: str, entity: dict) -> dict | None:
     prepared = prepare_entity(entity)
     if prepared is None:
         return None
-    tx.run(
+    result = tx.run(
         ENTITY_MERGE_QUERY,
         platform=platform,
         post_id=post_id,
         **prepared,
-    ).consume()
+    )
+    record = result.single()
+    if record is not None:
+        resolved_name = record.get("normalized_name")
+        resolved_type = record.get("entity_type")
+        if isinstance(resolved_name, str):
+            prepared["normalized_name"] = resolved_name
+        if isinstance(resolved_type, str):
+            prepared["entity_type"] = resolved_type
     return prepared
 
 

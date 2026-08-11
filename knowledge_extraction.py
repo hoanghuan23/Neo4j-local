@@ -473,10 +473,19 @@ def prepare_entity(entity: dict) -> dict | None:
     if not normalized_name:
         return None
 
+    identity_names = list(
+        dict.fromkeys(
+            candidate
+            for value in (name, canonical_name, display_name)
+            if (candidate := normalize_name(value))
+        )
+    )
+
     return {
         "name": name,
         "display_name": display_name,
         "normalized_name": normalized_name,
+        "identity_names": identity_names,
         "search_name": make_search_name(normalized_name),
         "entity_type": entity_type,
         "confidence": confidence,
