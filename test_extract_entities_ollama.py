@@ -116,6 +116,11 @@ class ExtractionTests(unittest.TestCase):
         )
         self.assertIn("evidence_text", event["required"])
         self.assertIn("participant_text", participant["required"])
+        self.assertIn("participant_scope", participant["required"])
+        self.assertEqual(
+            set(participant["properties"]["participant_scope"]["enum"]),
+            {None, "GLOBAL_ROLE", "POST_LOCAL"},
+        )
 
     @patch.object(subject, "call_ollama")
     def test_extract_knowledge_returns_all_sections(self, call_ollama):
@@ -173,6 +178,9 @@ class ExtractionTests(unittest.TestCase):
         self.assertIn("Cơ quan A là ACTOR", prompt)
         self.assertIn("KIỂM TRA ID TRƯỚC KHI TRẢ JSON", prompt)
         self.assertIn('participant_text = "lực lượng tìm kiếm"', prompt)
+        self.assertIn("participant_scope = GLOBAL_ROLE hoặc POST_LOCAL", prompt)
+        self.assertIn('"Đại biểu quốc hội"', prompt)
+        self.assertIn("luôn chọn POST_LOCAL", prompt)
         self.assertIn("tuyệt đối không tạo tham chiếu e2", prompt)
         self.assertIn('bắt buộc có đủ ba LOCATION riêng:', prompt)
         self.assertIn('"Việt Nam", "Hoành Mô" và "Quảng Ninh"', prompt)
@@ -350,12 +358,14 @@ class KnowledgeValidationTests(unittest.TestCase):
     def participant(
         entity_id=None,
         participant_text=None,
+        participant_scope="POST_LOCAL",
         role="PARTICIPANT",
         confidence=0.8,
     ):
         return {
             "entity_id": entity_id,
             "participant_text": participant_text,
+            "participant_scope": participant_scope,
             "role": role,
             "confidence": confidence,
         }
@@ -395,6 +405,33 @@ class KnowledgeValidationTests(unittest.TestCase):
             knowledge["generic_entity_keys"],
             [{"normalized_name": "maryland man", "type": "PERSON"}],
         )
+
+    def test_generic_global_role_becomes_reusable_anonymous_participant(self):
+        content = "Đại biểu quốc hội phát biểu về dự luật."
+        raw = {
+            "entities": [self.entity("e1", "Đại biểu quốc hội")],
+            "events": [
+                self.event(
+                    "ev1",
+                    "STATEMENT",
+                    "Đại biểu quốc hội phát biểu về dự luật",
+                    [
+                        self.participant(
+                            "e1", participant_scope=None, role="SPEAKER"
+                        )
+                    ],
+                )
+            ],
+            "event_relations": [],
+        }
+
+        participant = subject.validate_knowledge(content, raw)["events"][0][
+            "participants"
+        ][0]
+
+        self.assertIsNone(participant["entity_id"])
+        self.assertEqual(participant["participant_text"], "Đại biểu quốc hội")
+        self.assertEqual(participant["participant_scope"], "GLOBAL_ROLE")
 
     def test_conflicting_participant_text_drops_entity_reference(self):
         content = (
@@ -891,6 +928,7 @@ class KnowledgeValidationTests(unittest.TestCase):
             {
                 "entity_id": None,
                 "participant_text": "lực lượng tìm kiếm",
+                "participant_scope": "POST_LOCAL",
                 "role": "ACTOR",
                 "confidence": 1.0,
             },
@@ -900,6 +938,7 @@ class KnowledgeValidationTests(unittest.TestCase):
         participant = {
             "entity_id": None,
             "participant_text": "nữ tài xế",
+            "participant_scope": "POST_LOCAL",
             "role": "SPEAKER",
             "confidence": 1.0,
         }
@@ -913,6 +952,45 @@ class KnowledgeValidationTests(unittest.TestCase):
 
         self.assertEqual(first, second)
 
+    def test_global_role_key_is_shared_across_posts_on_same_platform(self):
+        participant = {
+            "entity_id": None,
+            "participant_text": "Đại biểu quốc hội",
+            "participant_scope": "GLOBAL_ROLE",
+            "role": "SPEAKER",
+            "confidence": 1.0,
+        }
+
+        first = subject.build_anonymous_participant_key(
+            "facebook", "post-1", "event-1", participant
+        )
+        second = subject.build_anonymous_participant_key(
+            "facebook", "post-2", "event-2", participant
+        )
+        third = subject.build_anonymous_participant_key(
+            "tiktok", "post-3", "event-3", participant
+        )
+
+        self.assertEqual(first, second)
+        self.assertNotEqual(second, third)
+
+    def test_post_local_key_is_not_shared_across_posts(self):
+        participant = {
+            "entity_id": None,
+            "participant_text": "một người đàn ông",
+            "participant_scope": "POST_LOCAL",
+            "role": "ACTOR",
+            "confidence": 1.0,
+        }
+
+        first = subject.build_anonymous_participant_key(
+            "facebook", "post-1", "event-1", participant
+        )
+        second = subject.build_anonymous_participant_key(
+            "facebook", "post-2", "event-2", participant
+        )
+
+        self.assertNotEqual(first, second)
 
 class PersistenceTests(unittest.TestCase):
     def test_create_entity_schema_creates_constraint_and_index(self):
@@ -1009,6 +1087,48 @@ class PersistenceTests(unittest.TestCase):
         )
         self.assertNotIn("start_year", event_call.kwargs)
         self.assertNotIn("end_year", event_call.kwargs)
+
+    def test_upsert_global_role_uses_shared_scope_and_safe_cleanup(self):
+        tx = Mock()
+        tx.run.return_value.consume.return_value = None
+        event = {
+            "event_key": "event-1",
+            "type": "STATEMENT",
+            "description": "Đại biểu quốc hội phát biểu",
+            "evidence_text": "Đại biểu quốc hội phát biểu",
+            "status": "COMPLETED",
+            "time_expression": None,
+            "confidence": 1.0,
+            "participants": [
+                {
+                    "entity_id": None,
+                    "participant_text": "Đại biểu quốc hội",
+                    "participant_scope": "GLOBAL_ROLE",
+                    "role": "SPEAKER",
+                    "confidence": 1.0,
+                }
+            ],
+        }
+
+        subject.upsert_events(tx, "facebook", "post-1", [event], {})
+
+        anonymous_call = next(
+            call
+            for call in tx.run.call_args_list
+            if "MERGE (anonymous:AnonymousParticipant" in call.args[0]
+        )
+        self.assertEqual(
+            anonymous_call.kwargs["participant_scope"], "GLOBAL_ROLE"
+        )
+        self.assertEqual(
+            anonymous_call.kwargs["normalized_text"], "đại biểu quốc hội"
+        )
+        self.assertIn("WHEN $participant_scope = 'POST_LOCAL'", anonymous_call.args[0])
+
+        cleanup_query = tx.run.call_args_list[-1].args[0]
+        self.assertIn("WHERE NOT EXISTS", cleanup_query)
+        self.assertIn("DELETE relation", cleanup_query)
+        self.assertNotIn("DETACH DELETE anonymous", cleanup_query)
 
     def test_save_knowledge_marks_success_inside_same_transaction(self):
         tx = Mock()

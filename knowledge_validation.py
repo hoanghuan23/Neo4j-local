@@ -9,7 +9,9 @@ from knowledge_settings import (
     EVENT_ROLES,
     EVENT_STATUSES,
     EVENT_TYPES,
+    GLOBAL_PARTICIPANT_ROLE_EXACT,
     MAX_EVENTS_PER_POST,
+    PARTICIPANT_SCOPES,
     RELATION_EVIDENCE_MARKERS,
 )
 from knowledge_extraction import (
@@ -158,6 +160,15 @@ def _infer_anonymous_participant_text(raw_event: dict) -> str:
     return ""
 
 
+def _resolve_participant_scope(value, participant_text: str) -> str:
+    explicit_scope = _enum_value(value, PARTICIPANT_SCOPES)
+    if explicit_scope is not None:
+        return explicit_scope
+    if normalize_name(participant_text) in GLOBAL_PARTICIPANT_ROLE_EXACT:
+        return "GLOBAL_ROLE"
+    return "POST_LOCAL"
+
+
 def _event_signature(event: dict) -> str:
     participants = sorted(
         _participant_signature(participant) for participant in event["participants"]
@@ -266,6 +277,13 @@ def validate_events(
             participant = {
                 "entity_id": entity_id,
                 "participant_text": participant_text or None,
+                "participant_scope": (
+                    None
+                    if entity_id
+                    else _resolve_participant_scope(
+                        raw_participant.get("participant_scope"), participant_text
+                    )
+                ),
                 "role": role,
                 "confidence": participant_confidence,
             }
@@ -371,13 +389,12 @@ def build_anonymous_participant_key(
     event_key: str,
     participant: dict,
 ) -> str:
-    identity = "|".join(
-        [
-            platform,
-            post_id,
-            normalize_name(participant["participant_text"]),
-        ]
-    )
+    normalized_text = normalize_name(participant["participant_text"])
+    participant_scope = participant.get("participant_scope", "POST_LOCAL")
+    if participant_scope == "GLOBAL_ROLE":
+        identity = f"global_role|{platform}|{normalized_text}"
+    else:
+        identity = f"post_local|{platform}|{post_id}|{normalized_text}"
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 

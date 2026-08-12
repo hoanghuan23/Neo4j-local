@@ -29,7 +29,7 @@ OLLAMA_CONTEXT_TOKENS = max(
 POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "50"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
-KNOWLEDGE_PROMPT_VERSION = "knowledge-v9"
+KNOWLEDGE_PROMPT_VERSION = "knowledge-v10"
 KNOWLEDGE_PIPELINE_ENABLED = os.getenv(
     "KNOWLEDGE_PIPELINE_ENABLED", "true"
 ).strip().casefold() not in {"0", "false", "no", "off"}
@@ -69,6 +69,24 @@ EVENT_ROLES = {
     "SUBJECT",
     "LOCATION",
     "PARTICIPANT",
+}
+PARTICIPANT_SCOPES = {"GLOBAL_ROLE", "POST_LOCAL"}
+# Conservative fallback for generic entities that the model emits with an
+# entity_id and therefore without an anonymous participant scope.
+GLOBAL_PARTICIPANT_ROLE_EXACT = {
+    "công an",
+    "lực lượng công an",
+    "cơ quan công an",
+    "cơ quan chức năng",
+    "đại biểu quốc hội",
+    "lực lượng công an",
+    "lực lượng chức năng",
+    "chính quyền",
+    "chính quyền địa phương",
+    "cơ quan điều tra",
+    "cơ quan tố tụng",
+    "cơ quan quản lý",
+    "nhà chức trách"
 }
 EVENT_RELATION_TYPES = {
     "APPROVES",
@@ -114,6 +132,10 @@ PARTICIPANT_ITEM_SCHEMA = _strict_object(
     {
         "entity_id": {"type": ["string", "null"]},
         "participant_text": {"type": ["string", "null"]},
+        "participant_scope": {
+            "type": ["string", "null"],
+            "enum": [None, *sorted(PARTICIPANT_SCOPES)],
+        },
         "role": {"type": "string", "enum": sorted(EVENT_ROLES)},
         "confidence": {
             "type": "number",
@@ -121,7 +143,13 @@ PARTICIPANT_ITEM_SCHEMA = _strict_object(
             "maximum": 1,
         },
     },
-    ["entity_id", "participant_text", "role", "confidence"],
+    [
+        "entity_id",
+        "participant_text",
+        "participant_scope",
+        "role",
+        "confidence",
+    ],
 )
 
 EVENT_ITEM_SCHEMA = _strict_object(
@@ -230,6 +258,10 @@ GENERIC_ENTITY_EXACT = {
     "camera",
     "camera an ninh",
     "cảnh sát",
+    "công an",
+    "cơ quan chức năng",
+    "đại biểu quốc hội",
+    "lực lượng công an",
     "lực lượng tìm kiếm",
     "lực lượng chức năng",
     "tổ công tác",

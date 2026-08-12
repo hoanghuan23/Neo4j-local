@@ -542,10 +542,21 @@ BƯỚC 3 - PARTICIPANT
 - Mỗi participant có đúng một trong:
   entity_id hoặc participant_text. Trường còn lại phải là null.
 - entity_id chỉ được tham chiếu local_id có thật trong entities.
-- Participant có tên riêng phải dùng entity_id.
+- Participant có tên riêng phải dùng entity_id và participant_scope = null.
 - Participant không có tên riêng phải dùng:
   entity_id = null
   participant_text = nguyên văn cụm mô tả trong bài.
+  participant_scope = GLOBAL_ROLE hoặc POST_LOCAL.
+- Chỉ dùng GLOBAL_ROLE khi participant_text biểu thị một vai trò, chức danh
+  hoặc nhóm chức năng chung có thể được dùng lại giữa nhiều bài viết, không
+  đại diện cho danh tính của một cá nhân cụ thể. Ví dụ: "Đại biểu quốc hội",
+  "lực lượng chức năng", "cơ quan chức năng", "công an",
+  "lực lượng công an". Các tên cơ quan xác định như "Công an Hà Nội" vẫn là
+  Entity ORGANIZATION, không phải anonymous participant.
+- Dùng POST_LOCAL khi participant_text nói tới một người hoặc một nhóm vô danh
+  cụ thể trong ngữ cảnh bài hiện tại. Ví dụ: "một người đàn ông", "nữ tài xế",
+  "nạn nhân", "nghi phạm", "cụ bà 89 tuổi".
+- Khi không chắc có thể dùng chung giữa nhiều bài, luôn chọn POST_LOCAL.
 - Không gộp hai chủ thể khác nhau vào một participant.
 - Phải đưa đủ các chủ thể chính của hành động vào participants.
 - Role phản ánh vai trò trong Event, không phản ánh Entity.type.
@@ -590,7 +601,9 @@ BƯỚC 5 - VALIDATION
 Trước khi trả JSON, kiểm tra:
 1. Mọi local_id là duy nhất.
 2. Mọi participant.entity_id tồn tại trong entities.
-3. Participant không tên riêng luôn dùng participant_text.
+3. Participant không tên riêng luôn dùng participant_text và có
+   participant_scope phù hợp; participant dùng entity_id có
+   participant_scope = null.
 4. Không dùng Entity khác thay cho participant anonymous.
 5. Tên giải đấu/sự kiện có tên riêng được tạo thành Entity type EVENT, nhưng không được dùng làm LOCATION participant.
 6. Mọi event_relation chỉ tham chiếu Event tồn tại.

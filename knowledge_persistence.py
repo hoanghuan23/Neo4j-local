@@ -4,7 +4,7 @@ from knowledge_settings import (
     OLLAMA_LOG_PREVIEW_CHARS,
     OLLAMA_MODEL,
 )
-from knowledge_extraction import prepare_entity
+from knowledge_extraction import normalize_name, prepare_entity
 from knowledge_validation import build_anonymous_participant_key
 
 
@@ -231,6 +231,7 @@ def upsert_events(
                 event["event_key"],
                 participant,
             )
+            normalized_text = normalize_name(participant["participant_text"])
             tx.run(
                 """
                 MATCH (p:Post {platform: $platform, platform_id: $post_id})
@@ -238,9 +239,17 @@ def upsert_events(
                 MERGE (anonymous:AnonymousParticipant {
                     participant_key: $participant_key
                 })
-                SET anonymous.post_key = $post_key,
+                ON CREATE SET anonymous.created_at = datetime(),
+                              anonymous.name = $normalized_text
+                SET anonymous.post_key = CASE
+                        WHEN $participant_scope = 'POST_LOCAL' THEN $post_key
+                        ELSE null
+                    END,
                     anonymous.participant_text = $participant_text,
-                    anonymous.name = $participant_text
+                    anonymous.normalized_text = $normalized_text,
+                    anonymous.participant_scope = $participant_scope,
+                    anonymous.platform = $platform,
+                    anonymous.updated_at = datetime()
                 MERGE (p)-[:HAS_ANONYMOUS_PARTICIPANT]->(anonymous)
                 MERGE (event)-[relation:HAS_PARTICIPANT {
                     role: $role
@@ -253,6 +262,8 @@ def upsert_events(
                 participant_key=participant_key,
                 post_key=post_key,
                 participant_text=participant["participant_text"],
+                normalized_text=normalized_text,
+                participant_scope=participant["participant_scope"],
                 role=participant["role"],
                 confidence=participant["confidence"],
             ).consume()
@@ -260,9 +271,17 @@ def upsert_events(
     tx.run(
         """
         MATCH (p:Post {platform: $platform, platform_id: $post_id})
-              -[:HAS_ANONYMOUS_PARTICIPANT]->(anonymous:AnonymousParticipant)
+              -[relation:HAS_ANONYMOUS_PARTICIPANT]
+              ->(anonymous:AnonymousParticipant)
+        WHERE NOT EXISTS {
+            MATCH (p)-[:DESCRIBES]->(:Event)
+                     -[:HAS_PARTICIPANT]->(anonymous)
+        }
+        DELETE relation
+        WITH DISTINCT anonymous
         WHERE NOT (anonymous)<-[:HAS_PARTICIPANT]-(:Event)
-        DETACH DELETE anonymous
+          AND NOT (anonymous)<-[:HAS_ANONYMOUS_PARTICIPANT]-(:Post)
+        DELETE anonymous
         """,
         platform=platform,
         post_id=post_id,
