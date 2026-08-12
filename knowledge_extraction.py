@@ -23,6 +23,7 @@ from knowledge_settings import (
     LOGGER,
     MAX_EVENTS_PER_POST,
     NULL_STRINGS,
+    OLLAMA_CONTEXT_TOKENS,
     OLLAMA_LOG_PREVIEW_CHARS,
     OLLAMA_MAX_ATTEMPTS,
     OLLAMA_MODEL,
@@ -226,7 +227,10 @@ def call_ollama(prompt: str, output_schema: dict) -> dict:
         "stream": False,
         "think": False,
         "format": output_schema,
-        "options": {"temperature": 0},
+        "options": {
+            "temperature": 0,
+            "num_ctx": OLLAMA_CONTEXT_TOKENS,
+        },
         "prompt": prompt,
     }
     last_error = None
@@ -239,11 +243,14 @@ def call_ollama(prompt: str, output_schema: dict) -> dict:
             timeout=OLLAMA_TIMEOUT_SECONDS,
         )
         LOGGER.info(
-            "Ollama HTTP %s | model=%s | attempt=%s/%s | response_bytes=%s",
+            "Ollama HTTP %s | model=%s | attempt=%s/%s | context_tokens=%s "
+            "| prompt_chars=%s | response_bytes=%s",
             response.status_code,
             OLLAMA_MODEL,
             attempt,
             OLLAMA_MAX_ATTEMPTS,
+            OLLAMA_CONTEXT_TOKENS,
+            len(prompt),
             len(response.content),
         )
         response.raise_for_status()
@@ -365,132 +372,241 @@ def call_groq(prompt: str, output_schema: dict) -> dict:
 
 def extract_knowledge(content: str, call_model=None) -> dict:
     prompt = f"""
-Bạn trích xuất tri thức trực tiếp từ văn bản theo đúng JSON schema.
+Bạn trích xuất tri thức trực tiếp từ văn bản và chỉ trả JSON đúng schema.
 
 BƯỚC 1 - ENTITY CÓ TÊN
-- Chỉ trả PERSON, ORGANIZATION, LOCATION có tên riêng và nhận diện toàn cục.
-- Với mỗi cụm từ, trước tiên phải xác nhận đó thực sự là tên riêng của một người,
-  tổ chức hoặc địa điểm. Nếu không chắc cụm từ thuộc một trong ba nhóm này thì
-  bỏ qua; tuyệt đối không chọn LOCATION chỉ để khớp JSON schema.
-- Không tạo Entity cho ngày, tháng, thứ, năm hoặc biểu thức thời gian, ví dụ:
-  "ngày 7", "tháng 8", "thứ 6", "hôm nay", "sáng 02/8". Chúng chỉ có thể
-  xuất hiện trong time_expression của một Event thực tế. Nếu bài chỉ thông báo
-  ngày tháng mà không có Event thực tế thì trả entities và events đều là [].
-- Không tạo Entity cho giá cả, hàng hóa, chỉ số kinh tế hoặc chủ đề tin tức
-  chung, ví dụ: "giá dầu", "giá vàng", "giá xăng", "tỷ giá", "lãi suất",
-  "chứng khoán". Đây không phải PERSON, ORGANIZATION hay LOCATION.
-- Ví dụ "Đọc nhanh 7-8: Giá dầu tăng mạnh; giá vàng biến động ra sao?" không
-  chứa Entity có tên, vì vậy entities là []. Ví dụ "Hôm nay là thứ 6, ngày 7,
-  tháng 8" cũng phải có entities là [] và events là [].
-- Trước khi tạo Event, rà lần lượt từng câu trong toàn bộ văn bản để lấy đủ mọi
-  PERSON, ORGANIZATION và LOCATION có tên riêng, kể cả Entity chỉ xuất hiện một
-  lần hoặc không tham gia Event. Ưu tiên không bỏ sót Entity có bằng chứng trực
-  tiếp trong văn bản.
-- Quốc gia, bang/tỉnh, thành phố, quận và địa danh là LOCATION.
-- LOCATION vẫn phải được lấy khi nó chỉ hướng di chuyển, nơi xuất phát, điểm đến
-  hoặc tuyến đường của Event. Ví dụ câu "vận chuyển từ nước ngoài vào Việt Nam
-  qua khu vực biên giới Hoành Mô (Quảng Ninh)" bắt buộc có đủ ba LOCATION riêng:
-  "Việt Nam", "Hoành Mô" và "Quảng Ninh"; không được chỉ lấy địa điểm gần động
-  từ nhất.
-- Công ty, cơ quan, ủy ban có tên riêng, câu lạc bộ và đội thể thao là ORGANIZATION.
-- Khi một câu chứa tên lồng nhau, vẫn lấy từng tổ chức hoặc địa điểm có tên riêng.
-  Ví dụ "Đội X (Cục Y, Bộ Z)" có thể chứa ba ORGANIZATION; "xã A (tỉnh B)"
-  chứa hai LOCATION. Không bỏ qua đơn vị cấp trên, cấp dưới hoặc địa danh nằm
-  trong ngoặc.
-- Tên giải đấu hoặc sự kiện không phải Entity.
-- Tên người đi kèm kính ngữ/chức danh vẫn bắt buộc là PERSON, kể cả chỉ xuất
-  hiện một lần. Ví dụ "ông Đoàn Bảo Châu", "ông Nguyễn Văn Nhỏ", "bà Nhật Kim Anh" phải tạo Entity có name và
-  canonical_name là "Đoàn Bảo Châu"; không đưa "ông/bà" vào tên chuẩn.
-- Một người có tên xuất hiện nhiều lần chỉ tạo một Entity. Mọi lần người đó tham
-  gia Event đều phải tham chiếu cùng local_id của Entity này.
-- Không đưa mô tả chung vào entities: "a man", "Maryland man", "the victim",
-  "a House panel", "Italian community". Chúng chỉ có thể là participant_text.
-- Không dịch tên, không tạo tên không có trong văn bản, không lấy hashtag/handle.
-- Mỗi Entity có local_id e1, e2... duy nhất. Alias cùng chủ thể dùng cùng
-  canonical_name và type. Chỉ HIGH khi phân giải chắc chắn.
 
-BƯỚC 2 - EVENT CÓ HÀNH ĐỘNG
-- Event là một sự kiện thực tế đã xảy ra, đang xảy ra, hoặc được dự kiến sẽ xảy
-  ra trong thế giới thực, có hành động hoặc thay đổi trạng thái rõ ràng.
-- KHÔNG tạo Event cho cảm xúc, mong muốn, sở thích; câu hỏi, yêu cầu hoặc gợi ý;
-  việc đề cập chung đến một người/vật; hay hành động hội thoại như hỏi, mong chờ,
-  nhắc đến. Với nội dung chỉ thuộc các nhóm này, trả events là [].
-- Không mặc định mỗi câu là Event. Không tạo Event chỉ cho thời gian, địa điểm,
-  sự hiện diện hoặc bối cảnh.
-- Tối đa {MAX_EVENTS_PER_POST} Event cho toàn bộ văn bản. Không tạo nhiều Event
-  cho cùng một câu. Nếu nhiều mô tả cùng nói về một hành động thì gộp thành một
+- Chỉ tạo Entity cho đối tượng có tên riêng hoặc tên định danh rõ ràng và thuộc
+  đúng một trong các type:
+  PERSON, ORGANIZATION, LOCATION, PRODUCT, SOFTWARE, EVENT, MEDIA, VEHICLE.
+
+- Trước khi tạo Entity, phải xác định type dựa trên bản chất của đối tượng.
+  Tuyệt đối không ép một cụm từ vào type gần nhất chỉ để phù hợp JSON schema.
+  Nếu không xác định hợp lý thuộc một trong tám type trên thì bỏ qua.
+
+- PERSON:
+  Người có tên riêng hoặc danh tính xác định.
+  Ví dụ: "Donald Trump", "Lionel Messi", "Nguyễn Văn A".
+  Tên đi kèm kính ngữ/chức danh vẫn là PERSON nhưng bỏ kính ngữ/chức danh khỏi
+  name và canonical_name.
+  Ví dụ: "ông Đoàn Bảo Châu" → "Đoàn Bảo Châu".
+
+- ORGANIZATION:
+  Tổ chức, công ty, cơ quan, ủy ban, trường học, bệnh viện, câu lạc bộ,
+  đội thể thao hoặc đơn vị có tên riêng.
+  Ví dụ: "Apple", "FIFA", "Manchester United", "Bộ Công an".
+  Danh từ chung như "tòa án", "cảnh sát", "cơ quan chức năng",
+  "lực lượng tìm kiếm" không phải Entity nếu không có tên riêng.
+
+- LOCATION:
+  Quốc gia, vùng lãnh thổ, bang/tỉnh, thành phố, quận/huyện, xã/phường,
+  địa danh hoặc địa điểm địa lý có tên riêng.
+  Ví dụ: "Việt Nam", "Hà Nội", "Quảng Ninh", "Hoành Mô".
+  LOCATION vẫn phải được lấy khi là nơi xuất phát, điểm đến, tuyến đường
+  hoặc nơi Event xảy ra.
+
+- PRODUCT:
+  Sản phẩm hoặc dòng sản phẩm có tên riêng.
+  Ví dụ: "iPhone 16 Pro", "PlayStation 5", "Galaxy S26".
+  Không tạo PRODUCT cho danh từ chung như "điện thoại", "máy tính",
+  "tai nghe", "xe" nếu không có tên sản phẩm cụ thể.
+
+- SOFTWARE:
+  Phần mềm, hệ điều hành, ứng dụng, nền tảng phần mềm hoặc phiên bản phần mềm
+  có tên định danh rõ ràng.
+  Ví dụ: "iOS", "iOS 27", "Android 16", "Windows 11", "Photoshop".
+  Phiên bản cụ thể có thể là Entity riêng nếu văn bản đang nói trực tiếp về
+  phiên bản đó.
+  Ví dụ "iOS" và "iOS 27" chỉ tạo riêng khi chúng thực sự được đề cập như
+  hai đối tượng khác nhau; không tự suy diễn phiên bản không có trong văn bản.
+
+- EVENT:
+  Sự kiện, giải đấu, chiến dịch, hội nghị hoặc chương trình có tên riêng,
+  có danh tính tồn tại độc lập và có thể được nhắc lại giữa nhiều bài viết.
+  Ví dụ: "World Cup 2026", "SEA Games 33", "WWDC 2026", "Olympic Games".
+  Không tạo EVENT Entity cho mọi hành động được trích xuất ở BƯỚC 2.
+  Event Entity là TÊN của một sự kiện; Event ở BƯỚC 2 là một hành động/sự việc
+  cụ thể được mô tả trong bài. Hai khái niệm này phải được phân biệt.
+
+- MEDIA:
+  Tác phẩm truyền thông có tên riêng như phim, series, chương trình truyền hình,
+  sách, bài hát, album, trò chơi điện tử hoặc tác phẩm tương tự.
+  Ví dụ: "Squid Game", "Avengers: Endgame", "Grand Theft Auto VI".
+  Không tạo MEDIA cho cụm chung như "bộ phim", "bài hát", "cuốn sách".
+
+- VEHICLE:
+  Phương tiện hoặc mẫu phương tiện có tên/model xác định.
+  Ví dụ: "Tesla Model 3", "Boeing 787", "Honda SH 160i".
+  Không tạo VEHICLE cho mô tả chung như "chiếc xe", "xe máy",
+  "máy bay", "ô tô".
+
+- Không tạo Entity cho ngày, tháng, năm, thứ hoặc biểu thức thời gian.
+  Ví dụ: "ngày 7", "tháng 8", "hôm nay", "sáng 02/8".
+  Thông tin này chỉ được đưa vào time_expression của Event khi phù hợp.
+
+- Không tạo Entity cho số tiền, giá cả, số lượng, tỷ lệ hoặc chỉ số.
+  Ví dụ: "35 triệu đồng", "10 điểm", "5%", "giá dầu tăng 8%".
+
+- Không tạo Entity cho chủ đề hoặc khái niệm chung nếu không phải một đối tượng
+  có tên/định danh riêng.
+  Ví dụ: "giá dầu", "giá vàng", "lãi suất", "chứng khoán",
+  "trí tuệ nhân tạo" không tự động là Entity.
+
+- Không đưa mô tả chung vào entities.
+  Ví dụ: "a man", "Maryland man", "the victim", "nữ tài xế",
+  "nghi phạm", "tòa án", "lực lượng chức năng".
+  Nếu chúng thực sự tham gia Event thì xử lý bằng participant_text.
+
+- Khi một câu chứa nhiều Entity lồng nhau, lấy từng Entity có tên riêng.
+  Ví dụ:
+  "Đội X (Cục Y, Bộ Z)" → 3 ORGANIZATION nếu cả ba là tên xác định.
+  "xã A (tỉnh B)" → 2 LOCATION.
+
+- Không dịch tên Entity.
+- Không tạo tên không xuất hiện hoặc không thể suy ra chắc chắn từ văn bản.
+- Không lấy hashtag hoặc handle làm Entity chỉ vì chúng xuất hiện trong bài.
+
+- Một chủ thể xuất hiện nhiều lần chỉ tạo một Entity.
+  Alias hoặc cách viết khác của cùng chủ thể phải dùng cùng canonical_name,
+  type và cùng local_id khi có thể phân giải chắc chắn.
+
+- Không gộp hai đối tượng khác nhau chỉ vì tên giống nhau hoặc có quan hệ
+  phiên bản/sản phẩm.
+
+  Ví dụ:
+  "Apple" → ORGANIZATION
+  "iPhone 16" → PRODUCT
+  "iOS" → SOFTWARE
+  "iOS 27" → SOFTWARE
+  "World Cup 2026" → EVENT
+
+  Đây là các Entity khác nhau.
+
+- Mỗi Entity có local_id e1, e2... duy nhất.
+- Chỉ đặt resolution_confidence = HIGH khi việc nhận diện và phân giải chủ thể
+  là chắc chắn.
+
+- Trước khi tạo Event ở BƯỚC 2, rà toàn bộ văn bản để lấy đủ mọi Entity có tên
+  thuộc tám type trên, kể cả Entity chỉ xuất hiện một lần hoặc không tham gia
   Event.
-- Phải nhận diện hành động kể cả từ bị chèn ký tự để né kiểm duyệt, 
-  ví dụ "đ/ánh" = "đánh", "b/ắn" = "bắn".
-- Các cụm như "xác minh video", "video ghi lại", "hình ảnh cho thấy" không làm mất sự kiện được mô tả bên trong nội dung
-- Khi nội dung có chủ thể thực hiện hành động và đối tượng chịu tác động, bắt buộc phải tạo Event, kể cả khi chủ thể không có tên riêng.
-- description phải là bản tóm tắt tự đầy đủ của Event. Ngoài hành động chính,
-  phải giữ các chi tiết quan trọng được nói trực tiếp như số tiền, mức phạt, số
-  điểm, số lượng, khoảng cách, thời hạn và hậu quả. Không bịa hoặc suy diễn chi tiết.
-- Nếu câu kế tiếp bổ sung số tiền, số điểm, số lượng, khoảng cách hoặc hậu quả
-  cho hành động ở câu trước, hãy gộp chi tiết đó vào cùng Event; không tạo Event
-  riêng chỉ cho câu bổ sung và không bỏ chi tiết vì câu đó lược chủ ngữ.
-- evidence_text là đoạn nguyên văn ngắn nhất chứng minh cả hành động và các chi
-  tiết quan trọng trong description. Có thể lấy nhiều câu liền kề khi thông tin
-  của cùng Event nằm ở các câu đó.
-- MEETING chỉ là gặp/họp. Nói, cảnh báo, phủ nhận, khuyến nghị là STATEMENT.
-- Đẩy, đánh, tấn công, hất/tạt/ném vào người là ASSAULT. Chết đuối là một
-  DROWNING, không thêm DEATH trùng. Chỉ dùng RESIGNATION hoặc TRANSFER khi nói
-  trực tiếp từ chức/chuyển giao.
-- Thi đấu/giải đấu là SPORTS_EVENT. Loại Event trùng trong cùng Post.
-- Taxonomy duy nhất: STATEMENT, MEETING, APPOINTMENT, APPROVAL, ELECTION,
-  RESIGNATION, ARREST, ASSAULT, ACCIDENT, DEATH, DROWNING, INVESTIGATION,
-  PROTEST, SPORTS_EVENT, TRANSFER, OTHER.
-- Status: PLANNED nếu được lên lịch/dự định; ONGOING nếu đang diễn ra; COMPLETED
-  nếu đã xảy ra/kết thúc rõ; REPORTED nếu nguồn thuật lại và không có trạng thái
-  mạnh hơn; ALLEGED nếu là cáo buộc/chưa xác thực; UNKNOWN nếu thiếu thông tin.
+
+BƯỚC 2 - EVENT
+
+- Event là hành động hoặc thay đổi trạng thái thực tế đã xảy ra, đang xảy ra
+  hoặc được dự kiến sẽ xảy ra.
+- Không tạo Event chỉ cho thời gian, địa điểm, sự hiện diện, bối cảnh,
+  cảm xúc, sở thích, mong muốn hoặc câu hỏi/gợi ý của người đăng.
+- STATEMENT chỉ tạo khi một chủ thể phát biểu, tuyên bố, cảnh báo, phủ nhận,
+  xác nhận, khuyến nghị hoặc đưa ra quan điểm có nội dung thông tin đáng lưu.
+- Một câu có thể chứa nhiều Event nếu có nhiều hành động độc lập.
+  Không tách Event nếu nhiều câu hoặc nhiều mô tả chỉ bổ sung chi tiết cho cùng
+  một hành động.
+- Tối đa {MAX_EVENTS_PER_POST} Event cho toàn bộ văn bản.
+- Nhận diện cả từ bị chèn ký tự để né kiểm duyệt:
+  "đ/ánh" = "đánh", "b/ắn" = "bắn".
+- Các cụm như "video ghi lại", "hình ảnh cho thấy", "xác minh video"
+  không làm mất Event được mô tả bên trong.
+- Nếu có chủ thể thực hiện hành động và đối tượng chịu tác động, vẫn tạo Event
+  kể cả khi một hoặc cả hai không có tên riêng.
+- description phải tự đầy đủ và giữ các chi tiết quan trọng được nói trực tiếp:
+  số tiền, mức phạt, số điểm, số lượng, khoảng cách, thời hạn, kết quả và hậu quả.
+  Không suy diễn.
+- Nếu câu kế tiếp bổ sung chi tiết cho Event trước, gộp vào cùng Event.
+- evidence_text là đoạn nguyên văn ngắn nhất đủ chứng minh hành động và các
+  chi tiết quan trọng. Có thể dùng nhiều câu liền kề nếu cần.
+
+Taxonomy Event duy nhất:
+STATEMENT, MEETING, APPOINTMENT, APPROVAL, ELECTION, RESIGNATION,
+ARREST, ASSAULT, ACCIDENT, DEATH, DROWNING, INVESTIGATION,
+PROTEST, SPORTS_EVENT, TRANSFER, OTHER.
+
+Quy tắc:
+- MEETING chỉ dùng cho gặp/họp.
+- Đánh, đẩy, tấn công, hất/tạt/ném vào người → ASSAULT.
+- Chết đuối → DROWNING; không tạo thêm DEATH cho cùng hành động.
+- Thi đấu, trận đấu hoặc diễn biến của giải đấu → SPORTS_EVENT.
+- RESIGNATION và TRANSFER chỉ dùng khi văn bản nói trực tiếp về từ chức
+  hoặc chuyển giao/chuyển nhượng.
+
+Status phản ánh trạng thái của Event:
+- PLANNED: chưa xảy ra nhưng đã được lên lịch/dự kiến.
+- ONGOING: đang diễn ra.
+- COMPLETED: đã xảy ra hoặc kết thúc.
+- ALLEGED: chỉ là cáo buộc/chưa xác thực.
+- REPORTED: chỉ dùng khi văn bản nói một sự việc được báo cáo nhưng không xác
+  định được trạng thái mạnh hơn.
+- UNKNOWN: không đủ thông tin.
 
 BƯỚC 3 - PARTICIPANT
-- Mỗi participant có đúng một trong entity_id hoặc participant_text; trường còn
-  lại là null.
-- Mọi entity_id trong participants bắt buộc phải trùng với local_id của một Entity
-  đã tồn tại trong mảng entities. Tuyệt đối không tạo entity_id giả hoặc tham chiếu tới Entity không tồn tại.
-- Người/nhóm/cơ quan không tên dùng participant_text và không tạo Entity. Ví dụ: "nữ tài xế", "cụ bà", "người bán",
-  "vị khách", "nghi phạm", "lực lượng tìm kiếm", "tổ công tác"...
-- Với participant không có tên riêng, bắt buộc đặt:
+
+- Mỗi participant có đúng một trong:
+  entity_id hoặc participant_text. Trường còn lại phải là null.
+- entity_id chỉ được tham chiếu local_id có thật trong entities.
+- Participant có tên riêng phải dùng entity_id.
+- Participant không có tên riêng phải dùng:
   entity_id = null
-  participant_text = nguyên văn cụm mô tả xuất hiện trong bài
-- Nếu participant là người có tên riêng, bắt buộc dùng entity_id trỏ tới Entity PERSON
-  và đặt participant_text = null. Không bao giờ đặt họ tên đầy đủ như
-  "ông Đoàn Bảo Châu" vào participant_text.
-- Phải đưa đầy đủ các chủ thể chính của hành động vào participants
-- Không gộp hai chủ thể khác nhau vào một participant. Nếu một tổ chức thực hiện
-  hành động đối với một người không tên, tạo riêng participant dùng entity_id
-  cho tổ chức và participant dùng participant_text cho người không tên.
-- Role phản ánh vai trò trong hành động, không chỉ dựa vào loại đối tượng
-- Tên của chính giải đấu hoặc sự kiện không phải participant và không được gán role LOCATION.
-- Role duy nhất: ACTOR, TARGET, VICTIM, SPEAKER, SUBJECT, LOCATION,
-  ORGANIZATION, PARTICIPANT. Chỉ dùng PARTICIPANT khi không xác định cụ thể hơn.
+  participant_text = nguyên văn cụm mô tả trong bài.
+- Không gộp hai chủ thể khác nhau vào một participant.
+- Phải đưa đủ các chủ thể chính của hành động vào participants.
+- Role phản ánh vai trò trong Event, không phản ánh Entity.type.
 
-BƯỚC 4 - QUAN HỆ EVENT
-- Chỉ APPROVES, CAUSES, ENABLES, PRECEDES, RELATED_TO và chỉ khi evidence_text
-  nói trực tiếp quan hệ. Không suy ra nhân quả từ thứ tự câu hoặc đồng xuất hiện.
-- Mọi reference phải trỏ tới local_id trong cùng JSON. Không có thì trả mảng rỗng.
+Role duy nhất:
+ACTOR, TARGET, VICTIM, SPEAKER, SUBJECT, LOCATION, PARTICIPANT.
 
-BƯỚC 5 - KIỂM TRA ID TRƯỚC KHI TRẢ JSON
-- Lập danh sách toàn bộ local_id thực sự có trong entities. Kiểm tra lại từng
-  entity_id của participants; không được dùng bất kỳ ID nào ngoài danh sách đó.
-- Nếu participant là cụm không có tên riêng như "lực lượng tìm kiếm" hoặc
-  "tổ công tác", luôn sửa thành entity_id = null và participant_text = cụm
-  nguyên văn. Không gán ID của một Entity khác chỉ vì Entity đó có trong bài.
-- Ví dụ: nếu entities chỉ có e1 là "Mặt trận Dân tộc Giải phóng Miền Nam Việt Nam"
-  nhưng actor là "lực lượng tìm kiếm", actor phải dùng entity_id = null,
-  participant_text = "lực lượng tìm kiếm"; tuyệt đối không tạo tham chiếu e2.
+Ý nghĩa:
+- ACTOR: chủ thể thực hiện hành động.
+- TARGET: đối tượng mà hành động hướng tới.
+- VICTIM: người/nhóm chịu thiệt hại, thương tích hoặc hành vi gây hại.
+- SPEAKER: người/tổ chức phát ngôn trong STATEMENT.
+- SUBJECT: chủ đề/chủ thể được nói tới.
+- LOCATION: địa điểm thực nơi Event xảy ra, bắt đầu, kết thúc hoặc đi qua.
+- PARTICIPANT: chỉ dùng khi không xác định được role cụ thể hơn.
 
-Ví dụ sửa lỗi: "A Maryland man pushed another man ... The man drowned" tạo
-ASSAULT và DROWNING với anonymous participants; khuyến nghị của House panel và
-bình luận về Cubs là STATEMENT; một vụ seaplane crash lặp lại chỉ là một ACCIDENT.
-Ví dụ: "Cơ quan A đã xử phạt một nữ tài xế. Mức xử phạt là 35 triệu đồng và
-trừ 10 điểm giấy phép lái xe." phải tạo một Event có description giữ đủ mức phạt
-35 triệu đồng và trừ 10 điểm; participants gồm Cơ quan A là ACTOR và
-"nữ tài xế" là TARGET; evidence_text gồm hai câu liền kề này.
-"Bộ phim mà mình cực mong chờ phần 2 mà chưa thấy, bác nào biết phim tương tự k ạ"
-không có sự kiện thực tế, vì vậy trả events là [].
+Tên của chính giải đấu hoặc Event không phải participant và tuyệt đối không
+được gán role LOCATION.
+
+BƯỚC 4 - EVENT RELATION
+
+Chỉ dùng:
+APPROVES, CAUSES, ENABLES, PRECEDES, RELATED_TO.
+
+- APPROVES: Event nguồn trực tiếp thể hiện sự phê duyệt Event đích.
+- CAUSES: văn bản nói Event nguồn trực tiếp gây ra Event đích.
+- ENABLES: Event nguồn tạo điều kiện cho Event đích xảy ra.
+- PRECEDES: văn bản nói rõ Event nguồn xảy ra trước Event đích.
+- RELATED_TO: văn bản nói rõ hai Event có liên hệ nhưng không phù hợp loại trên.
+
+Chỉ tạo relation khi evidence_text trực tiếp chứng minh quan hệ.
+Không suy ra relation chỉ vì hai Event:
+- cùng nằm trong một Post,
+- cùng Entity,
+- cùng chủ đề,
+- hoặc xuất hiện gần nhau trong văn bản.
+
+Mọi source_event_id và target_event_id phải tham chiếu Event tồn tại trong JSON.
+
+BƯỚC 5 - VALIDATION
+
+Trước khi trả JSON, kiểm tra:
+1. Mọi local_id là duy nhất.
+2. Mọi participant.entity_id tồn tại trong entities.
+3. Participant không tên riêng luôn dùng participant_text.
+4. Không dùng Entity khác thay cho participant anonymous.
+5. Tên giải đấu/sự kiện có tên riêng được tạo thành Entity type EVENT, nhưng không được dùng làm LOCATION participant.
+6. Mọi event_relation chỉ tham chiếu Event tồn tại.
+7. Không có field ngoài JSON schema.
+
+Ví dụ:
+- "Cơ quan A đã xử phạt một nữ tài xế. Mức xử phạt là 35 triệu đồng và
+  trừ 10 điểm giấy phép lái xe."
+  → một Event; Cơ quan A = ACTOR, "nữ tài xế" = TARGET;
+  description giữ 35 triệu đồng và trừ 10 điểm.
+
+- "A Maryland man pushed another man ... The man drowned."
+  → ASSAULT và DROWNING với anonymous participants.
+
+- "Bộ phim mà mình cực mong chờ phần 2 mà chưa thấy, bác nào biết phim tương tự k ạ"
+  → events = [].
 
 Chỉ trả JSON đúng schema, không giải thích.
 

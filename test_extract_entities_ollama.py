@@ -23,6 +23,26 @@ class NormalizationTests(unittest.TestCase):
 
 class OllamaClientTests(unittest.TestCase):
     @patch.object(subject.requests, "post")
+    def test_request_uses_configured_larger_context_window(self, post):
+        response = post.return_value
+        response.status_code = 200
+        response.content = b'{"response":"{}"}'
+        response.json.return_value = {
+            "response": "{}",
+            "done": True,
+            "done_reason": "stop",
+        }
+
+        subject.call_ollama("long prompt", {})
+
+        request_body = post.call_args.kwargs["json"]
+        self.assertEqual(
+            request_body["options"]["num_ctx"],
+            subject.OLLAMA_CONTEXT_TOKENS,
+        )
+        self.assertGreaterEqual(subject.OLLAMA_CONTEXT_TOKENS, 32_768)
+
+    @patch.object(subject.requests, "post")
     def test_empty_model_response_logs_metadata_and_raises_clear_error(self, post):
         response = post.return_value
         response.status_code = 200
@@ -289,6 +309,13 @@ class ExtractionTests(unittest.TestCase):
 
 
 class KnowledgeValidationTests(unittest.TestCase):
+    def test_organization_is_not_a_participant_role(self):
+        self.assertNotIn("ORGANIZATION", subject.EVENT_ROLES)
+        self.assertNotIn(
+            "ORGANIZATION",
+            subject.PARTICIPANT_ITEM_SCHEMA["properties"]["role"]["enum"],
+        )
+
     @staticmethod
     def entity(local_id, name, entity_type="PERSON", confidence="MEDIUM"):
         return {
