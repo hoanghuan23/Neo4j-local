@@ -3,6 +3,11 @@ import json
 import os
 import time
 
+POST_TARGET = {
+    "platform": "facebook",
+    "post_id": "",
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -11,8 +16,6 @@ def parse_args() -> argparse.Namespace:
             "validation hiện tại mà không ghi kết quả vào Neo4j."
         )
     )
-    parser.add_argument("platform", help="Platform của Post, ví dụ: facebook")
-    parser.add_argument("post_id", help="Giá trị platform_id của Post")
     parser.add_argument(
         "--model",
         default="gemma4:e2b",
@@ -23,6 +26,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    platform = POST_TARGET["platform"]
+    post_id = POST_TARGET["post_id"]
+
+    if not platform or not post_id:
+        raise SystemExit(
+            "Hãy gán platform và post_id trong biến POST_TARGET ở đầu file."
+        )
 
     # knowledge_settings đọc model khi được import, vì vậy phải đặt biến môi
     # trường trước khi import các module của knowledge pipeline.
@@ -48,19 +58,19 @@ def main() -> None:
                 })
                 RETURN p.content AS content
                 """,
-                platform=args.platform,
-                post_id=args.post_id,
+                platform=platform,
+                post_id=post_id,
             ).single()
     finally:
         driver.close()
 
     if record is None or not record["content"]:
         raise SystemExit(
-            f"Không tìm thấy nội dung Post {args.platform}:{args.post_id}"
+            f"Không tìm thấy nội dung Post {platform}:{post_id}"
         )
 
     content = record["content"]
-    print(f"Post: {args.platform}:{args.post_id}")
+    print(f"Post: {platform}:{post_id}")
     print(f"Model: {args.model}")
     print(f"\nNội dung:\n{content}")
 
@@ -74,8 +84,8 @@ def main() -> None:
     validated_result = validate_knowledge(
         content,
         raw_result,
-        args.platform,
-        args.post_id,
+        platform,
+        post_id,
     )
     print("\n--- OUTPUT SAU VALIDATION ---")
     print(json.dumps(validated_result, ensure_ascii=False, indent=2))
