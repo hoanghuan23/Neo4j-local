@@ -31,6 +31,10 @@ def get_posts():
                     p.has_images,
                     p.has_videos,
                     p.metric_tier,
+                    (
+                        p.posted_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
+                        AND p.posted_at <= CURRENT_TIMESTAMP
+                    ) AS should_refresh_metric_tier,
                     s.facebook_id,
                     s.facebook_url AS source_url,
                     s.source_name,
@@ -102,6 +106,59 @@ def import_post(tx, row):
     )
 
 
+def update_post_metric_tier(tx, row):
+    tx.run(
+        """
+        MATCH (p:Post {
+            platform: 'facebook',
+            platform_id: $post_platform_id
+        })
+        SET p.metric_tier = $metric_tier
+        """,
+        post_platform_id=str(row["facebook_post_id"]),
+        metric_tier=row["metric_tier"],
+    )
+
+
+def sync_posts(session, posts):
+    existing_post_ids = get_existing_post_ids(session)
+    new_posts = []
+    recent_existing_posts = []
+    seen_post_ids = set()
+    invalid_posts = 0
+
+    for post in posts:
+        post_id = post["facebook_post_id"]
+
+        if post_id is None:
+            invalid_posts += 1
+            continue
+
+        post_id = str(post_id)
+        if post_id in seen_post_ids:
+            continue
+
+        seen_post_ids.add(post_id)
+
+        if post_id not in existing_post_ids:
+            new_posts.append(post)
+        elif post["should_refresh_metric_tier"]:
+            recent_existing_posts.append(post)
+
+    for post in new_posts:
+        session.execute_write(import_post, post)
+
+    for post in recent_existing_posts:
+        session.execute_write(update_post_metric_tier, post)
+
+    return {
+        "new_posts": len(new_posts),
+        "existing_posts": len(seen_post_ids & existing_post_ids),
+        "updated_metric_tiers": len(recent_existing_posts),
+        "invalid_posts": invalid_posts,
+    }
+
+
 def main():
     posts = get_posts()
 
@@ -109,33 +166,18 @@ def main():
 
     try:
         with driver.session(database="neo4j") as session:
-            existing_post_ids = get_existing_post_ids(session)
-            new_posts = []
-            seen_post_ids = set(existing_post_ids)
-            invalid_posts = 0
+            stats = sync_posts(session, posts)
 
-            for post in posts:
-                post_id = post["facebook_post_id"]
-
-                if post_id is None:
-                    invalid_posts += 1
-                    continue
-
-                post_id = str(post_id)
-                if post_id in seen_post_ids:
-                    continue
-
-                seen_post_ids.add(post_id)
-                new_posts.append(post)
-
-            for post in new_posts:
-                session.execute_write(import_post, post)
-
-        skipped_posts = len(posts) - len(new_posts) - invalid_posts
         print(
-            f"Đã import {len(new_posts)} post mới vào Neo4j. "
-            f"Bỏ qua {skipped_posts} post đã có"
-            + (f" và {invalid_posts} post không có ID." if invalid_posts else ".")
+            f"Đã import {stats['new_posts']} post mới vào Neo4j; "
+            f"cập nhật metric_tier cho {stats['updated_metric_tiers']} post "
+            f"trong 24 giờ gần nhất; "
+            f"tìm thấy {stats['existing_posts']} post đã có"
+            + (
+                f" và {stats['invalid_posts']} post không có ID."
+                if stats["invalid_posts"]
+                else "."
+            )
         )
     finally:
         driver.close()
