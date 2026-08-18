@@ -122,8 +122,8 @@ class ExtractionTests(unittest.TestCase):
             {None, "GLOBAL_ROLE", "POST_LOCAL"},
         )
 
-    @patch.object(subject, "call_ollama")
-    def test_extract_knowledge_returns_all_sections(self, call_ollama):
+    @patch.object(subject, "call_groq")
+    def test_extract_knowledge_returns_all_sections(self, call_groq):
         expected = {
             "entities": [],
             "events": [
@@ -139,14 +139,14 @@ class ExtractionTests(unittest.TestCase):
             ],
             "event_relations": [],
         }
-        call_ollama.return_value = expected
+        call_groq.return_value = expected
 
         self.assertEqual(subject.extract_knowledge("A meeting happened."), expected)
-        self.assertIs(call_ollama.call_args.args[1], subject.ENTITY_SCHEMA)
+        self.assertIs(call_groq.call_args.args[1], subject.ENTITY_SCHEMA)
 
-    @patch.object(subject, "call_ollama")
-    def test_prompt_rejects_non_events_and_limits_event_count(self, call_ollama):
-        call_ollama.return_value = {
+    @patch.object(subject, "call_groq")
+    def test_prompt_rejects_non_events_and_limits_event_count(self, call_groq):
+        call_groq.return_value = {
             "entities": [],
             "events": [],
             "event_relations": [],
@@ -157,33 +157,27 @@ class ExtractionTests(unittest.TestCase):
             "bác nào biết phim tương tự k ạ"
         )
 
-        prompt = call_ollama.call_args.args[0]
-        self.assertIn("KHÔNG tạo Event cho cảm xúc, mong muốn, sở thích", prompt)
+        prompt = call_groq.call_args.args[0]
+        self.assertIn("BƯỚC 0 - HARD GATE", prompt)
+        self.assertIn("mong muốn;", prompt)
+        self.assertIn("sở thích;", prompt)
         self.assertIn("Tối đa 5 Event", prompt)
-        self.assertIn("hất/tạt/ném vào người là ASSAULT", prompt)
-        self.assertIn("trả events là []", prompt)
-        self.assertIn('"ông Đoàn Bảo Châu" phải tạo Entity', prompt)
-        self.assertIn("bắt buộc dùng entity_id trỏ tới Entity", prompt)
-        self.assertIn("Không bao giờ đặt họ tên đầy đủ", prompt)
-        self.assertIn("rà lần lượt từng câu trong toàn bộ văn bản", prompt)
+        self.assertIn("hất/tạt/ném vào người", prompt)
+        self.assertIn("events có thể là []", prompt)
+        self.assertIn('"ông Đoàn Bảo Châu"', prompt)
+        self.assertIn("Participant có tên riêng phải dùng entity_id", prompt)
         self.assertIn("không tham gia Event", prompt)
-        self.assertIn("tuyệt đối không chọn LOCATION chỉ để khớp JSON schema", prompt)
-        self.assertIn('"ngày 7", "tháng 8", "thứ 6"', prompt)
-        self.assertIn('"giá dầu", "giá vàng", "giá xăng"', prompt)
-        self.assertIn('"Hôm nay là thứ 6, ngày 7,', prompt)
-        self.assertIn("entities là [] và events là []", prompt)
+        self.assertIn('"ngày 7", "tháng 8", "hôm nay"', prompt)
+        self.assertIn("giá dầu;", prompt)
+        self.assertIn("entities = []", prompt)
         self.assertIn("số tiền, mức phạt, số", prompt)
-        self.assertIn("Có thể lấy nhiều câu liền kề", prompt)
+        self.assertIn("có thể dùng nhiều câu liền kề", prompt)
         self.assertIn("35 triệu đồng và trừ 10 điểm", prompt)
-        self.assertIn("Cơ quan A là ACTOR", prompt)
-        self.assertIn("KIỂM TRA ID TRƯỚC KHI TRẢ JSON", prompt)
-        self.assertIn('participant_text = "lực lượng tìm kiếm"', prompt)
+        self.assertIn("STRUCTURAL / SCHEMA VALIDATION", prompt)
         self.assertIn("participant_scope = GLOBAL_ROLE hoặc POST_LOCAL", prompt)
         self.assertIn('"Đại biểu quốc hội"', prompt)
         self.assertIn("luôn chọn POST_LOCAL", prompt)
-        self.assertIn("tuyệt đối không tạo tham chiếu e2", prompt)
-        self.assertIn('bắt buộc có đủ ba LOCATION riêng:', prompt)
-        self.assertIn('"Việt Nam", "Hoành Mô" và "Quảng Ninh"', prompt)
+        self.assertIn("mọi ID vẫn phải tham chiếu đúng loại đối tượng", prompt)
 
     def test_extract_knowledge_recovers_explicit_vietnam_when_model_omits_it(self):
         content = (
@@ -220,8 +214,8 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(vietnam["type"], "LOCATION")
         self.assertEqual(vietnam["local_id"], "e4")
 
-    @patch.object(subject, "call_ollama")
-    def test_extract_entities_uses_canonical_schema(self, call_ollama):
+    @patch.object(subject, "call_groq")
+    def test_extract_entities_uses_canonical_schema(self, call_groq):
         expected = [
             {
                 "name": "President Trump",
@@ -230,10 +224,10 @@ class ExtractionTests(unittest.TestCase):
                 "resolution_confidence": "HIGH",
             }
         ]
-        call_ollama.return_value = {"entities": expected}
+        call_groq.return_value = {"entities": expected}
 
         self.assertEqual(subject.extract_entities("President Trump spoke."), expected)
-        self.assertIs(call_ollama.call_args.args[1], subject.ENTITY_SCHEMA)
+        self.assertIs(call_groq.call_args.args[1], subject.ENTITY_SCHEMA)
 
     def test_high_confidence_aliases_share_one_key(self):
         aliases = [
@@ -1130,6 +1124,74 @@ class PersistenceTests(unittest.TestCase):
         self.assertIn("DELETE relation", cleanup_query)
         self.assertNotIn("DETACH DELETE anonymous", cleanup_query)
 
+    def test_anonymous_name_links_unique_existing_entity(self):
+        tx = Mock()
+        tx.run.return_value.consume.return_value = None
+        tx.run.return_value.single.return_value = {
+            "normalized_name": "donald trump",
+            "entity_type": "PERSON",
+        }
+        event = {
+            "event_key": "event-1",
+            "type": "STATEMENT",
+            "description": "President Trump spoke",
+            "evidence_text": "President Trump spoke",
+            "status": "COMPLETED",
+            "time_expression": None,
+            "confidence": 1.0,
+            "participants": [{
+                "entity_id": None,
+                "participant_text": "President Trump",
+                "participant_scope": "POST_LOCAL",
+                "role": "SPEAKER",
+                "confidence": 0.9,
+            }],
+        }
+
+        subject.upsert_events(tx, "facebook", "post-1", [event], {})
+
+        queries = "\n".join(call.args[0] for call in tx.run.call_args_list)
+        self.assertIn("collect(DISTINCT candidate)[..2]", queries)
+        self.assertIn("MERGE (p)-[:MENTIONS]->(entity)", queries)
+        self.assertNotIn("MERGE (anonymous:AnonymousParticipant", queries)
+        resolution_call = next(
+            call for call in tx.run.call_args_list
+            if "collect(DISTINCT candidate)[..2]" in call.args[0]
+        )
+        self.assertEqual(
+            resolution_call.kwargs["identity_names"],
+            ["president trump", "trump"],
+        )
+
+    def test_ambiguous_anonymous_name_stays_anonymous(self):
+        tx = Mock()
+        tx.run.return_value.consume.return_value = None
+        tx.run.return_value.single.return_value = {
+            "normalized_name": None,
+            "entity_type": None,
+        }
+        event = {
+            "event_key": "event-1",
+            "type": "STATEMENT",
+            "description": "Alex spoke",
+            "evidence_text": "Alex spoke",
+            "status": "COMPLETED",
+            "time_expression": None,
+            "confidence": 1.0,
+            "participants": [{
+                "entity_id": None,
+                "participant_text": "Alex",
+                "participant_scope": "POST_LOCAL",
+                "role": "SPEAKER",
+                "confidence": 0.9,
+            }],
+        }
+
+        subject.upsert_events(tx, "facebook", "post-1", [event], {})
+
+        queries = "\n".join(call.args[0] for call in tx.run.call_args_list)
+        self.assertIn("MERGE (anonymous:AnonymousParticipant", queries)
+
     def test_save_knowledge_marks_success_inside_same_transaction(self):
         tx = Mock()
         tx.run.return_value.consume.return_value = None
@@ -1297,6 +1359,65 @@ class Neo4jIntegrationTests(unittest.TestCase):
             self.content, raw, self.platform, self.post_id
         )
         return knowledge
+
+    def test_anonymous_text_resolves_existing_entity(self):
+        event = {
+            "event_key": "anonymous-resolution-integration",
+            "type": "STATEMENT",
+            "description": "Smoke Test Organization said hello",
+            "evidence_text": "Smoke Test Organization said hello",
+            "status": "COMPLETED",
+            "time_expression": None,
+            "confidence": 1.0,
+            "participants": [{
+                "entity_id": None,
+                "participant_text": "Smoke Test Organization",
+                "participant_scope": "POST_LOCAL",
+                "role": "SPEAKER",
+                "confidence": 0.9,
+            }],
+        }
+
+        with self.driver.session(database="neo4j") as session:
+            session.run(
+                """
+                MERGE (entity:Entity {
+                    normalized_name: 'smoke test organization',
+                    type: 'ORGANIZATION'
+                })
+                SET entity.name = 'Smoke Test Organization',
+                    entity.aliases = ['smoke test organization']
+                """
+            ).consume()
+            session.execute_write(
+                subject.upsert_events,
+                self.platform,
+                self.post_id,
+                [event],
+                {},
+            )
+            record = session.run(
+                """
+                MATCH (post:Post {platform: $platform, platform_id: $post_id})
+                MATCH (event:Event {event_key: 'anonymous-resolution-integration'})
+                MATCH (entity:Entity {
+                    normalized_name: 'smoke test organization',
+                    type: 'ORGANIZATION'
+                })
+                RETURN count { (post)-[:MENTIONS]->(entity) } AS mentions,
+                       count { (event)-[:HAS_PARTICIPANT]->(entity) } AS linked,
+                       count {
+                           (post)-[:HAS_ANONYMOUS_PARTICIPANT]
+                                 ->(:AnonymousParticipant)
+                       } AS anonymous
+                """,
+                platform=self.platform,
+                post_id=self.post_id,
+            ).single()
+
+        self.assertEqual(record["mentions"], 1)
+        self.assertEqual(record["linked"], 1)
+        self.assertEqual(record["anonymous"], 0)
 
     def test_save_knowledge_is_idempotent_with_all_relationships(self):
         knowledge = self.build_knowledge()

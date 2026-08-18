@@ -136,6 +136,90 @@ def upsert_entities(tx, platform: str, post_id: str, entities: list[dict]) -> di
     return entity_lookup
 
 
+_PARTICIPANT_TITLE_PREFIXES = (
+    "u.s. president ",
+    "us president ",
+    "president ",
+    "tổng thống mỹ ",
+    "tổng thống ",
+    "mr. ",
+    "mr ",
+    "ông ",
+)
+
+
+def _participant_identity_names(normalized_text: str) -> list[str]:
+    identity_names = [normalized_text]
+    for prefix in _PARTICIPANT_TITLE_PREFIXES:
+        if normalized_text.startswith(prefix):
+            stripped_name = normalized_text[len(prefix):].strip()
+            if stripped_name:
+                identity_names.append(stripped_name)
+            break
+    return identity_names
+
+
+def _resolve_unique_entity_by_name(tx, normalized_text: str) -> dict | None:
+    """Resolve an anonymous name only when one existing Entity owns it."""
+    record = tx.run(
+        """
+        MATCH (candidate:Entity)
+        WHERE candidate.normalized_name IN $identity_names
+           OR any(alias IN coalesce(candidate.aliases, [])
+                  WHERE alias IN $identity_names
+                     OR toLower(trim(alias)) IN $identity_names)
+        WITH collect(DISTINCT candidate)[..2] AS candidates
+        RETURN CASE WHEN size(candidates) = 1
+                    THEN candidates[0].normalized_name END AS normalized_name,
+               CASE WHEN size(candidates) = 1
+                    THEN candidates[0].type END AS entity_type
+        """,
+        identity_names=_participant_identity_names(normalized_text),
+    ).single()
+    if record is None:
+        return None
+    normalized_name = record.get("normalized_name")
+    entity_type = record.get("entity_type")
+    if not isinstance(normalized_name, str) or not isinstance(entity_type, str):
+        return None
+    return {
+        "normalized_name": normalized_name,
+        "entity_type": entity_type,
+    }
+
+
+def _link_resolved_participant(
+    tx,
+    platform: str,
+    post_id: str,
+    event_key: str,
+    entity: dict,
+    participant: dict,
+) -> None:
+    tx.run(
+        """
+        MATCH (p:Post {platform: $platform, platform_id: $post_id})
+        MATCH (event:Event {event_key: $event_key})
+        MATCH (entity:Entity {
+            normalized_name: $normalized_name,
+            type: $entity_type
+        })
+        MERGE (p)-[:MENTIONS]->(entity)
+        MERGE (event)-[relation:HAS_PARTICIPANT {
+            role: $role
+        }]->(entity)
+        SET relation.confidence = $confidence
+        """,
+        platform=platform,
+        post_id=post_id,
+        event_key=event_key,
+        normalized_name=entity["normalized_name"],
+        entity_type=entity["entity_type"],
+        role=participant["role"],
+        confidence=participant["confidence"],
+    ).consume()
+
+
 def _delete_stale_events(
     tx,
     platform: str,
@@ -225,13 +309,24 @@ def upsert_events(
                 ).consume()
                 continue
 
+            normalized_text = normalize_name(participant["participant_text"])
+            resolved_entity = _resolve_unique_entity_by_name(tx, normalized_text)
+            if resolved_entity is not None:
+                _link_resolved_participant(
+                    tx,
+                    platform,
+                    post_id,
+                    event["event_key"],
+                    resolved_entity,
+                    participant,
+                )
+                continue
             participant_key = build_anonymous_participant_key(
                 platform,
                 post_id,
                 event["event_key"],
                 participant,
             )
-            normalized_text = normalize_name(participant["participant_text"])
             tx.run(
                 """
                 MATCH (p:Post {platform: $platform, platform_id: $post_id})
