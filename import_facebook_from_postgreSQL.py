@@ -30,6 +30,7 @@ def get_posts():
                     p.posted_at,
                     p.has_images,
                     p.has_videos,
+                    p.metric_tier,
                     s.facebook_id,
                     s.facebook_url AS source_url,
                     s.source_name,
@@ -82,7 +83,8 @@ def import_post(tx, row):
             p.url = $post_url,
             p.posted_at = $posted_at,
             p.has_images = $has_images,
-            p.has_videos = $has_videos
+            p.has_videos = $has_videos,
+            p.metric_tier = $metric_tier
 
         MERGE (s)-[:PUBLISHED]->(p)
     """,
@@ -96,6 +98,7 @@ def import_post(tx, row):
         posted_at=row["posted_at"],
         has_images=row["has_images"],
         has_videos=row["has_videos"],
+        metric_tier=row["metric_tier"],
     )
 
 
