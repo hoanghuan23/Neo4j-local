@@ -36,6 +36,7 @@ class OllamaClientTests(unittest.TestCase):
         subject.call_ollama("long prompt", {})
 
         request_body = post.call_args.kwargs["json"]
+        self.assertEqual(request_body["keep_alive"], 0)
         self.assertEqual(
             request_body["options"]["num_ctx"],
             subject.OLLAMA_CONTEXT_TOKENS,

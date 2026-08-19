@@ -225,6 +225,7 @@ def call_ollama(prompt: str, output_schema: dict) -> dict:
     request_body = {
         "model": OLLAMA_MODEL,
         "stream": False,
+        "keep_alive": 0,
         "think": False,
         "format": output_schema,
         "options": {
