@@ -47,6 +47,11 @@ def _load_posts(session) -> list:
                        p.content AS content
                 ORDER BY
                     CASE
+                        WHEN toLower(trim(coalesce(p.metric_tier, ''))) = 'hot'
+                        THEN 0
+                        ELSE 1
+                    END,
+                    CASE
                         WHEN coalesce(p.entity_processed, false) = false THEN 0
                         WHEN coalesce(p.knowledge_processed, false) = false THEN 1
                         ELSE 2
@@ -71,7 +76,13 @@ def _load_posts(session) -> list:
             RETURN p.platform AS platform,
                    p.platform_id AS post_id,
                    p.content AS content
-            ORDER BY p.posted_at DESC
+            ORDER BY
+                CASE
+                    WHEN toLower(trim(coalesce(p.metric_tier, ''))) = 'hot'
+                    THEN 0
+                    ELSE 1
+                END,
+                p.posted_at DESC
             LIMIT $post_limit
             """,
             post_limit=POST_LIMIT,
