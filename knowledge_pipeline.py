@@ -1,6 +1,8 @@
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from langsmith import traceable
+
 from knowledge_settings import (
     KNOWLEDGE_MAX_RETRIES,
     KNOWLEDGE_PIPELINE_ENABLED,
@@ -19,6 +21,25 @@ from knowledge_persistence import (
     save_knowledge_tx,
 )
 from knowledge_validation import validate_knowledge
+
+
+@traceable(
+    name="process-knowledge-post",
+    run_type="chain",
+    tags=["knowledge-pipeline"],
+    process_inputs=lambda inputs: {
+        "platform": inputs["platform"],
+        "post_id": inputs["post_id"],
+        "content": inputs["content"],
+    },
+)
+def _extract_post(
+    extract_knowledge_fn,
+    platform: str,
+    post_id: str,
+    content: str,
+) -> dict:
+    return extract_knowledge_fn(content)
 
 
 def _load_posts(session) -> list:
@@ -104,7 +125,13 @@ def process_new_posts(session, extract_knowledge_fn=extract_knowledge) -> None:
 
     with ThreadPoolExecutor(max_workers=KNOWLEDGE_WORKERS) as executor:
         future_to_post = {
-            executor.submit(extract_knowledge_fn, post["content"]): (index, post)
+            executor.submit(
+                _extract_post,
+                extract_knowledge_fn,
+                post["platform"],
+                post["post_id"],
+                post["content"],
+            ): (index, post)
             for index, post in enumerate(posts, start=1)
         }
         for completed, future in enumerate(as_completed(future_to_post), start=1):

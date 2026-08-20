@@ -11,6 +11,11 @@ from knowledge_settings import (
     GEMINI_OUTPUT_PRICE_PER_MILLION,
     LOGGER,
 )
+from knowledge_tracing import (
+    set_langsmith_model,
+    set_langsmith_usage,
+    trace_llm,
+)
 
 
 TOKENS_PER_MILLION = Decimal("1000000")
@@ -60,7 +65,13 @@ class GeminiKnowledgeCaller:
         self._usage = GeminiUsage()
         self._usage_lock = threading.Lock()
 
+    @trace_llm(
+        name="gemini-knowledge-extraction",
+        provider="google_genai",
+        model=GEMINI_MODEL,
+    )
     def __call__(self, prompt: str, output_schema: dict) -> dict:
+        set_langsmith_model(self.model)
         response = self.client.models.generate_content(
             model=self.model,
             contents=prompt,
@@ -71,6 +82,11 @@ class GeminiKnowledgeCaller:
         )
         usage = _usage_from_response(response)
         self._add_usage(usage)
+        set_langsmith_usage(
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            reasoning_tokens=usage.thinking_tokens,
+        )
 
         raw_response = getattr(response, "text", None)
         if not raw_response:

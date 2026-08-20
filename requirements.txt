@@ -1,0 +1,7 @@
+google-genai
+groq
+langsmith>=0.4.43
+neo4j
+psycopg2-binary
+python-dotenv
+requests

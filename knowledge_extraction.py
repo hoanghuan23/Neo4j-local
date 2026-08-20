@@ -6,6 +6,8 @@ from functools import lru_cache
 from groq import Groq
 import requests
 
+from langsmith import traceable
+
 from knowledge_settings import (
     CONFIDENCE_LEVELS,
     COUNTRY_ENTITY_ALIASES,
@@ -19,6 +21,7 @@ from knowledge_settings import (
     GROQ_TIMEOUT_SECONDS,
     GROQ_MAX_ATTEMPTS,
     KNOWLEDGE_SCHEMA,
+    KNOWLEDGE_PROMPT_VERSION,
     LOCATION_NAME_PATTERN,
     LOGGER,
     MAX_EVENTS_PER_POST,
@@ -31,6 +34,7 @@ from knowledge_settings import (
     OLLAMA_URL,
     ORGANIZATION_NAME_PATTERN,
 )
+from knowledge_tracing import set_langsmith_usage, trace_llm
 
 
 def normalize_name(value: str) -> str:
@@ -221,6 +225,11 @@ def parse_ollama_payload(payload: dict) -> dict:
         raise ValueError("Ollama trả về nội dung không phải JSON hợp lệ") from error
 
 
+@trace_llm(
+    name="ollama-knowledge-extraction",
+    provider="ollama",
+    model=OLLAMA_MODEL,
+)
 def call_ollama(prompt: str, output_schema: dict) -> dict:
     request_body = {
         "model": OLLAMA_MODEL,
@@ -279,6 +288,10 @@ def call_ollama(prompt: str, output_schema: dict) -> dict:
             payload.get("prompt_eval_count"),
             payload.get("eval_count"),
         )
+        set_langsmith_usage(
+            input_tokens=int(payload.get("prompt_eval_count") or 0),
+            output_tokens=int(payload.get("eval_count") or 0),
+        )
 
         try:
             return parse_ollama_payload(payload)
@@ -307,6 +320,11 @@ def call_ollama(prompt: str, output_schema: dict) -> dict:
     )
     raise ValueError(message) from last_error
 
+@trace_llm(
+    name="groq-knowledge-extraction",
+    provider="groq",
+    model=GROQ_MODEL,
+)
 def call_groq(prompt: str, output_schema: dict) -> dict:
     if not GROQ_API_KEY:
         raise ValueError("Chưa cấu hình GROQ_API_KEY trong .env")
@@ -355,6 +373,15 @@ def call_groq(prompt: str, output_schema: dict) -> dict:
                 getattr(response.usage, "completion_tokens", None)
             )
 
+            set_langsmith_usage(
+                input_tokens=int(
+                    getattr(response.usage, "prompt_tokens", None) or 0
+                ),
+                output_tokens=int(
+                    getattr(response.usage, "completion_tokens", None) or 0
+                ),
+            )
+
             return json.loads(raw_response)
         except Exception as error:
             last_error = error
@@ -371,6 +398,12 @@ def call_groq(prompt: str, output_schema: dict) -> dict:
         f"{GROQ_MAX_ATTEMPTS} lần thử: {last_error}"
     ) from last_error
 
+@traceable(
+    name="extract-knowledge",
+    run_type="chain",
+    metadata={"prompt_version": KNOWLEDGE_PROMPT_VERSION},
+    process_inputs=lambda inputs: {"content": inputs["content"]},
+)
 def extract_knowledge(content: str, call_model=None) -> dict:
     prompt = f"""
     Bạn trích xuất tri thức trực tiếp từ văn bản và CHỈ trả JSON đúng schema được yêu cầu.
