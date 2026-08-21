@@ -40,6 +40,17 @@ KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
 KNOWLEDGE_PROMPT_VERSION = "knowledge-v10"
 KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v1"
+EVENT_CONSOLIDATION_VERSION = "event-consolidation-v1"
+EVENT_SUMMARY_VERSION = "event-summary-v1"
+EVENT_AUTO_MERGE_THRESHOLD = float(
+    os.getenv("EVENT_AUTO_MERGE_THRESHOLD", "0.90")
+)
+EVENT_CANDIDATE_WINDOW_DAYS = max(
+    1, int(os.getenv("EVENT_CANDIDATE_WINDOW_DAYS", "7"))
+)
+EVENT_MAX_CANDIDATES = max(
+    1, int(os.getenv("EVENT_MAX_CANDIDATES", "10"))
+)
 KNOWLEDGE_PIPELINE_ENABLED = os.getenv(
     "KNOWLEDGE_PIPELINE_ENABLED", "true"
 ).strip().casefold() not in {"0", "false", "no", "off"}
@@ -216,6 +227,55 @@ KNOWLEDGE_SCHEMA = _strict_object(
         },
     },
     ["entities", "events", "event_relations"],
+)
+
+EVENT_MATCH_DECISIONS = {
+    "SAME_EVENT",
+    "POSSIBLE_SAME_EVENT",
+    "DIFFERENT_EVENT",
+}
+
+EVENT_CONSOLIDATION_SCHEMA = _strict_object(
+    {
+        "decisions": {
+            "type": "array",
+            "items": _strict_object(
+                {
+                    "candidate_event_key": {"type": "string"},
+                    "decision": {
+                        "type": "string",
+                        "enum": sorted(EVENT_MATCH_DECISIONS),
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "reason": {"type": "string"},
+                },
+                [
+                    "candidate_event_key",
+                    "decision",
+                    "confidence",
+                    "reason",
+                ],
+            ),
+        }
+    },
+    ["decisions"],
+)
+
+EVENT_SUMMARY_SCHEMA = _strict_object(
+    {
+        "description": {"type": "string"},
+        "type": {"type": "string", "enum": sorted(EVENT_TYPES)},
+        "status": {"type": "string", "enum": sorted(EVENT_STATUSES)},
+        "source_mention_keys": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    ["description", "type", "status", "source_mention_keys"],
 )
 
 KNOWLEDGE_CLASSIFIER_SCHEMA = _strict_object(

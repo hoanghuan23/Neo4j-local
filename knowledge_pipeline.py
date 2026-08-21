@@ -136,6 +136,7 @@ def process_new_posts(
     session,
     extract_knowledge_fn=extract_knowledge,
     classify_post_fn=classify_knowledge_potential,
+    consolidate_fn=None,
 ) -> dict:
     if KNOWLEDGE_PIPELINE_ENABLED:
         create_knowledge_schema(session)
@@ -173,10 +174,35 @@ def process_new_posts(
             )
             summary[outcome] += 1
 
+    consolidation = {
+        "mentions": 0,
+        "events_created": 0,
+        "auto_merged": 0,
+        "possible": 0,
+        "descriptions_updated": 0,
+        "failed": 0,
+    }
+    if KNOWLEDGE_PIPELINE_ENABLED and consolidate_fn is not None:
+        try:
+            consolidation = consolidate_fn(session)
+        except Exception:
+            LOGGER.exception("Lỗi bước consolidation cuối batch")
+            consolidation["failed"] += 1
+    summary["consolidation"] = consolidation
+
     print(
         "\nTổng kết pipeline: "
         f"{summary['total']} post, {summary['skipped']} skipped, "
         f"{summary['deep']} deep, {summary['failed']} lỗi."
+    )
+    print(
+        "Consolidation: "
+        f"{consolidation['mentions']} mention, "
+        f"{consolidation['events_created']} Event mới, "
+        f"{consolidation['auto_merged']} auto-merge, "
+        f"{consolidation['possible']} nghi vấn, "
+        f"{consolidation['descriptions_updated']} mô tả cập nhật, "
+        f"{consolidation['failed']} lỗi."
     )
     return summary
 

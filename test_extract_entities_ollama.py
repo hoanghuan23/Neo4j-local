@@ -1037,11 +1037,13 @@ class PersistenceTests(unittest.TestCase):
 
         subject.create_knowledge_schema(session)
 
-        self.assertEqual(session.run.call_count, 4)
+        self.assertEqual(session.run.call_count, 6)
         queries = "\n".join(call.args[0] for call in session.run.call_args_list)
         self.assertIn("entity_identity_unique", queries)
         self.assertIn("event_key_unique", queries)
         self.assertIn("anonymous_participant_key_unique", queries)
+        self.assertIn("event_mention_key_unique", queries)
+        self.assertIn("event_mention_consolidation_status", queries)
 
     def test_save_entities_uses_canonical_key_and_alias(self):
         session = Mock()
@@ -1111,7 +1113,9 @@ class PersistenceTests(unittest.TestCase):
         queries = "\n".join(call.args[0] for call in tx.run.call_args_list)
         self.assertIn("REMOVE event.start_year, event.end_year", queries)
         event_call = next(
-            call for call in tx.run.call_args_list if "MERGE (event:Event" in call.args[0]
+            call
+            for call in tx.run.call_args_list
+            if "MERGE (created:Event" in call.args[0]
         )
         self.assertNotIn("start_year", event_call.kwargs)
         self.assertNotIn("end_year", event_call.kwargs)
@@ -1153,7 +1157,11 @@ class PersistenceTests(unittest.TestCase):
         )
         self.assertIn("WHEN $participant_scope = 'POST_LOCAL'", anonymous_call.args[0])
 
-        cleanup_query = tx.run.call_args_list[-1].args[0]
+        cleanup_query = next(
+            call.args[0]
+            for call in tx.run.call_args_list
+            if "WHERE NOT EXISTS" in call.args[0]
+        )
         self.assertIn("WHERE NOT EXISTS", cleanup_query)
         self.assertIn("DELETE relation", cleanup_query)
         self.assertNotIn("DETACH DELETE anonymous", cleanup_query)
@@ -1310,6 +1318,15 @@ class Neo4jIntegrationTests(unittest.TestCase):
         cls.driver.close()
 
     def cleanup(self, session):
+        session.run(
+            """
+            MATCH (p:Post {platform: $platform, platform_id: $post_id})
+                  -[:HAS_EVENT_MENTION]->(mention:EventMention)
+            DETACH DELETE mention
+            """,
+            platform=self.platform,
+            post_id=self.post_id,
+        ).consume()
         session.run(
             """
             MATCH (p:Post {platform: $platform, platform_id: $post_id})

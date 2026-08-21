@@ -193,27 +193,27 @@ def _link_resolved_participant(
     tx,
     platform: str,
     post_id: str,
-    event_key: str,
+    mention_key: str,
     entity: dict,
     participant: dict,
 ) -> None:
     tx.run(
         """
         MATCH (p:Post {platform: $platform, platform_id: $post_id})
-        MATCH (event:Event {event_key: $event_key})
+        MATCH (mention:EventMention {mention_key: $mention_key})
         MATCH (entity:Entity {
             normalized_name: $normalized_name,
             type: $entity_type
         })
         MERGE (p)-[:MENTIONS]->(entity)
-        MERGE (event)-[relation:HAS_PARTICIPANT {
+        MERGE (mention)-[relation:HAS_PARTICIPANT {
             role: $role
         }]->(entity)
         SET relation.confidence = $confidence
         """,
         platform=platform,
         post_id=post_id,
-        event_key=event_key,
+        mention_key=mention_key,
         normalized_name=entity["normalized_name"],
         entity_type=entity["entity_type"],
         role=participant["role"],
@@ -225,18 +225,28 @@ def _delete_stale_events(
     tx,
     platform: str,
     post_id: str,
-    event_keys: list[str],
+    mention_keys: list[str],
 ) -> None:
     tx.run(
         """
         MATCH (p:Post {platform: $platform, platform_id: $post_id})
-        MATCH (p)-[:DESCRIBES]->(old:Event)
-        WHERE NOT old.event_key IN $event_keys
-        DETACH DELETE old
+        OPTIONAL MATCH (p)-[:HAS_EVENT_MENTION]->(old:EventMention)
+        WHERE NOT old.mention_key IN $mention_keys
+        WITH p, collect(DISTINCT old) AS stale
+        FOREACH (mention IN stale | DETACH DELETE mention)
+        WITH p
+        OPTIONAL MATCH (p)-[:DESCRIBES]->(legacy:Event)
+        WHERE coalesce(legacy.schema_version, 1) = 1
+          AND NOT (legacy)<-[:EVIDENCE_FOR]-(:EventMention)
+        WITH p, collect(DISTINCT legacy) AS legacy_events
+        FOREACH (event IN legacy_events | DETACH DELETE event)
+        WITH p
+        MATCH (p)-[description:DESCRIBES]->(:Event)
+        DELETE description
         """,
         platform=platform,
         post_id=post_id,
-        event_keys=event_keys,
+        mention_keys=mention_keys,
     ).consume()
 
 
@@ -247,33 +257,76 @@ def upsert_events(
     events: list[dict],
     entity_lookup: dict,
 ) -> None:
-    event_keys = [event["event_key"] for event in events]
-    _delete_stale_events(tx, platform, post_id, event_keys)
+    mention_keys = [event.get("mention_key", event["event_key"]) for event in events]
+    _delete_stale_events(tx, platform, post_id, mention_keys)
     post_key = f"{platform}:{post_id}"
 
     for event in events:
+        mention_key = event.get("mention_key", event["event_key"])
         tx.run(
             """
             MATCH (p:Post {platform: $platform, platform_id: $post_id})
-            MERGE (event:Event {event_key: $event_key})
-            ON CREATE SET event.created_at = datetime()
-            SET event.type = $event_type,
-                event.description = $description,
-                event.evidence_text = $evidence_text,
-                event.status = $status,
-                event.time_expression = $time_expression,
-                event.confidence = $confidence,
-                event.knowledge_model = $knowledge_model,
-                event.knowledge_prompt_version = $knowledge_prompt_version,
+            MERGE (mention:EventMention {mention_key: $mention_key})
+            ON CREATE SET mention.created_at = datetime(),
+                          mention.consolidation_status = 'PENDING'
+            ON MATCH SET mention.consolidation_status = CASE
+                WHEN coalesce(mention.type, '') <> $event_type
+                  OR coalesce(mention.description, '') <> $description
+                  OR coalesce(mention.evidence_text, '') <> $evidence_text
+                  OR coalesce(mention.status, '') <> $status
+                  OR coalesce(mention.time_expression, '')
+                     <> coalesce($time_expression, '')
+                THEN 'PENDING'
+                ELSE mention.consolidation_status
+            END
+            SET mention.type = $event_type,
+                mention.description = $description,
+                mention.evidence_text = $evidence_text,
+                mention.status = $status,
+                mention.time_expression = $time_expression,
+                mention.confidence = $confidence,
+                mention.platform = $platform,
+                mention.post_id = $post_id,
+                mention.knowledge_model = $knowledge_model,
+                mention.knowledge_prompt_version = $knowledge_prompt_version,
+                mention.updated_at = datetime()
+            WITH p, mention
+            OPTIONAL MATCH (mention)-[:EVIDENCE_FOR]->(known:Event)
+            WITH p, mention, head(collect(known)) AS known
+            CALL (p, known) {
+                WITH p, known
+                WHERE known IS NOT NULL
+                RETURN known AS event
+
+                UNION
+
+                WITH p, known
+                WHERE known IS NULL
+                MERGE (created:Event {event_key: $event_key})
+                ON CREATE SET created.created_at = datetime(),
+                              created.first_seen_at = p.posted_at,
+                              created.schema_version = 2
+                RETURN created AS event
+            }
+            SET event.type = coalesce(event.type, $event_type),
+                event.description = coalesce(event.description, $description),
+                event.status = coalesce(event.status, $status),
+                event.last_seen_at = CASE
+                    WHEN event.last_seen_at IS NULL OR p.posted_at > event.last_seen_at
+                    THEN p.posted_at ELSE event.last_seen_at END,
                 event.updated_at = datetime()
+            REMOVE event.evidence_text, event.time_expression, event.confidence
             REMOVE event.start_year, event.end_year
+            MERGE (p)-[:HAS_EVENT_MENTION]->(mention)
+            MERGE (mention)-[:EVIDENCE_FOR]->(event)
             MERGE (p)-[:DESCRIBES]->(event)
-            WITH event
-            OPTIONAL MATCH (event)-[participant:HAS_PARTICIPANT]->()
+            WITH mention
+            OPTIONAL MATCH (mention)-[participant:HAS_PARTICIPANT]->()
             DELETE participant
             """,
             platform=platform,
             post_id=post_id,
+            mention_key=mention_key,
             event_key=event["event_key"],
             event_type=event["type"],
             description=event["description"],
@@ -292,17 +345,17 @@ def upsert_events(
                     continue
                 tx.run(
                     """
-                    MATCH (event:Event {event_key: $event_key})
+                    MATCH (mention:EventMention {mention_key: $mention_key})
                     MATCH (entity:Entity {
                         normalized_name: $normalized_name,
                         type: $entity_type
                     })
-                    MERGE (event)-[relation:HAS_PARTICIPANT {
+                    MERGE (mention)-[relation:HAS_PARTICIPANT {
                         role: $role
                     }]->(entity)
                     SET relation.confidence = $confidence
                     """,
-                    event_key=event["event_key"],
+                    mention_key=mention_key,
                     normalized_name=entity["normalized_name"],
                     entity_type=entity["entity_type"],
                     role=participant["role"],
@@ -317,7 +370,7 @@ def upsert_events(
                     tx,
                     platform,
                     post_id,
-                    event["event_key"],
+                    mention_key,
                     resolved_entity,
                     participant,
                 )
@@ -325,13 +378,13 @@ def upsert_events(
             participant_key = build_anonymous_participant_key(
                 platform,
                 post_id,
-                event["event_key"],
+                mention_key,
                 participant,
             )
             tx.run(
                 """
                 MATCH (p:Post {platform: $platform, platform_id: $post_id})
-                MATCH (event:Event {event_key: $event_key})
+                MATCH (mention:EventMention {mention_key: $mention_key})
                 MERGE (anonymous:AnonymousParticipant {
                     participant_key: $participant_key
                 })
@@ -347,14 +400,14 @@ def upsert_events(
                     anonymous.platform = $platform,
                     anonymous.updated_at = datetime()
                 MERGE (p)-[:HAS_ANONYMOUS_PARTICIPANT]->(anonymous)
-                MERGE (event)-[relation:HAS_PARTICIPANT {
+                MERGE (mention)-[relation:HAS_PARTICIPANT {
                     role: $role
                 }]->(anonymous)
                 SET relation.confidence = $confidence
                 """,
                 platform=platform,
                 post_id=post_id,
-                event_key=event["event_key"],
+                mention_key=mention_key,
                 participant_key=participant_key,
                 post_key=post_key,
                 participant_text=participant["participant_text"],
@@ -370,17 +423,100 @@ def upsert_events(
               -[relation:HAS_ANONYMOUS_PARTICIPANT]
               ->(anonymous:AnonymousParticipant)
         WHERE NOT EXISTS {
-            MATCH (p)-[:DESCRIBES]->(:Event)
+            MATCH (p)-[:HAS_EVENT_MENTION]->(:EventMention)
                      -[:HAS_PARTICIPANT]->(anonymous)
         }
         DELETE relation
         WITH DISTINCT anonymous
-        WHERE NOT (anonymous)<-[:HAS_PARTICIPANT]-(:Event)
+        WHERE NOT (anonymous)<-[:HAS_PARTICIPANT]-(:EventMention)
           AND NOT (anonymous)<-[:HAS_ANONYMOUS_PARTICIPANT]-(:Post)
         DELETE anonymous
         """,
         platform=platform,
         post_id=post_id,
+    ).consume()
+
+    tx.run(
+        """
+        MATCH (p:Post {platform: $platform, platform_id: $post_id})
+              -[:HAS_EVENT_MENTION]->(:EventMention)-[:EVIDENCE_FOR]->(event:Event)
+        MERGE (p)-[:DESCRIBES]->(event)
+        """,
+        platform=platform,
+        post_id=post_id,
+    ).consume()
+
+    tx.run(
+        """
+        MATCH (event:Event {schema_version: 2})
+        WHERE NOT (event)<-[:EVIDENCE_FOR]-(:EventMention)
+        DETACH DELETE event
+        """
+    ).consume()
+
+    refresh_canonical_event_projections(tx)
+
+
+def refresh_canonical_event_projections(tx) -> None:
+    """Rebuild materialized Event fields from their source mentions."""
+    tx.run(
+        """
+        MATCH (event:Event {schema_version: 2})
+        OPTIONAL MATCH (event)-[old:HAS_PARTICIPANT]->()
+        DELETE old
+        """
+    ).consume()
+    tx.run(
+        """
+        MATCH (mention:EventMention)-[support:HAS_PARTICIPANT]->(participant)
+        MATCH (mention)-[:EVIDENCE_FOR]->(event:Event {schema_version: 2})
+        WITH event, participant, support.role AS role,
+             max(support.confidence) AS confidence
+        MERGE (event)-[relation:HAS_PARTICIPANT {role: role}]->(participant)
+        SET relation.confidence = confidence
+        """
+    ).consume()
+    refresh_canonical_event_relations(tx)
+
+
+def refresh_canonical_event_relations(tx) -> None:
+    """Rebuild canonical relations and suppress self-links after merges."""
+    tx.run(
+        """
+        MATCH (source:Event {schema_version: 2})-[relation]->(target:Event)
+        WHERE type(relation) IN $relation_types
+        DELETE relation
+        """,
+        relation_types=sorted(EVENT_RELATION_TYPES),
+    ).consume()
+    for relation_type in sorted(EVENT_RELATION_TYPES):
+        tx.run(
+            f"""
+            MATCH (source_mention:EventMention)-[support:{relation_type}]
+                  ->(target_mention:EventMention)
+            MATCH (source_mention)-[:EVIDENCE_FOR]->(source:Event)
+            MATCH (target_mention)-[:EVIDENCE_FOR]->(target:Event)
+            WHERE source <> target
+            WITH source, target, collect(DISTINCT support.evidence_text) AS evidence
+            MERGE (source)-[relation:{relation_type}]->(target)
+            SET relation.evidence_texts = evidence,
+                relation.knowledge_prompt_version = $knowledge_prompt_version
+            """,
+            knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
+        ).consume()
+    tx.run(
+        """
+        MATCH (event:Event {schema_version: 2})
+        OPTIONAL MATCH (post:Post)-[:HAS_EVENT_MENTION]->(mention:EventMention)
+                       -[:EVIDENCE_FOR]->(event)
+        WITH event, count(DISTINCT mention) AS member_count,
+             min(post.posted_at) AS first_seen_at,
+             max(post.posted_at) AS last_seen_at
+        SET event.member_count = member_count,
+            event.first_seen_at = first_seen_at,
+            event.last_seen_at = last_seen_at,
+            event.updated_at = datetime()
+        """
     ).consume()
 
 
@@ -389,16 +525,19 @@ def upsert_event_relations(
     events: list[dict],
     relations: list[dict],
 ) -> None:
-    local_to_key = {event["local_id"]: event["event_key"] for event in events}
-    event_keys = list(local_to_key.values())
+    local_to_key = {
+        event["local_id"]: event.get("mention_key", event["event_key"])
+        for event in events
+    }
+    mention_keys = list(local_to_key.values())
     tx.run(
         """
-        MATCH (source:Event)-[relation]->(target:Event)
-        WHERE source.event_key IN $event_keys
+        MATCH (source:EventMention)-[relation]->(target:EventMention)
+        WHERE source.mention_key IN $mention_keys
           AND type(relation) IN $relation_types
         DELETE relation
         """,
-        event_keys=event_keys,
+        mention_keys=mention_keys,
         relation_types=sorted(EVENT_RELATION_TYPES),
     ).consume()
 
@@ -407,19 +546,21 @@ def upsert_event_relations(
         if relation_type not in EVENT_RELATION_TYPES:
             continue
         query = f"""
-            MATCH (source:Event {{event_key: $source_event_key}})
-            MATCH (target:Event {{event_key: $target_event_key}})
+            MATCH (source:EventMention {{mention_key: $source_mention_key}})
+            MATCH (target:EventMention {{mention_key: $target_mention_key}})
             MERGE (source)-[relation:{relation_type}]->(target)
             SET relation.evidence_text = $evidence_text,
                 relation.knowledge_prompt_version = $knowledge_prompt_version
         """
         tx.run(
             query,
-            source_event_key=local_to_key[relation["source_event_id"]],
-            target_event_key=local_to_key[relation["target_event_id"]],
+            source_mention_key=local_to_key[relation["source_event_id"]],
+            target_mention_key=local_to_key[relation["target_event_id"]],
             evidence_text=relation["evidence_text"],
             knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
         ).consume()
+
+    refresh_canonical_event_relations(tx)
 
 
 def save_knowledge_tx(
@@ -560,4 +701,13 @@ def create_knowledge_schema(session) -> None:
         CREATE CONSTRAINT anonymous_participant_key_unique IF NOT EXISTS
         FOR (participant:AnonymousParticipant)
         REQUIRE participant.participant_key IS UNIQUE
+        """).consume()
+    session.run("""
+        CREATE CONSTRAINT event_mention_key_unique IF NOT EXISTS
+        FOR (mention:EventMention)
+        REQUIRE mention.mention_key IS UNIQUE
+        """).consume()
+    session.run("""
+        CREATE INDEX event_mention_consolidation_status IF NOT EXISTS
+        FOR (mention:EventMention) ON (mention.consolidation_status)
         """).consume()

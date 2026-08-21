@@ -26,11 +26,13 @@ from knowledge_persistence import (
 )
 from knowledge_pipeline import _load_posts
 from knowledge_pipeline import process_new_posts as _process_new_posts
+from knowledge_consolidation import consolidate_pending_mentions
 from knowledge_gemini import GeminiKnowledgeCaller
 from knowledge_settings import *
 from knowledge_validation import (
     build_anonymous_participant_key,
     build_event_key,
+    build_mention_key,
     has_actionable_event,
     validate_entities,
     validate_event_relations,
@@ -57,6 +59,7 @@ def process_new_posts(session) -> None:
     """Process posts with Gemini and print actual token-based cost."""
     classifier_caller = GeminiKnowledgeCaller()
     extraction_caller = GeminiKnowledgeCaller()
+    consolidation_caller = GeminiKnowledgeCaller()
     summary = {"deep": 0}
     try:
         summary = _process_new_posts(
@@ -71,6 +74,10 @@ def process_new_posts(session) -> None:
                 content,
                 call_model=extraction_caller,
             ),
+            consolidate_fn=lambda session: consolidate_pending_mentions(
+                session,
+                call_model=consolidation_caller,
+            ),
         )
     finally:
         classifier_caller.print_cost_summary(
@@ -81,8 +88,13 @@ def process_new_posts(session) -> None:
             target_posts=summary["deep"],
             stage_label="PHÂN TÍCH SÂU",
         )
+        consolidation_caller.print_cost_summary(
+            target_posts=summary.get("consolidation", {}).get("mentions", 0),
+            stage_label="EVENT CONSOLIDATION",
+        )
         classifier_caller.close()
         extraction_caller.close()
+        consolidation_caller.close()
 
 
 def main() -> None:

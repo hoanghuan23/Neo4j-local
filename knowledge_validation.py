@@ -378,9 +378,15 @@ def validate_event_relations(
     return relations
 
 
-def build_event_key(platform: str, post_id: str, event: dict) -> str:
+def build_mention_key(platform: str, post_id: str, event: dict) -> str:
     identity = f"{platform}|{post_id}|{_event_signature(event)}"
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def build_event_key(platform: str, post_id: str, event: dict) -> str:
+    """Build the initial canonical key; it never changes with its summary."""
+    mention_key = build_mention_key(platform, post_id, event)
+    return hashlib.sha256(f"canonical|{mention_key}".encode("utf-8")).hexdigest()
 
 
 def build_anonymous_participant_key(
@@ -416,6 +422,7 @@ def validate_knowledge(
     events = event_validation["events"]
     if platform and post_id:
         for event in events:
+            event["mention_key"] = build_mention_key(platform, post_id, event)
             event["event_key"] = build_event_key(platform, post_id, event)
     for event in events:
         for participant in event["participants"]:
