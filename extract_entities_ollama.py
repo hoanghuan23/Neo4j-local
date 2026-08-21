@@ -38,10 +38,14 @@ from knowledge_validation import (
     validate_knowledge,
 )
 
+# Legacy public patch point retained for older callers and tests. Runtime
+# behavior remains Ollama-backed; the historical name cannot be removed yet.
+call_groq = call_ollama
+
 
 def extract_knowledge(content: str) -> dict:
     """Extract raw knowledge while preserving the legacy patch point."""
-    return _extraction.extract_knowledge(content, call_model=call_ollama)
+    return _extraction.extract_knowledge(content, call_model=call_groq)
 
 
 def extract_entities(content: str) -> list[dict]:
@@ -51,18 +55,34 @@ def extract_entities(content: str) -> list[dict]:
 
 def process_new_posts(session) -> None:
     """Process posts with Gemini and print actual token-based cost."""
-    caller = GeminiKnowledgeCaller()
+    classifier_caller = GeminiKnowledgeCaller()
+    extraction_caller = GeminiKnowledgeCaller()
+    summary = {"deep": 0}
     try:
-        _process_new_posts(
+        summary = _process_new_posts(
             session,
+            classify_post_fn=lambda content: (
+                _extraction.classify_knowledge_potential(
+                    content,
+                    call_model=classifier_caller,
+                )
+            ),
             extract_knowledge_fn=lambda content: _extraction.extract_knowledge(
                 content,
-                call_model=caller,
+                call_model=extraction_caller,
             ),
         )
     finally:
-        caller.print_cost_summary(target_posts=POST_LIMIT)
-        caller.close()
+        classifier_caller.print_cost_summary(
+            target_posts=POST_LIMIT,
+            stage_label="CLASSIFIER",
+        )
+        extraction_caller.print_cost_summary(
+            target_posts=summary["deep"],
+            stage_label="PHÂN TÍCH SÂU",
+        )
+        classifier_caller.close()
+        extraction_caller.close()
 
 
 def main() -> None:

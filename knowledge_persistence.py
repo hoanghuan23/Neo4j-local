@@ -1,5 +1,6 @@
 from knowledge_settings import (
     EVENT_RELATION_TYPES,
+    KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
     KNOWLEDGE_PROMPT_VERSION,
     OLLAMA_LOG_PREVIEW_CHARS,
     OLLAMA_MODEL,
@@ -426,6 +427,8 @@ def save_knowledge_tx(
     platform: str,
     post_id: str,
     knowledge: dict,
+    classification: dict | None = None,
+    classifier_decision: str | None = None,
 ) -> dict:
     post_exists = tx.run(
         """
@@ -437,6 +440,17 @@ def save_knowledge_tx(
     ).single()["post_count"]
     if post_exists != 1:
         raise ValueError(f"Không tìm thấy Post {platform}:{post_id}")
+
+    if classifier_decision == "SKIPPED":
+        tx.run(
+            """
+            MATCH (p:Post {platform: $platform, platform_id: $post_id})
+            OPTIONAL MATCH (p)-[mention:MENTIONS]->(:Entity)
+            DELETE mention
+            """,
+            platform=platform,
+            post_id=post_id,
+        ).consume()
 
     generic_entity_keys = knowledge.get("generic_entity_keys", [])
     if generic_entity_keys:
@@ -469,11 +483,27 @@ def save_knowledge_tx(
             p.knowledge_prompt_version = $knowledge_prompt_version,
             p.knowledge_error = null,
             p.knowledge_retry_count = 0
+        FOREACH (_ IN CASE WHEN $classifier_decision IS NULL THEN [] ELSE [1] END |
+            SET p.knowledge_classifier_has_entity = $classifier_has_entity,
+                p.knowledge_classifier_has_event = $classifier_has_event,
+                p.knowledge_classifier_decision = $classifier_decision,
+                p.knowledge_classifier_model = $knowledge_model,
+                p.knowledge_classifier_prompt_version = $classifier_prompt_version,
+                p.knowledge_classified_at = datetime()
+        )
         """,
         platform=platform,
         post_id=post_id,
         knowledge_model=OLLAMA_MODEL,
         knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
+        classifier_has_entity=(
+            classification.get("has_entity_candidate") if classification else None
+        ),
+        classifier_has_event=(
+            classification.get("has_event_candidate") if classification else None
+        ),
+        classifier_decision=classifier_decision,
+        classifier_prompt_version=KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
     ).consume()
     return {
         "entities": len(entity_lookup),

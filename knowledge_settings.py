@@ -39,6 +39,7 @@ POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
 KNOWLEDGE_PROMPT_VERSION = "knowledge-v10"
+KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v1"
 KNOWLEDGE_PIPELINE_ENABLED = os.getenv(
     "KNOWLEDGE_PIPELINE_ENABLED", "true"
 ).strip().casefold() not in {"0", "false", "no", "off"}
@@ -215,6 +216,14 @@ KNOWLEDGE_SCHEMA = _strict_object(
         },
     },
     ["entities", "events", "event_relations"],
+)
+
+KNOWLEDGE_CLASSIFIER_SCHEMA = _strict_object(
+    {
+        "has_entity_candidate": {"type": "boolean"},
+        "has_event_candidate": {"type": "boolean"},
+    },
+    ["has_entity_candidate", "has_event_candidate"],
 )
 
 # Temporary compatibility alias for existing callers and tests.

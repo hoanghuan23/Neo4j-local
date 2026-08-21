@@ -127,7 +127,12 @@ class GeminiKnowledgeCaller:
         with self._usage_lock:
             return self._usage
 
-    def print_cost_summary(self, *, target_posts: int) -> None:
+    def print_cost_summary(
+        self,
+        *,
+        target_posts: int,
+        stage_label: str | None = None,
+    ) -> None:
         usage = self.usage
         input_price = Decimal(GEMINI_INPUT_PRICE_PER_MILLION)
         output_price = Decimal(GEMINI_OUTPUT_PRICE_PER_MILLION)
@@ -141,7 +146,11 @@ class GeminiKnowledgeCaller:
         )
 
         print("\n" + "=" * 72)
-        print(f"TỔNG KẾT CHI PHÍ GEMINI CHO TỐI ĐA {target_posts} POST")
+        label = f" - {stage_label}" if stage_label else ""
+        print(
+            f"TỔNG KẾT CHI PHÍ GEMINI{label} "
+            f"CHO TỐI ĐA {target_posts} REQUEST"
+        )
         print(f"Model: {self.model}")
         print(f"Số request có usage thực tế: {usage.requests}/{target_posts}")
         print(f"Input tokens thực tế: {usage.input_tokens:,}")
@@ -151,9 +160,9 @@ class GeminiKnowledgeCaller:
             "Billable output tokens: "
             f"{usage.billable_output_tokens:,}"
         )
-        print(f"Chi phí input: ${input_cost:.8f}")
-        print(f"Chi phí output: ${output_cost:.8f}")
-        print(f"TỔNG CHI PHÍ (USD): ${input_cost + output_cost:.8f}")
+        print(f"Chi phí input (Standard): ${input_cost:.8f}")
+        print(f"Chi phí output (Standard): ${output_cost:.8f}")
+        print(f"TỔNG CHI PHÍ (USD, Standard): ${input_cost + output_cost:.8f}")
 
     def close(self) -> None:
         close = getattr(self.client, "close", None)

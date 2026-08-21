@@ -12,7 +12,7 @@ from knowledge_settings import (
     OLLAMA_MODEL,
     POST_LIMIT,
 )
-from knowledge_extraction import extract_knowledge
+from knowledge_extraction import classify_knowledge_potential, extract_knowledge
 from knowledge_persistence import (
     create_entity_schema,
     create_knowledge_schema,
@@ -34,12 +34,33 @@ from knowledge_validation import validate_knowledge
     },
 )
 def _extract_post(
+    classify_post_fn,
     extract_knowledge_fn,
     platform: str,
     post_id: str,
     content: str,
 ) -> dict:
-    return extract_knowledge_fn(content)
+    if not KNOWLEDGE_PIPELINE_ENABLED:
+        return {
+            "classification": None,
+            "classifier_decision": None,
+            "knowledge": extract_knowledge_fn(content),
+        }
+
+    classification = classify_post_fn(content)
+    needs_deep_extraction = (
+        classification["has_entity_candidate"]
+        or classification["has_event_candidate"]
+    )
+    return {
+        "classification": classification,
+        "classifier_decision": "DEEP" if needs_deep_extraction else "SKIPPED",
+        "knowledge": (
+            extract_knowledge_fn(content)
+            if needs_deep_extraction
+            else {"entities": [], "events": [], "event_relations": []}
+        ),
+    }
 
 
 def _load_posts(session) -> list:
@@ -111,7 +132,11 @@ def _load_posts(session) -> list:
     )
 
 
-def process_new_posts(session, extract_knowledge_fn=extract_knowledge) -> None:
+def process_new_posts(
+    session,
+    extract_knowledge_fn=extract_knowledge,
+    classify_post_fn=classify_knowledge_potential,
+) -> dict:
     if KNOWLEDGE_PIPELINE_ENABLED:
         create_knowledge_schema(session)
     else:
@@ -127,6 +152,7 @@ def process_new_posts(session, extract_knowledge_fn=extract_knowledge) -> None:
         future_to_post = {
             executor.submit(
                 _extract_post,
+                classify_post_fn,
                 extract_knowledge_fn,
                 post["platform"],
                 post["post_id"],
@@ -134,9 +160,10 @@ def process_new_posts(session, extract_knowledge_fn=extract_knowledge) -> None:
             ): (index, post)
             for index, post in enumerate(posts, start=1)
         }
+        summary = {"total": len(posts), "skipped": 0, "deep": 0, "failed": 0}
         for completed, future in enumerate(as_completed(future_to_post), start=1):
             original_index, post = future_to_post[future]
-            _save_extracted_post(
+            outcome = _save_extracted_post(
                 session,
                 post,
                 future,
@@ -144,6 +171,14 @@ def process_new_posts(session, extract_knowledge_fn=extract_knowledge) -> None:
                 completed=completed,
                 total=len(posts),
             )
+            summary[outcome] += 1
+
+    print(
+        "\nTổng kết pipeline: "
+        f"{summary['total']} post, {summary['skipped']} skipped, "
+        f"{summary['deep']} deep, {summary['failed']} lỗi."
+    )
+    return summary
 
 
 def _save_extracted_post(
@@ -154,7 +189,7 @@ def _save_extracted_post(
     original_index: int,
     completed: int,
     total: int,
-) -> None:
+) -> str:
     """Validate and persist one completed extraction on the main thread."""
     platform = post["platform"]
     post_id = post["post_id"]
@@ -164,24 +199,33 @@ def _save_extracted_post(
         f"(thứ tự ban đầu: {original_index})"
     )
     try:
-        raw_knowledge = future.result()
+        extraction_result = future.result()
+        raw_knowledge = extraction_result["knowledge"]
+        classification = extraction_result["classification"]
+        classifier_decision = extraction_result["classifier_decision"]
         if not KNOWLEDGE_PIPELINE_ENABLED:
             entities = raw_knowledge["entities"]
             print(json.dumps(entities, ensure_ascii=False, indent=2))
             saved_count = save_entities(session, platform, post_id, entities)
             print(f"Đã lưu {saved_count}/{len(entities)} entity hợp lệ.")
-            return
+            return "deep"
 
         knowledge = validate_knowledge(content, raw_knowledge, platform, post_id)
         print(json.dumps(knowledge, ensure_ascii=False, indent=2))
         counts = session.execute_write(
-            save_knowledge_tx, platform, post_id, knowledge
+            save_knowledge_tx,
+            platform,
+            post_id,
+            knowledge,
+            classification,
+            classifier_decision,
         )
         print(
             "Đã lưu "
             f"{counts['entities']} Entity, {counts['events']} Event, "
             f"{counts['event_relations']} quan hệ Event."
         )
+        return "skipped" if classifier_decision == "SKIPPED" else "deep"
     except Exception as error:
         LOGGER.exception("Lỗi xử lý post %s", post_id)
         if KNOWLEDGE_PIPELINE_ENABLED:
@@ -197,3 +241,4 @@ def _save_extracted_post(
                     "Không thể cập nhật trạng thái lỗi cho %s", post_id
                 )
         print(f"Lỗi post {post_id}: {error}")
+        return "failed"

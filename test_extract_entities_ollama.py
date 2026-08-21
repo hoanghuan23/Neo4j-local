@@ -80,6 +80,39 @@ class OllamaClientTests(unittest.TestCase):
 
 
 class ExtractionTests(unittest.TestCase):
+    def test_classifier_uses_strict_boolean_schema_and_conservative_prompt(self):
+        call_model = Mock(
+            return_value={
+                "has_entity_candidate": False,
+                "has_event_candidate": True,
+            }
+        )
+
+        result = subject._extraction.classify_knowledge_potential(
+            "một người đàn ông bị bắt",
+            call_model=call_model,
+        )
+
+        self.assertEqual(
+            result,
+            {"has_entity_candidate": False, "has_event_candidate": True},
+        )
+        prompt, schema = call_model.call_args.args
+        self.assertIn("ưu tiên recall", prompt)
+        self.assertIn("nếu không chắc chắn", prompt)
+        self.assertIs(schema, subject.KNOWLEDGE_CLASSIFIER_SCHEMA)
+        self.assertFalse(schema["additionalProperties"])
+
+    def test_classifier_rejects_non_boolean_output(self):
+        with self.assertRaisesRegex(ValueError, "boolean"):
+            subject._extraction.classify_knowledge_potential(
+                "caption",
+                call_model=lambda _prompt, _schema: {
+                    "has_entity_candidate": "false",
+                    "has_event_candidate": False,
+                },
+            )
+
     def test_entity_schema_contains_valid_event_fields(self):
         properties = subject.ENTITY_SCHEMA["properties"]
         event_schema = properties["events"]["items"]
@@ -1210,6 +1243,38 @@ class PersistenceTests(unittest.TestCase):
         queries = "\n".join(call.args[0] for call in tx.run.call_args_list)
         self.assertIn("p.knowledge_processed = true", queries)
         self.assertIn("p.knowledge_retry_count = 0", queries)
+
+    def test_classifier_skip_clears_mentions_and_writes_audit_fields(self):
+        tx = Mock()
+        tx.run.return_value.consume.return_value = None
+        tx.run.return_value.single.return_value = {"post_count": 1}
+        knowledge = {
+            "entities": [],
+            "events": [],
+            "event_relations": [],
+            "generic_entity_keys": [],
+        }
+        classification = {
+            "has_entity_candidate": False,
+            "has_event_candidate": False,
+        }
+
+        subject.save_knowledge_tx(
+            tx,
+            "facebook",
+            "post-1",
+            knowledge,
+            classification,
+            "SKIPPED",
+        )
+
+        queries = "\n".join(call.args[0] for call in tx.run.call_args_list)
+        self.assertIn("OPTIONAL MATCH (p)-[mention:MENTIONS]", queries)
+        self.assertIn("p.knowledge_classifier_decision", queries)
+        final_params = tx.run.call_args.kwargs
+        self.assertEqual(final_params["classifier_decision"], "SKIPPED")
+        self.assertFalse(final_params["classifier_has_entity"])
+        self.assertFalse(final_params["classifier_has_event"])
 
     def test_mark_failure_increments_retry_without_marking_success(self):
         tx = Mock()

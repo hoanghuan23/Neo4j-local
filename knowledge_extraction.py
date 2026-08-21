@@ -22,6 +22,8 @@ from knowledge_settings import (
     GROQ_MAX_ATTEMPTS,
     KNOWLEDGE_SCHEMA,
     KNOWLEDGE_PROMPT_VERSION,
+    KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
+    KNOWLEDGE_CLASSIFIER_SCHEMA,
     LOCATION_NAME_PATTERN,
     LOGGER,
     MAX_EVENTS_PER_POST,
@@ -397,6 +399,54 @@ def call_groq(prompt: str, output_schema: dict) -> dict:
         f"Groq không trả về kết quả hợp lệ sau "
         f"{GROQ_MAX_ATTEMPTS} lần thử: {last_error}"
     ) from last_error
+
+
+@traceable(
+    name="classify-knowledge-post",
+    run_type="chain",
+    metadata={"prompt_version": KNOWLEDGE_CLASSIFIER_PROMPT_VERSION},
+    process_inputs=lambda inputs: {"content": inputs["content"]},
+)
+def classify_knowledge_potential(content: str, call_model=None) -> dict:
+    """Conservatively decide whether a post needs full knowledge extraction."""
+    prompt = f"""
+Bạn là classifier bảo thủ cho bước trích xuất tri thức từ bài đăng mạng xã hội.
+Chỉ trả JSON đúng schema, không giải thích và không markdown.
+
+Đặt has_entity_candidate = true nếu văn bản có thể chứa ít nhất một đối tượng
+có tên hoặc định danh riêng thuộc một trong các loại: PERSON, ORGANIZATION,
+LOCATION, PRODUCT, SOFTWARE, EVENT, MEDIA, VEHICLE.
+
+Đặt has_event_candidate = true nếu văn bản có thể trực tiếp tường thuật,
+khẳng định hoặc thông báo ít nhất một hành động, biến cố hay thay đổi trạng thái
+cụ thể đã xảy ra, đang xảy ra hoặc đã được lên kế hoạch. Event vẫn hợp lệ khi
+chỉ có người tham gia vô danh và không có Entity có tên.
+
+Không coi hashtag, handle, danh từ chung, chủ đề, cảm xúc, slogan, câu hỏi hoặc
+caption mô tả chung là tín hiệu chắc chắn. Tuy nhiên đây là gate ưu tiên recall:
+nếu không chắc chắn hoặc cần đọc sâu mới kết luận được, đặt cờ tương ứng = true.
+Chỉ đặt cả hai cờ = false khi chắc chắn văn bản không có Entity có tên và cũng
+không có Event cụ thể.
+
+Văn bản:
+```text
+{content}
+```
+    """.strip()
+
+    if call_model is None:
+        call_model = call_ollama
+    result = call_model(prompt, KNOWLEDGE_CLASSIFIER_SCHEMA)
+    if not isinstance(result, dict):
+        raise ValueError("Classifier không trả về JSON object")
+    entity_candidate = result.get("has_entity_candidate")
+    event_candidate = result.get("has_event_candidate")
+    if type(entity_candidate) is not bool or type(event_candidate) is not bool:
+        raise ValueError("Classifier phải trả về đúng hai giá trị boolean")
+    return {
+        "has_entity_candidate": entity_candidate,
+        "has_event_candidate": event_candidate,
+    }
 
 @traceable(
     name="extract-knowledge",

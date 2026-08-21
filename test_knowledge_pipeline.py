@@ -43,12 +43,78 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         session.execute_write.side_effect = execute_write
 
         with patch.object(subject, "KNOWLEDGE_WORKERS", 2):
-            subject.process_new_posts(session, extract_knowledge_fn=extract)
+            summary = subject.process_new_posts(
+                session,
+                extract_knowledge_fn=extract,
+                classify_post_fn=lambda _content: {
+                    "has_entity_candidate": True,
+                    "has_event_candidate": False,
+                },
+            )
 
         self.assertEqual(len(extraction_threads), 2)
         self.assertNotIn(main_thread, extraction_threads)
         self.assertEqual(write_threads, [main_thread, main_thread])
+        self.assertEqual(summary["deep"], 2)
         create_schema.assert_called_once_with(session)
+
+    @patch.object(subject, "create_knowledge_schema")
+    @patch.object(subject, "validate_knowledge")
+    @patch.object(subject, "_load_posts")
+    def test_classifier_skip_does_not_run_deep_extraction(
+        self,
+        load_posts,
+        validate_knowledge,
+        _create_schema,
+    ):
+        load_posts.return_value = [
+            {"platform": "facebook", "post_id": "1", "content": "a caption"}
+        ]
+        validate_knowledge.return_value = {
+            "entities": [],
+            "events": [],
+            "event_relations": [],
+            "generic_entity_keys": [],
+        }
+        extract = Mock()
+        session = Mock()
+        session.execute_write.return_value = {
+            "entities": 0,
+            "events": 0,
+            "event_relations": 0,
+        }
+
+        summary = subject.process_new_posts(
+            session,
+            extract_knowledge_fn=extract,
+            classify_post_fn=lambda _content: {
+                "has_entity_candidate": False,
+                "has_event_candidate": False,
+            },
+        )
+
+        extract.assert_not_called()
+        self.assertEqual(summary["skipped"], 1)
+        save_call = session.execute_write.call_args.args
+        self.assertEqual(save_call[-1], "SKIPPED")
+
+    def test_extract_post_runs_deep_for_either_candidate_type(self):
+        for classification in (
+            {"has_entity_candidate": True, "has_event_candidate": False},
+            {"has_entity_candidate": False, "has_event_candidate": True},
+        ):
+            with self.subTest(classification=classification):
+                extract = Mock(return_value={"entities": [], "events": []})
+                result = subject._extract_post(
+                    lambda _content: classification,
+                    extract,
+                    "facebook",
+                    "1",
+                    "content",
+                )
+
+                extract.assert_called_once_with("content")
+                self.assertEqual(result["classifier_decision"], "DEEP")
 
     def test_load_posts_applies_configured_limit(self):
         session = Mock()
