@@ -9,6 +9,7 @@ from backend.neo4j_repository import (
     SEARCH_EVENTS_QUERY,
     SEARCH_LEGACY_EVENTS_QUERY,
     Neo4jRepository,
+    make_entity_terms,
 )
 from backend.question_parser import RuleBasedQuestionParser
 
@@ -65,13 +66,30 @@ def test_parser_extracts_entity_without_treating_it_as_location():
     assert parsed.hours == 48
 
 
+def test_parser_supports_multiple_entities_and_weeks():
+    parsed = RuleBasedQuestionParser().parse(
+        "các sự kiện liên quan Huấn Hoa Hồng hoặc Phú Lê trong 2 tuần qua"
+    )
+
+    assert parsed.entity == "Huấn Hoa Hồng hoặc Phú Lê"
+    assert parsed.location is None
+    assert parsed.hours == 336
+
+
+def test_entity_alternatives_become_or_search_terms():
+    assert make_entity_terms("Huấn Hoa Hồng hoặc Phú Lê") == [
+        {"key": "huấn hoa hồng", "search_key": "huan hoa hong"},
+        {"key": "phú lê", "search_key": "phu le"},
+    ]
+
+
 def test_event_query_filters_by_time_and_can_match_post_content():
     assert "post.posted_at IS NOT NULL" in SEARCH_EVENTS_QUERY
     assert "localdatetime() - duration({hours: $hours})" in SEARCH_EVENTS_QUERY
     assert "toLower(coalesce(post.content, '')) CONTAINS $location_key" in (
         SEARCH_EVENTS_QUERY
     )
-    assert "related_entity.normalized_name CONTAINS $entity_key" in (
+    assert "any(term IN $entity_terms" in (
         SEARCH_EVENTS_QUERY
     )
     assert "MATCH (post:Post)-[:DESCRIBES]->(event:Event)" in (

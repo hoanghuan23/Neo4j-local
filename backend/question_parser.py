@@ -6,8 +6,9 @@ from backend.models import ParsedQuestion
 _SPACE_RE = re.compile(r"\s+")
 _HOURS_RE = re.compile(r"\b(\d{1,3})\s*(?:h|giờ|tiếng)\b", re.IGNORECASE)
 _DAYS_RE = re.compile(r"\b(\d{1,2})\s*ngày\b", re.IGNORECASE)
+_WEEKS_RE = re.compile(r"\b(\d{1,2})\s*tuần\b", re.IGNORECASE)
 _TIME_MARKER = (
-    r"(?:trong\s+)?\d+\s*(?:h|giờ|tiếng|ngày)"
+    r"(?:trong\s+)?\d+\s*(?:h|giờ|tiếng|ngày|tuần)"
     r"|hôm\s+nay|hôm\s+qua|gần\s+đây|vừa\s+qua"
 )
 _LOCATION_AFTER_PREPOSITION_RE = re.compile(
@@ -15,7 +16,7 @@ _LOCATION_AFTER_PREPOSITION_RE = re.compile(
     re.IGNORECASE,
 )
 _ENTITY_RE = re.compile(
-    rf"\b(?:liên\s+quan\s+(?:đến|tới)|nhắc\s+(?:đến|tới)|về)\s+"
+    rf"\b(?:liên\s+quan(?:\s+(?:đến|tới))?|nhắc\s+(?:đến|tới)|về)\s+"
     rf"(.+?)(?=\s+(?:(?:ở|tại|khu\s+vực)\s+|(?:{_TIME_MARKER})\b)"
     r"|[?.,!]|$)",
     re.IGNORECASE,
@@ -55,6 +56,10 @@ class RuleBasedQuestionParser:
         days_match = _DAYS_RE.search(text)
         if days_match:
             return min(max(int(days_match.group(1)) * 24, 1), self.max_hours)
+
+        weeks_match = _WEEKS_RE.search(text)
+        if weeks_match:
+            return min(max(int(weeks_match.group(1)) * 7 * 24, 1), self.max_hours)
 
         return min(max(self.default_hours, 1), self.max_hours)
 

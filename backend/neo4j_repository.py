@@ -1,3 +1,4 @@
+import re
 import unicodedata
 from typing import Any
 
@@ -36,22 +37,28 @@ WHERE post.posted_at IS NOT NULL
     OR toLower(coalesce(event.description, '')) CONTAINS $location_key
   )
   AND (
-    $entity_key IS NULL
+    size($entity_terms) = 0
     OR EXISTS {
       MATCH (mention)-[:HAS_PARTICIPANT]->(related_entity:Entity)
-      WHERE related_entity.normalized_name CONTAINS $entity_key
-         OR $entity_key IN coalesce(related_entity.aliases, [])
-         OR related_entity.search_name CONTAINS $entity_search_key
+      WHERE any(term IN $entity_terms WHERE
+        related_entity.normalized_name CONTAINS term.key
+        OR term.key IN coalesce(related_entity.aliases, [])
+        OR related_entity.search_name CONTAINS term.search_key
+      )
     }
     OR EXISTS {
       MATCH (post)-[:MENTIONS]->(related_entity:Entity)
-      WHERE related_entity.normalized_name CONTAINS $entity_key
-         OR $entity_key IN coalesce(related_entity.aliases, [])
-         OR related_entity.search_name CONTAINS $entity_search_key
+      WHERE any(term IN $entity_terms WHERE
+        related_entity.normalized_name CONTAINS term.key
+        OR term.key IN coalesce(related_entity.aliases, [])
+        OR related_entity.search_name CONTAINS term.search_key
+      )
     }
-    OR toLower(coalesce(post.content, '')) CONTAINS $entity_key
-    OR toLower(coalesce(mention.description, '')) CONTAINS $entity_key
-    OR toLower(coalesce(event.description, '')) CONTAINS $entity_key
+    OR any(term IN $entity_terms WHERE
+      toLower(coalesce(post.content, '')) CONTAINS term.key
+      OR toLower(coalesce(mention.description, '')) CONTAINS term.key
+      OR toLower(coalesce(event.description, '')) CONTAINS term.key
+    )
   )
 OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
 OPTIONAL MATCH (mention)-[participation:HAS_PARTICIPANT]->(entity:Entity)
@@ -107,21 +114,27 @@ WHERE post.posted_at IS NOT NULL
     OR toLower(coalesce(event.description, '')) CONTAINS $location_key
   )
   AND (
-    $entity_key IS NULL
+    size($entity_terms) = 0
     OR EXISTS {
       MATCH (event)-[:HAS_PARTICIPANT]->(related_entity:Entity)
-      WHERE related_entity.normalized_name CONTAINS $entity_key
-         OR $entity_key IN coalesce(related_entity.aliases, [])
-         OR related_entity.search_name CONTAINS $entity_search_key
+      WHERE any(term IN $entity_terms WHERE
+        related_entity.normalized_name CONTAINS term.key
+        OR term.key IN coalesce(related_entity.aliases, [])
+        OR related_entity.search_name CONTAINS term.search_key
+      )
     }
     OR EXISTS {
       MATCH (post)-[:MENTIONS]->(related_entity:Entity)
-      WHERE related_entity.normalized_name CONTAINS $entity_key
-         OR $entity_key IN coalesce(related_entity.aliases, [])
-         OR related_entity.search_name CONTAINS $entity_search_key
+      WHERE any(term IN $entity_terms WHERE
+        related_entity.normalized_name CONTAINS term.key
+        OR term.key IN coalesce(related_entity.aliases, [])
+        OR related_entity.search_name CONTAINS term.search_key
+      )
     }
-    OR toLower(coalesce(post.content, '')) CONTAINS $entity_key
-    OR toLower(coalesce(event.description, '')) CONTAINS $entity_key
+    OR any(term IN $entity_terms WHERE
+      toLower(coalesce(post.content, '')) CONTAINS term.key
+      OR toLower(coalesce(event.description, '')) CONTAINS term.key
+    )
   )
 OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
 OPTIONAL MATCH (event)-[participation:HAS_PARTICIPANT]->(entity:Entity)
@@ -160,6 +173,29 @@ def make_search_name(value: str) -> str:
         for character in decomposed
         if unicodedata.category(character) != "Mn"
     ).replace("đ", "d")
+
+
+_ENTITY_ALTERNATIVE_RE = re.compile(
+    r"\s+(?:hoặc|hay)\s+|\s*[,;]\s*",
+    re.IGNORECASE,
+)
+
+
+def make_entity_terms(value: str | None) -> list[dict[str, str]]:
+    if not value:
+        return []
+    alternatives = (
+        alternative.strip()
+        for alternative in _ENTITY_ALTERNATIVE_RE.split(value)
+    )
+    return [
+        {
+            "key": normalize_name(alternative),
+            "search_key": make_search_name(alternative),
+        }
+        for alternative in alternatives
+        if alternative
+    ]
 
 
 class Neo4jRepository:
@@ -202,13 +238,10 @@ class Neo4jRepository:
             raise RuntimeError("Neo4j chưa được kết nối")
         location_key = normalize_name(location) if location else None
         location_search_key = make_search_name(location) if location else None
-        entity_key = normalize_name(entity) if entity else None
-        entity_search_key = make_search_name(entity) if entity else None
         parameters = {
             "location_key": location_key,
             "location_search_key": location_search_key,
-            "entity_key": entity_key,
-            "entity_search_key": entity_search_key,
+            "entity_terms": make_entity_terms(entity),
             "hours": hours,
         }
         with self.driver.session(database=self.settings.neo4j_database) as session:

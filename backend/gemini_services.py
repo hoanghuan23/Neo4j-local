@@ -124,8 +124,9 @@ class GeminiQuestionParser:
             contents=(
                 "Phân tích câu hỏi tìm kiếm sự kiện tiếng Việt dưới đây. "
                 "location chỉ chứa một địa điểm được yêu cầu hoặc null. "
-                "entity chỉ chứa một người, tổ chức hoặc chủ thể mà câu hỏi "
-                "muốn tìm sự kiện liên quan, hoặc null; không đặt tên người "
+                "entity chứa người, tổ chức hoặc chủ thể mà câu hỏi muốn tìm "
+                "sự kiện liên quan, hoặc null. Nếu có nhiều chủ thể lựa chọn, "
+                "giữ đủ tên và nối bằng ' hoặc '; không đặt tên người "
                 "vào location. Quy đổi số ngày sang giờ, dùng 24 giờ nếu "
                 "không nêu khoảng thời gian, và giới hạn hours trong khoảng "
                 "1 đến 720. Intent luôn là "
