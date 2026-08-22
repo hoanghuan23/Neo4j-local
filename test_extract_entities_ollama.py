@@ -78,6 +78,32 @@ class OllamaClientTests(unittest.TestCase):
         self.assertFalse(post.call_args.kwargs["json"]["think"])
         self.assertEqual(post.call_count, subject.OLLAMA_MAX_ATTEMPTS)
 
+    @patch.object(subject, "_process_new_posts")
+    @patch.object(subject, "consolidate_pending_mentions")
+    @patch.object(subject._extraction, "extract_knowledge")
+    @patch.object(subject._extraction, "classify_knowledge_potential")
+    @patch.object(subject, "call_ollama")
+    def test_pipeline_uses_ollama_for_every_model_stage(
+        self,
+        call_ollama,
+        classify,
+        extract,
+        consolidate,
+        process,
+    ):
+        process.return_value = {"deep": 1}
+
+        result = subject.process_new_posts("session")
+
+        self.assertEqual(result, {"deep": 1})
+        kwargs = process.call_args.kwargs
+        kwargs["classify_post_fn"]("content")
+        kwargs["extract_knowledge_fn"]("content")
+        kwargs["consolidate_fn"]("session")
+        classify.assert_called_once_with("content", call_model=call_ollama)
+        extract.assert_called_once_with("content", call_model=call_ollama)
+        consolidate.assert_called_once_with("session", call_model=call_ollama)
+
 
 class ExtractionTests(unittest.TestCase):
     def test_classifier_uses_strict_value_schema_and_prompt(self):
