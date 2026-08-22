@@ -39,7 +39,7 @@ POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
 KNOWLEDGE_PROMPT_VERSION = "knowledge-v10"
-KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v1"
+KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v2"
 EVENT_CONSOLIDATION_VERSION = "event-consolidation-v1"
 EVENT_SUMMARY_VERSION = "event-summary-v1"
 EVENT_AUTO_MERGE_THRESHOLD = float(
@@ -278,12 +278,29 @@ EVENT_SUMMARY_SCHEMA = _strict_object(
     ["description", "type", "status", "source_mention_keys"],
 )
 
+KNOWLEDGE_DEEP_REASON_CODES = {
+    "SUBSTANTIVE_EVENT_OR_CHANGE",
+    "DURABLE_ENTITY_INFORMATION",
+}
+KNOWLEDGE_SKIP_REASON_CODES = {
+    "SOCIAL_OR_CEREMONIAL",
+    "ROUTINE_PROMOTION",
+    "LOW_INFORMATION_OR_TRIVIAL",
+    "OPINION_ENGAGEMENT_OR_GENERIC",
+}
+KNOWLEDGE_CLASSIFIER_REASON_CODES = (
+    KNOWLEDGE_DEEP_REASON_CODES | KNOWLEDGE_SKIP_REASON_CODES
+)
+
 KNOWLEDGE_CLASSIFIER_SCHEMA = _strict_object(
     {
-        "has_entity_candidate": {"type": "boolean"},
-        "has_event_candidate": {"type": "boolean"},
+        "should_deep_analyze": {"type": "boolean"},
+        "reason_code": {
+            "type": "string",
+            "enum": sorted(KNOWLEDGE_CLASSIFIER_REASON_CODES),
+        },
     },
-    ["has_entity_candidate", "has_event_candidate"],
+    ["should_deep_analyze", "reason_code"],
 )
 
 # Temporary compatibility alias for existing callers and tests.

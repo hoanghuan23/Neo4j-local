@@ -625,23 +625,25 @@ def save_knowledge_tx(
             p.knowledge_error = null,
             p.knowledge_retry_count = 0
         FOREACH (_ IN CASE WHEN $classifier_decision IS NULL THEN [] ELSE [1] END |
-            SET p.knowledge_classifier_has_entity = $classifier_has_entity,
-                p.knowledge_classifier_has_event = $classifier_has_event,
+            SET p.knowledge_classifier_should_deep_analyze = $classifier_should_deep,
+                p.knowledge_classifier_reason_code = $classifier_reason_code,
                 p.knowledge_classifier_decision = $classifier_decision,
                 p.knowledge_classifier_model = $knowledge_model,
                 p.knowledge_classifier_prompt_version = $classifier_prompt_version,
                 p.knowledge_classified_at = datetime()
+            REMOVE p.knowledge_classifier_has_entity,
+                   p.knowledge_classifier_has_event
         )
         """,
         platform=platform,
         post_id=post_id,
         knowledge_model=OLLAMA_MODEL,
         knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
-        classifier_has_entity=(
-            classification.get("has_entity_candidate") if classification else None
+        classifier_should_deep=(
+            classification.get("should_deep_analyze") if classification else None
         ),
-        classifier_has_event=(
-            classification.get("has_event_candidate") if classification else None
+        classifier_reason_code=(
+            classification.get("reason_code") if classification else None
         ),
         classifier_decision=classifier_decision,
         classifier_prompt_version=KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
@@ -658,8 +660,7 @@ def mark_knowledge_failure(tx, platform: str, post_id: str, error: str) -> None:
         """
         MATCH (p:Post {platform: $platform, platform_id: $post_id})
         WITH p, CASE
-            WHEN coalesce(p.knowledge_model, '') <> $knowledge_model
-              OR coalesce(p.knowledge_prompt_version, '')
+            WHEN coalesce(p.knowledge_prompt_version, '')
                  <> $knowledge_prompt_version
             THEN 1
             ELSE coalesce(p.knowledge_retry_count, 0) + 1

@@ -47,8 +47,8 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
                 session,
                 extract_knowledge_fn=extract,
                 classify_post_fn=lambda _content: {
-                    "has_entity_candidate": True,
-                    "has_event_candidate": False,
+                    "should_deep_analyze": True,
+                    "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
                 },
             )
 
@@ -88,8 +88,8 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
             session,
             extract_knowledge_fn=extract,
             classify_post_fn=lambda _content: {
-                "has_entity_candidate": False,
-                "has_event_candidate": False,
+                "should_deep_analyze": False,
+                "reason_code": "LOW_INFORMATION_OR_TRIVIAL",
             },
         )
 
@@ -98,23 +98,23 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         save_call = session.execute_write.call_args.args
         self.assertEqual(save_call[-1], "SKIPPED")
 
-    def test_extract_post_runs_deep_for_either_candidate_type(self):
-        for classification in (
-            {"has_entity_candidate": True, "has_event_candidate": False},
-            {"has_entity_candidate": False, "has_event_candidate": True},
-        ):
-            with self.subTest(classification=classification):
-                extract = Mock(return_value={"entities": [], "events": []})
-                result = subject._extract_post(
-                    lambda _content: classification,
-                    extract,
-                    "facebook",
-                    "1",
-                    "content",
-                )
+    def test_extract_post_runs_deep_when_classifier_marks_content_worthy(self):
+        classification = {
+            "should_deep_analyze": True,
+            "reason_code": "DURABLE_ENTITY_INFORMATION",
+        }
+        extract = Mock(return_value={"entities": [], "events": []})
 
-                extract.assert_called_once_with("content")
-                self.assertEqual(result["classifier_decision"], "DEEP")
+        result = subject._extract_post(
+            lambda _content: classification,
+            extract,
+            "facebook",
+            "1",
+            "content",
+        )
+
+        extract.assert_called_once_with("content")
+        self.assertEqual(result["classifier_decision"], "DEEP")
 
     def test_load_posts_applies_configured_limit(self):
         session = Mock()
@@ -129,6 +129,18 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         query = session.run.call_args.args[0]
         self.assertIn("LIMIT $post_limit", query)
         self.assertEqual(session.run.call_args.kwargs["post_limit"], 30)
+
+    def test_load_posts_does_not_reprocess_when_only_model_changes(self):
+        session = Mock()
+        session.run.return_value = []
+
+        with patch.object(subject, "KNOWLEDGE_PIPELINE_ENABLED", True):
+            subject._load_posts(session)
+
+        query = session.run.call_args.args[0]
+        self.assertNotIn("p.knowledge_model", query)
+        self.assertNotIn("knowledge_model", session.run.call_args.kwargs)
+        self.assertIn("p.knowledge_prompt_version", query)
 
     def test_load_posts_prioritizes_hot_metric_tier_in_both_modes(self):
         for pipeline_enabled in (True, False):

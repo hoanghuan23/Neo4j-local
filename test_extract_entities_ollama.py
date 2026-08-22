@@ -80,11 +80,11 @@ class OllamaClientTests(unittest.TestCase):
 
 
 class ExtractionTests(unittest.TestCase):
-    def test_classifier_uses_strict_boolean_schema_and_conservative_prompt(self):
+    def test_classifier_uses_strict_value_schema_and_prompt(self):
         call_model = Mock(
             return_value={
-                "has_entity_candidate": False,
-                "has_event_candidate": True,
+                "should_deep_analyze": True,
+                "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
             }
         )
 
@@ -95,23 +95,61 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            {"has_entity_candidate": False, "has_event_candidate": True},
+            {
+                "should_deep_analyze": True,
+                "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
+            },
         )
         prompt, schema = call_model.call_args.args
-        self.assertIn("ưu tiên recall", prompt)
-        self.assertIn("nếu không chắc chắn", prompt)
+        self.assertIn("TRI THỨC ĐÁNG LƯU", prompt)
+        self.assertIn("KHÔNG tự", prompt)
         self.assertIs(schema, subject.KNOWLEDGE_CLASSIFIER_SCHEMA)
         self.assertFalse(schema["additionalProperties"])
+        self.assertEqual(
+            schema["required"],
+            ["should_deep_analyze", "reason_code"],
+        )
+        self.assertNotIn("has_entity_candidate", schema["properties"])
+        self.assertNotIn("has_event_candidate", schema["properties"])
 
-    def test_classifier_rejects_non_boolean_output(self):
+    def test_classifier_rejects_non_boolean_decision(self):
         with self.assertRaisesRegex(ValueError, "boolean"):
             subject._extraction.classify_knowledge_potential(
                 "caption",
                 call_model=lambda _prompt, _schema: {
-                    "has_entity_candidate": "false",
-                    "has_event_candidate": False,
+                    "should_deep_analyze": "false",
+                    "reason_code": "LOW_INFORMATION_OR_TRIVIAL",
                 },
             )
+
+    def test_classifier_rejects_reason_inconsistent_with_decision(self):
+        with self.assertRaisesRegex(ValueError, "không nhất quán"):
+            subject._extraction.classify_knowledge_potential(
+                "caption",
+                call_model=lambda _prompt, _schema: {
+                    "should_deep_analyze": False,
+                    "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
+                },
+            )
+
+    def test_classifier_prompt_marks_requested_examples_as_low_value(self):
+        captured_prompts = []
+
+        def classify(prompt, _schema):
+            captured_prompts.append(prompt)
+            return {
+                "should_deep_analyze": False,
+                "reason_code": "SOCIAL_OR_CEREMONIAL",
+            }
+
+        subject._extraction.classify_knowledge_potential(
+            "Chào mừng Trần Minh Hiếu và Nguyễn Thu Trang tham gia nhóm!",
+            call_model=classify,
+        )
+
+        prompt = captured_prompts[0]
+        self.assertIn("Chào mừng Trần Minh Hiếu", prompt)
+        self.assertIn("Shopee bắt đầu chương trình flash sale", prompt)
 
     def test_entity_schema_contains_valid_event_fields(self):
         properties = subject.ENTITY_SCHEMA["properties"]
@@ -1263,8 +1301,8 @@ class PersistenceTests(unittest.TestCase):
             "generic_entity_keys": [],
         }
         classification = {
-            "has_entity_candidate": False,
-            "has_event_candidate": False,
+            "should_deep_analyze": False,
+            "reason_code": "LOW_INFORMATION_OR_TRIVIAL",
         }
 
         subject.save_knowledge_tx(
@@ -1279,10 +1317,15 @@ class PersistenceTests(unittest.TestCase):
         queries = "\n".join(call.args[0] for call in tx.run.call_args_list)
         self.assertIn("OPTIONAL MATCH (p)-[mention:MENTIONS]", queries)
         self.assertIn("p.knowledge_classifier_decision", queries)
+        self.assertIn("p.knowledge_classifier_should_deep_analyze", queries)
+        self.assertIn("REMOVE p.knowledge_classifier_has_entity", queries)
         final_params = tx.run.call_args.kwargs
         self.assertEqual(final_params["classifier_decision"], "SKIPPED")
-        self.assertFalse(final_params["classifier_has_entity"])
-        self.assertFalse(final_params["classifier_has_event"])
+        self.assertFalse(final_params["classifier_should_deep"])
+        self.assertEqual(
+            final_params["classifier_reason_code"],
+            "LOW_INFORMATION_OR_TRIVIAL",
+        )
 
     def test_mark_failure_increments_retry_without_marking_success(self):
         tx = Mock()
@@ -1293,6 +1336,7 @@ class PersistenceTests(unittest.TestCase):
         query = tx.run.call_args.args[0]
         self.assertIn("p.knowledge_processed = false", query)
         self.assertIn("coalesce(p.knowledge_retry_count, 0) + 1", query)
+        self.assertNotIn("WHEN coalesce(p.knowledge_model", query)
         self.assertIn("p.knowledge_retry_count = next_retry_count", query)
         self.assertEqual(tx.run.call_args.kwargs["knowledge_error"], "bad JSON")
 

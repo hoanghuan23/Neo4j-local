@@ -9,7 +9,6 @@ from knowledge_settings import (
     KNOWLEDGE_PROMPT_VERSION,
     KNOWLEDGE_WORKERS,
     LOGGER,
-    OLLAMA_MODEL,
     POST_LIMIT,
 )
 from knowledge_extraction import classify_knowledge_potential, extract_knowledge
@@ -48,10 +47,7 @@ def _extract_post(
         }
 
     classification = classify_post_fn(content)
-    needs_deep_extraction = (
-        classification["has_entity_candidate"]
-        or classification["has_event_candidate"]
-    )
+    needs_deep_extraction = classification["should_deep_analyze"]
     return {
         "classification": classification,
         "classifier_decision": "DEEP" if needs_deep_extraction else "SKIPPED",
@@ -74,13 +70,11 @@ def _load_posts(session) -> list:
                   AND p.platform IN ['facebook', 'tiktok']
                   AND (
                     coalesce(p.knowledge_processed, false) = false
-                    OR coalesce(p.knowledge_model, '') <> $knowledge_model
                     OR coalesce(p.knowledge_prompt_version, '')
                        <> $knowledge_prompt_version
                   )
                   AND (
                     coalesce(p.knowledge_retry_count, 0) < $max_retries
-                    OR coalesce(p.knowledge_model, '') <> $knowledge_model
                     OR coalesce(p.knowledge_prompt_version, '')
                        <> $knowledge_prompt_version
                   )
@@ -103,7 +97,6 @@ def _load_posts(session) -> list:
                 """,
                 post_limit=POST_LIMIT,
                 max_retries=KNOWLEDGE_MAX_RETRIES,
-                knowledge_model=OLLAMA_MODEL,
                 knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
             )
         )
