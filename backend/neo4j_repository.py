@@ -36,44 +36,62 @@ WHERE post.posted_at IS NOT NULL
     OR toLower(coalesce(mention.description, '')) CONTAINS $location_key
     OR toLower(coalesce(event.description, '')) CONTAINS $location_key
   )
-  AND (
-    size($entity_terms) = 0
-    OR EXISTS {
-      MATCH (mention)-[:HAS_PARTICIPANT]->(related_entity:Entity)
-      WHERE any(term IN $entity_terms WHERE
-        related_entity.normalized_name CONTAINS term.key
+OPTIONAL MATCH (mention)-[:HAS_PARTICIPANT]->(mention_entity:Entity)
+OPTIONAL MATCH (event)-[:HAS_PARTICIPANT]->(event_entity:Entity)
+OPTIONAL MATCH (post)-[:MENTIONS]->(post_entity:Entity)
+OPTIONAL MATCH (post)-[:HAS_EVENT_MENTION]->(sibling_mention:EventMention)
+WITH post, mention, event,
+     collect(DISTINCT mention_entity)
+       + collect(DISTINCT event_entity) AS event_entities,
+     collect(DISTINCT post_entity) AS post_entities,
+     count(DISTINCT sibling_mention) AS sibling_event_count
+WITH post, mention, event,
+     [term IN $entity_terms WHERE
+      any(related_entity IN event_entities WHERE
+        coalesce(related_entity.normalized_name, '') CONTAINS term.key
         OR term.key IN coalesce(related_entity.aliases, [])
-        OR related_entity.search_name CONTAINS term.search_key
+        OR (size(split(term.key, ' ')) > 1 AND
+            coalesce(related_entity.search_name, '') CONTAINS term.search_key)
       )
-    }
-    OR EXISTS {
-      MATCH (post)-[:MENTIONS]->(related_entity:Entity)
-      WHERE any(term IN $entity_terms WHERE
-        related_entity.normalized_name CONTAINS term.key
+      OR (size(split(term.key, ' ')) > 1 AND (
+        toLower(coalesce(mention.description, '')) CONTAINS term.key
+        OR toLower(coalesce(event.description, '')) CONTAINS term.key
+      ))
+     ] AS event_matched_terms,
+     [term IN $entity_terms WHERE
+      any(related_entity IN post_entities WHERE
+        coalesce(related_entity.normalized_name, '') CONTAINS term.key
         OR term.key IN coalesce(related_entity.aliases, [])
-        OR related_entity.search_name CONTAINS term.search_key
+        OR (size(split(term.key, ' ')) > 1 AND
+            coalesce(related_entity.search_name, '') CONTAINS term.search_key)
       )
-    }
-    OR any(term IN $entity_terms WHERE
-      toLower(coalesce(post.content, '')) CONTAINS term.key
-      OR toLower(coalesce(mention.description, '')) CONTAINS term.key
-      OR toLower(coalesce(event.description, '')) CONTAINS term.key
-    )
-  )
+      OR (size(split(term.key, ' ')) > 1
+          AND toLower(coalesce(post.content, '')) CONTAINS term.key)
+     ] AS post_matched_terms,
+     sibling_event_count
+WITH post, mention, event,
+     CASE
+       WHEN size(event_matched_terms) > 0 THEN size(event_matched_terms)
+       WHEN size(post_matched_terms) > 0 AND sibling_event_count = 1 THEN 1
+       ELSE 0
+     END AS matched_entity_count
+WHERE size($entity_terms) = 0 OR matched_entity_count > 0
 OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
 OPTIONAL MATCH (mention)-[participation:HAS_PARTICIPANT]->(entity:Entity)
 WITH post, mention, event, source,
+     matched_entity_count,
      collect(DISTINCT CASE WHEN entity IS NULL THEN NULL ELSE {
        name: coalesce(entity.name, entity.normalized_name),
        type: entity.type,
        role: participation.role
      } END) AS entities
-ORDER BY post.posted_at DESC
+ORDER BY matched_entity_count DESC, post.posted_at DESC
 RETURN event.event_key AS event_key,
        coalesce(event.type, mention.type, 'OTHER') AS type,
        coalesce(event.description, mention.description, post.content) AS description,
        coalesce(mention.status, event.status) AS status,
        mention.time_expression AS time_expression,
+       matched_entity_count,
        entities,
        {
          platform: post.platform,
@@ -113,43 +131,58 @@ WHERE post.posted_at IS NOT NULL
     OR toLower(coalesce(post.content, '')) CONTAINS $location_key
     OR toLower(coalesce(event.description, '')) CONTAINS $location_key
   )
-  AND (
-    size($entity_terms) = 0
-    OR EXISTS {
-      MATCH (event)-[:HAS_PARTICIPANT]->(related_entity:Entity)
-      WHERE any(term IN $entity_terms WHERE
-        related_entity.normalized_name CONTAINS term.key
+OPTIONAL MATCH (event)-[:HAS_PARTICIPANT]->(event_entity:Entity)
+OPTIONAL MATCH (post)-[:MENTIONS]->(post_entity:Entity)
+OPTIONAL MATCH (post)-[:DESCRIBES]->(sibling_event:Event)
+WITH post, event,
+     collect(DISTINCT event_entity) AS event_entities,
+     collect(DISTINCT post_entity) AS post_entities,
+     count(DISTINCT sibling_event) AS sibling_event_count
+WITH post, event,
+     [term IN $entity_terms WHERE
+      any(related_entity IN event_entities WHERE
+        coalesce(related_entity.normalized_name, '') CONTAINS term.key
         OR term.key IN coalesce(related_entity.aliases, [])
-        OR related_entity.search_name CONTAINS term.search_key
+        OR (size(split(term.key, ' ')) > 1 AND
+            coalesce(related_entity.search_name, '') CONTAINS term.search_key)
       )
-    }
-    OR EXISTS {
-      MATCH (post)-[:MENTIONS]->(related_entity:Entity)
-      WHERE any(term IN $entity_terms WHERE
-        related_entity.normalized_name CONTAINS term.key
+      OR (size(split(term.key, ' ')) > 1
+          AND toLower(coalesce(event.description, '')) CONTAINS term.key)
+     ] AS event_matched_terms,
+     [term IN $entity_terms WHERE
+      any(related_entity IN post_entities WHERE
+        coalesce(related_entity.normalized_name, '') CONTAINS term.key
         OR term.key IN coalesce(related_entity.aliases, [])
-        OR related_entity.search_name CONTAINS term.search_key
+        OR (size(split(term.key, ' ')) > 1 AND
+            coalesce(related_entity.search_name, '') CONTAINS term.search_key)
       )
-    }
-    OR any(term IN $entity_terms WHERE
-      toLower(coalesce(post.content, '')) CONTAINS term.key
-      OR toLower(coalesce(event.description, '')) CONTAINS term.key
-    )
-  )
+      OR (size(split(term.key, ' ')) > 1
+          AND toLower(coalesce(post.content, '')) CONTAINS term.key)
+     ] AS post_matched_terms,
+     sibling_event_count
+WITH post, event,
+     CASE
+       WHEN size(event_matched_terms) > 0 THEN size(event_matched_terms)
+       WHEN size(post_matched_terms) > 0 AND sibling_event_count = 1 THEN 1
+       ELSE 0
+     END AS matched_entity_count
+WHERE size($entity_terms) = 0 OR matched_entity_count > 0
 OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
 OPTIONAL MATCH (event)-[participation:HAS_PARTICIPANT]->(entity:Entity)
 WITH post, event, source,
+     matched_entity_count,
      collect(DISTINCT CASE WHEN entity IS NULL THEN NULL ELSE {
        name: coalesce(entity.name, entity.normalized_name),
        type: entity.type,
        role: participation.role
      } END) AS entities
-ORDER BY post.posted_at DESC
+ORDER BY matched_entity_count DESC, post.posted_at DESC
 RETURN event.event_key AS event_key,
        coalesce(event.type, 'OTHER') AS type,
        coalesce(event.description, post.content) AS description,
        event.status AS status,
        event.time_expression AS time_expression,
+       matched_entity_count,
        entities,
        {
          platform: post.platform,
@@ -176,7 +209,7 @@ def make_search_name(value: str) -> str:
 
 
 _ENTITY_ALTERNATIVE_RE = re.compile(
-    r"\s+(?:hoặc|hay)\s+|\s*[,;]\s*",
+    r"\s+(?:và|hoặc|hay)\s+|\s*[,;]\s*",
     re.IGNORECASE,
 )
 
@@ -254,10 +287,24 @@ class Neo4jRepository:
 
         results_by_event_key: dict[str, dict[str, Any]] = {}
         for result in current_results + legacy_results:
-            results_by_event_key.setdefault(result["event_key"], result)
+            event_key = result["event_key"]
+            existing = results_by_event_key.get(event_key)
+            result_rank = (
+                result.get("matched_entity_count", 0),
+                result["post"].get("posted_at") or "",
+            )
+            existing_rank = (
+                existing.get("matched_entity_count", 0),
+                existing["post"].get("posted_at") or "",
+            ) if existing is not None else None
+            if existing_rank is None or result_rank > existing_rank:
+                results_by_event_key[event_key] = result
 
         return sorted(
             results_by_event_key.values(),
-            key=lambda result: result["post"].get("posted_at") or "",
+            key=lambda result: (
+                result.get("matched_entity_count", 0),
+                result["post"].get("posted_at") or "",
+            ),
             reverse=True,
         )[:limit]

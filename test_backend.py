@@ -75,10 +75,20 @@ def test_parser_supports_multiple_entities_and_weeks():
     assert parsed.location is None
     assert parsed.hours == 336
 
+    parsed_with_and = RuleBasedQuestionParser().parse(
+        "sự kiện liên quan tới huấn và phú lê trong 2 tuần qua"
+    )
+    assert parsed_with_and.entity == "huấn và phú lê"
+    assert parsed_with_and.hours == 336
+
 
 def test_entity_alternatives_become_or_search_terms():
     assert make_entity_terms("Huấn Hoa Hồng hoặc Phú Lê") == [
         {"key": "huấn hoa hồng", "search_key": "huan hoa hong"},
+        {"key": "phú lê", "search_key": "phu le"},
+    ]
+    assert make_entity_terms("huấn và phú lê") == [
+        {"key": "huấn", "search_key": "huan"},
         {"key": "phú lê", "search_key": "phu le"},
     ]
 
@@ -89,13 +99,14 @@ def test_event_query_filters_by_time_and_can_match_post_content():
     assert "toLower(coalesce(post.content, '')) CONTAINS $location_key" in (
         SEARCH_EVENTS_QUERY
     )
-    assert "any(term IN $entity_terms" in (
+    assert "[term IN $entity_terms WHERE" in (
         SEARCH_EVENTS_QUERY
     )
+    assert "ORDER BY matched_entity_count DESC" in SEARCH_EVENTS_QUERY
     assert "MATCH (post:Post)-[:DESCRIBES]->(event:Event)" in (
         SEARCH_LEGACY_EVENTS_QUERY
     )
-    assert "MATCH (event)-[:HAS_PARTICIPANT]->(related_entity:Entity)" in (
+    assert "MATCH (event)-[:HAS_PARTICIPANT]->(event_entity:Entity)" in (
         SEARCH_LEGACY_EVENTS_QUERY
     )
 
@@ -147,6 +158,42 @@ def test_repository_merges_current_and_legacy_results_by_event_key():
     assert session.run.call_count == 2
     assert session.run.call_args_list[0].args[0] == SEARCH_EVENTS_QUERY
     assert session.run.call_args_list[1].args[0] == SEARCH_LEGACY_EVENTS_QUERY
+
+
+def test_repository_ranks_shared_entity_events_before_individual_events():
+    shared_event = {
+        "event_key": "event-shared-entities",
+        "description": "Huấn tặng quà cho Phú Lê",
+        "matched_entity_count": 2,
+        "post": {"posted_at": "2026-08-20T08:00:00"},
+    }
+    individual_event = {
+        "event_key": "event-one-entity",
+        "description": "Sự kiện riêng của Phú Lê",
+        "matched_entity_count": 1,
+        "post": {"posted_at": "2026-08-22T08:00:00"},
+    }
+    session = MagicMock()
+    session.run.side_effect = [
+        Mock(data=Mock(return_value=[individual_event, shared_event])),
+        Mock(data=Mock(return_value=[])),
+    ]
+    driver = MagicMock()
+    driver.session.return_value.__enter__.return_value = session
+    repository = Neo4jRepository(Settings())
+    repository.driver = driver
+
+    results = repository.search_events(
+        location=None,
+        entity="Huấn và Phú Lê",
+        hours=336,
+        limit=10,
+    )
+
+    assert [result["event_key"] for result in results] == [
+        "event-shared-entities",
+        "event-one-entity",
+    ]
 
 
 def test_chat_returns_structured_graph_results():
