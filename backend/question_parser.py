@@ -14,6 +14,12 @@ _LOCATION_AFTER_PREPOSITION_RE = re.compile(
     rf"\b(?:ở|tại|khu\s+vực)\s+(.+?)(?=\s+(?:{_TIME_MARKER})\b|[?.,!]|$)",
     re.IGNORECASE,
 )
+_ENTITY_RE = re.compile(
+    rf"\b(?:liên\s+quan\s+(?:đến|tới)|nhắc\s+(?:đến|tới)|về)\s+"
+    rf"(.+?)(?=\s+(?:(?:ở|tại|khu\s+vực)\s+|(?:{_TIME_MARKER})\b)"
+    r"|[?.,!]|$)",
+    re.IGNORECASE,
+)
 _LEADING_QUESTION_RE = re.compile(
     r"^(?:cho\s+(?:tôi|mình)\s+biết\s+|tìm\s+|tin\s+tức\s+|"
     r"sự\s+kiện\s+|có\s+gì\s+xảy\s+ra\s+)(?:ở\s+|tại\s+)?",
@@ -37,8 +43,9 @@ class RuleBasedQuestionParser:
     def parse(self, question: str) -> ParsedQuestion:
         text = _SPACE_RE.sub(" ", question.strip())
         hours = self._parse_hours(text)
+        entity = self._parse_entity(text)
         location = self._parse_location(text)
-        return ParsedQuestion(location=location, hours=hours)
+        return ParsedQuestion(location=location, entity=entity, hours=hours)
 
     def _parse_hours(self, text: str) -> int:
         hours_match = _HOURS_RE.search(text)
@@ -67,6 +74,9 @@ class RuleBasedQuestionParser:
         if explicit:
             return self._clean_location(explicit.group(1))
 
+        if _ENTITY_RE.search(text):
+            return None
+
         time_match = re.search(rf"\b(?:{_TIME_MARKER})\b", text, re.IGNORECASE)
         if time_match and time_match.start() > 0:
             prefix = _LEADING_QUESTION_RE.sub("", text[: time_match.start()].strip())
@@ -80,3 +90,10 @@ class RuleBasedQuestionParser:
             return self._clean_location(text)
 
         return None
+
+    @classmethod
+    def _parse_entity(cls, text: str) -> str | None:
+        match = _ENTITY_RE.search(text)
+        if not match:
+            return None
+        return cls._clean_location(match.group(1))

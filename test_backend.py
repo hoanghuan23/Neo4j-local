@@ -1,8 +1,15 @@
+from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock, patch
+
 from fastapi.testclient import TestClient
 
 from backend.config import Settings
 from backend.main import create_app
-from backend.neo4j_repository import SEARCH_EVENTS_QUERY
+from backend.neo4j_repository import (
+    SEARCH_EVENTS_QUERY,
+    SEARCH_LEGACY_EVENTS_QUERY,
+    Neo4jRepository,
+)
 from backend.question_parser import RuleBasedQuestionParser
 
 
@@ -48,12 +55,80 @@ def test_parser_supports_short_hanoi_queries():
     assert parser.parse("sự kiện hà nội").location == "hà nội"
 
 
-def test_event_query_does_not_filter_by_time_and_can_match_post_content():
-    assert "datetime()" not in SEARCH_EVENTS_QUERY
-    assert "duration(" not in SEARCH_EVENTS_QUERY
+def test_parser_extracts_entity_without_treating_it_as_location():
+    parsed = RuleBasedQuestionParser().parse(
+        "Sự kiện liên quan tới Phú Lê trong 48h qua"
+    )
+
+    assert parsed.entity == "Phú Lê"
+    assert parsed.location is None
+    assert parsed.hours == 48
+
+
+def test_event_query_filters_by_time_and_can_match_post_content():
+    assert "post.posted_at IS NOT NULL" in SEARCH_EVENTS_QUERY
+    assert "localdatetime() - duration({hours: $hours})" in SEARCH_EVENTS_QUERY
     assert "toLower(coalesce(post.content, '')) CONTAINS $location_key" in (
         SEARCH_EVENTS_QUERY
     )
+    assert "related_entity.normalized_name CONTAINS $entity_key" in (
+        SEARCH_EVENTS_QUERY
+    )
+    assert "MATCH (post:Post)-[:DESCRIBES]->(event:Event)" in (
+        SEARCH_LEGACY_EVENTS_QUERY
+    )
+    assert "MATCH (event)-[:HAS_PARTICIPANT]->(related_entity:Entity)" in (
+        SEARCH_LEGACY_EVENTS_QUERY
+    )
+
+
+def test_repository_merges_current_and_legacy_results_by_event_key():
+    current_duplicate = {
+        "event_key": "event-shared",
+        "description": "Kết quả từ schema mới",
+        "post": {"posted_at": "2026-08-20T08:00:00"},
+    }
+    current_result = {
+        "event_key": "event-current",
+        "description": "Chỉ có trong schema mới",
+        "post": {"posted_at": "2026-08-22T08:00:00"},
+    }
+    legacy_duplicate = {
+        "event_key": "event-shared",
+        "description": "Kết quả trùng từ schema cũ",
+        "post": {"posted_at": "2026-08-20T08:00:00"},
+    }
+    legacy_result = {
+        "event_key": "event-legacy",
+        "description": "Chỉ có trong schema cũ",
+        "post": {"posted_at": "2026-08-21T08:00:00"},
+    }
+    session = MagicMock()
+    session.run.side_effect = [
+        Mock(data=Mock(return_value=[current_duplicate, current_result])),
+        Mock(data=Mock(return_value=[legacy_duplicate, legacy_result])),
+    ]
+    driver = MagicMock()
+    driver.session.return_value.__enter__.return_value = session
+    repository = Neo4jRepository(Settings())
+    repository.driver = driver
+
+    results = repository.search_events(
+        location=None,
+        entity="Huấn Hoa Hồng",
+        hours=720,
+        limit=3,
+    )
+
+    assert [result["event_key"] for result in results] == [
+        "event-current",
+        "event-legacy",
+        "event-shared",
+    ]
+    assert results[-1]["description"] == "Kết quả từ schema mới"
+    assert session.run.call_count == 2
+    assert session.run.call_args_list[0].args[0] == SEARCH_EVENTS_QUERY
+    assert session.run.call_args_list[1].args[0] == SEARCH_LEGACY_EVENTS_QUERY
 
 
 def test_chat_returns_structured_graph_results():
@@ -79,7 +154,7 @@ def test_chat_returns_structured_graph_results():
             }
         ]
     )
-    app = create_app(Settings(), repository)
+    app = create_app(Settings(gemini_api_key=""), repository)
 
     with TestClient(app) as client:
         response = client.post(
@@ -93,16 +168,22 @@ def test_chat_returns_structured_graph_results():
     assert body["query"] == {
         "intent": "search_events",
         "location": "Hà Nội",
+        "entity": None,
         "hours": 24,
     }
     assert body["results"][0]["post"]["platform_id"] == "post-1"
-    assert repository.search_args == {"location": "Hà Nội", "limit": 5}
+    assert repository.search_args == {
+        "location": "Hà Nội",
+        "entity": None,
+        "hours": 24,
+        "limit": 5,
+    }
     assert body["answer"].startswith("Tìm thấy 1 sự kiện tại Hà Nội:")
 
 
 def test_search_endpoint_and_empty_answer():
     repository = FakeRepository()
-    app = create_app(Settings(), repository)
+    app = create_app(Settings(gemini_api_key=""), repository)
 
     with TestClient(app) as client:
         response = client.get("/api/search", params={"q": "Ở Huế hôm nay có gì?"})
@@ -110,4 +191,77 @@ def test_search_endpoint_and_empty_answer():
 
     assert response.status_code == 200
     assert response.json()["answer"] == "Không tìm thấy sự kiện tại Huế."
+    assert repository.search_args == {
+        "location": "Huế",
+        "entity": None,
+        "hours": 24,
+        "limit": 10,
+    }
     assert health.json() == {"status": "ok", "neo4j": "connected"}
+
+
+def test_chat_endpoint_uses_gemini_parser_and_answer_generator():
+    repository = FakeRepository(
+        [
+            {
+                "event_key": "event-1",
+                "type": "ACCIDENT",
+                "description": "Một vụ tai nạn đã xảy ra.",
+                "status": "REPORTED",
+                "time_expression": "sáng nay",
+                "entities": [],
+                "post": {
+                    "platform": "facebook",
+                    "platform_id": "post-1",
+                    "content": "Nội dung bài viết",
+                    "url": "https://example.test/post-1",
+                    "posted_at": "2026-08-22T08:00:00",
+                    "source_name": "Nguồn thử nghiệm",
+                },
+            }
+        ]
+    )
+    gemini_client = Mock()
+    gemini_client.models.generate_content.side_effect = [
+        SimpleNamespace(
+            parsed={
+                "intent": "search_events",
+                "location": "Đà Nẵng",
+                "hours": 48,
+            }
+        ),
+        SimpleNamespace(parsed={"answer": "Câu trả lời Gemini có kiểm chứng."}),
+    ]
+
+    with patch("google.genai.Client", return_value=gemini_client):
+        app = create_app(
+            Settings(gemini_api_key="test-key", chat_gemini_model="test-model"),
+            repository,
+        )
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/chat",
+                json={
+                    "message": "Đà Nẵng 2 ngày qua có sự kiện gì?",
+                    "limit": 5,
+                },
+            )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["answer"] == "Câu trả lời Gemini có kiểm chứng."
+    assert body["query"] == {
+        "intent": "search_events",
+        "location": "Đà Nẵng",
+        "entity": None,
+        "hours": 48,
+    }
+    assert body["count"] == 1
+    assert repository.search_args == {
+        "location": "Đà Nẵng",
+        "entity": None,
+        "hours": 48,
+        "limit": 5,
+    }
+    assert gemini_client.models.generate_content.call_count == 2
+    gemini_client.close.assert_called_once_with()

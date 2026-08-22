@@ -9,7 +9,9 @@ from backend.config import Settings
 SEARCH_EVENTS_QUERY = """
 MATCH (post:Post)-[:HAS_EVENT_MENTION]->(mention:EventMention)
       -[:EVIDENCE_FOR]->(event:Event)
-WHERE (
+WHERE post.posted_at IS NOT NULL
+  AND post.posted_at >= localdatetime() - duration({hours: $hours})
+  AND (
     $location_key IS NULL
     OR EXISTS {
       MATCH (mention)-[:HAS_PARTICIPANT]->(location:Entity)
@@ -32,6 +34,24 @@ WHERE (
     OR toLower(coalesce(post.content, '')) CONTAINS $location_key
     OR toLower(coalesce(mention.description, '')) CONTAINS $location_key
     OR toLower(coalesce(event.description, '')) CONTAINS $location_key
+  )
+  AND (
+    $entity_key IS NULL
+    OR EXISTS {
+      MATCH (mention)-[:HAS_PARTICIPANT]->(related_entity:Entity)
+      WHERE related_entity.normalized_name CONTAINS $entity_key
+         OR $entity_key IN coalesce(related_entity.aliases, [])
+         OR related_entity.search_name CONTAINS $entity_search_key
+    }
+    OR EXISTS {
+      MATCH (post)-[:MENTIONS]->(related_entity:Entity)
+      WHERE related_entity.normalized_name CONTAINS $entity_key
+         OR $entity_key IN coalesce(related_entity.aliases, [])
+         OR related_entity.search_name CONTAINS $entity_search_key
+    }
+    OR toLower(coalesce(post.content, '')) CONTAINS $entity_key
+    OR toLower(coalesce(mention.description, '')) CONTAINS $entity_key
+    OR toLower(coalesce(event.description, '')) CONTAINS $entity_key
   )
 OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
 OPTIONAL MATCH (mention)-[participation:HAS_PARTICIPANT]->(entity:Entity)
@@ -56,7 +76,76 @@ RETURN event.event_key AS event_key,
          posted_at: toString(post.posted_at),
          source_name: source.name
        } AS post
-LIMIT $limit
+"""
+
+
+SEARCH_LEGACY_EVENTS_QUERY = """
+MATCH (post:Post)-[:DESCRIBES]->(event:Event)
+WHERE post.posted_at IS NOT NULL
+  AND post.posted_at >= localdatetime() - duration({hours: $hours})
+  AND (
+    $location_key IS NULL
+    OR EXISTS {
+      MATCH (event)-[:HAS_PARTICIPANT]->(location:Entity)
+      WHERE location.type = 'LOCATION'
+        AND (
+          location.normalized_name CONTAINS $location_key
+          OR $location_key IN coalesce(location.aliases, [])
+          OR location.search_name CONTAINS $location_search_key
+        )
+    }
+    OR EXISTS {
+      MATCH (post)-[:MENTIONS]->(location:Entity)
+      WHERE location.type = 'LOCATION'
+        AND (
+          location.normalized_name CONTAINS $location_key
+          OR $location_key IN coalesce(location.aliases, [])
+          OR location.search_name CONTAINS $location_search_key
+        )
+    }
+    OR toLower(coalesce(post.content, '')) CONTAINS $location_key
+    OR toLower(coalesce(event.description, '')) CONTAINS $location_key
+  )
+  AND (
+    $entity_key IS NULL
+    OR EXISTS {
+      MATCH (event)-[:HAS_PARTICIPANT]->(related_entity:Entity)
+      WHERE related_entity.normalized_name CONTAINS $entity_key
+         OR $entity_key IN coalesce(related_entity.aliases, [])
+         OR related_entity.search_name CONTAINS $entity_search_key
+    }
+    OR EXISTS {
+      MATCH (post)-[:MENTIONS]->(related_entity:Entity)
+      WHERE related_entity.normalized_name CONTAINS $entity_key
+         OR $entity_key IN coalesce(related_entity.aliases, [])
+         OR related_entity.search_name CONTAINS $entity_search_key
+    }
+    OR toLower(coalesce(post.content, '')) CONTAINS $entity_key
+    OR toLower(coalesce(event.description, '')) CONTAINS $entity_key
+  )
+OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
+OPTIONAL MATCH (event)-[participation:HAS_PARTICIPANT]->(entity:Entity)
+WITH post, event, source,
+     collect(DISTINCT CASE WHEN entity IS NULL THEN NULL ELSE {
+       name: coalesce(entity.name, entity.normalized_name),
+       type: entity.type,
+       role: participation.role
+     } END) AS entities
+ORDER BY post.posted_at DESC
+RETURN event.event_key AS event_key,
+       coalesce(event.type, 'OTHER') AS type,
+       coalesce(event.description, post.content) AS description,
+       event.status AS status,
+       event.time_expression AS time_expression,
+       entities,
+       {
+         platform: post.platform,
+         platform_id: post.platform_id,
+         content: post.content,
+         url: post.url,
+         posted_at: toString(post.posted_at),
+         source_name: source.name
+       } AS post
 """
 
 
@@ -105,16 +194,37 @@ class Neo4jRepository:
         self,
         *,
         location: str | None,
+        entity: str | None,
+        hours: int,
         limit: int,
     ) -> list[dict[str, Any]]:
         if self.driver is None:
             raise RuntimeError("Neo4j chưa được kết nối")
         location_key = normalize_name(location) if location else None
         location_search_key = make_search_name(location) if location else None
+        entity_key = normalize_name(entity) if entity else None
+        entity_search_key = make_search_name(entity) if entity else None
+        parameters = {
+            "location_key": location_key,
+            "location_search_key": location_search_key,
+            "entity_key": entity_key,
+            "entity_search_key": entity_search_key,
+            "hours": hours,
+        }
         with self.driver.session(database=self.settings.neo4j_database) as session:
-            return session.run(
-                SEARCH_EVENTS_QUERY,
-                location_key=location_key,
-                location_search_key=location_search_key,
-                limit=limit,
+            current_results = session.run(
+                SEARCH_EVENTS_QUERY, **parameters
             ).data()
+            legacy_results = session.run(
+                SEARCH_LEGACY_EVENTS_QUERY, **parameters
+            ).data()
+
+        results_by_event_key: dict[str, dict[str, Any]] = {}
+        for result in current_results + legacy_results:
+            results_by_event_key.setdefault(result["event_key"], result)
+
+        return sorted(
+            results_by_event_key.values(),
+            key=lambda result: result["post"].get("posted_at") or "",
+            reverse=True,
+        )[:limit]

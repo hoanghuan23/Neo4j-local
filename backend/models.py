@@ -11,6 +11,7 @@ class ChatRequest(BaseModel):
 class ParsedQuestion(BaseModel):
     intent: Literal["search_events"] = "search_events"
     location: str | None = None
+    entity: str | None = None
     hours: int = Field(ge=1, le=720)
 
 
@@ -49,4 +50,3 @@ class ChatResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     neo4j: Literal["connected", "disconnected"]
-

@@ -26,4 +26,16 @@ class Settings:
     default_search_hours: int = int(os.getenv("DEFAULT_SEARCH_HOURS", "24"))
     max_search_hours: int = int(os.getenv("MAX_SEARCH_HOURS", "720"))
     default_result_limit: int = int(os.getenv("DEFAULT_RESULT_LIMIT", "10"))
-
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+    chat_gemini_model: str = os.getenv(
+        "CHAT_GEMINI_MODEL", "gemini-3.1-flash-lite"
+    )
+    chat_gemini_timeout_seconds: float = float(
+        os.getenv("CHAT_GEMINI_TIMEOUT_SECONDS", "10")
+    )
+    chat_gemini_input_price_per_million_usd: str = os.getenv(
+        "CHAT_GEMINI_INPUT_PRICE_PER_MILLION_USD", "0.25"
+    )
+    chat_gemini_output_price_per_million_usd: str = os.getenv(
+        "CHAT_GEMINI_OUTPUT_PRICE_PER_MILLION_USD", "1.50"
+    )
