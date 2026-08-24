@@ -15,6 +15,11 @@ class ParsedQuestion(BaseModel):
     hours: int = Field(ge=1, le=720)
 
 
+class DetailQuery(BaseModel):
+    intent: Literal["detail"] = "detail"
+    subject: str = Field(min_length=1)
+
+
 class EntityResult(BaseModel):
     name: str
     type: str
@@ -40,11 +45,18 @@ class EventResult(BaseModel):
     post: PostResult
 
 
+class DetailResult(BaseModel):
+    entity_type: str
+    entity_name: str
+    post_count: int = Field(ge=0)
+
+
 class ChatResponse(BaseModel):
     answer: str
-    query: ParsedQuestion
+    query: ParsedQuestion | DetailQuery
     count: int
-    results: list[EventResult]
+    results: list[EventResult] = Field(default_factory=list)
+    details: list[DetailResult] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):

@@ -5,7 +5,11 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from neo4j.exceptions import Neo4jError
 
-from backend.chat_service import ChatService, TemplateAnswerGenerator
+from backend.chat_service import (
+    ChatService,
+    InvalidChatCommand,
+    TemplateAnswerGenerator,
+)
 from backend.config import Settings
 from backend.gemini_services import (
     FallbackAnswerGenerator,
@@ -115,6 +119,8 @@ def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
     def run_chat(request: Request, message: str, limit: int) -> ChatResponse:
         try:
             return request.app.state.chat_service.chat(message, limit)
+        except InvalidChatCommand as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Neo4jError as exc:
             LOGGER.exception("Neo4j search failed")
             raise HTTPException(

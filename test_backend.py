@@ -8,6 +8,7 @@ from backend.main import create_app
 from backend.neo4j_repository import (
     SEARCH_EVENTS_QUERY,
     SEARCH_LEGACY_EVENTS_QUERY,
+    SEARCH_RELATED_ENTITIES_QUERY,
     Neo4jRepository,
     make_entity_terms,
 )
@@ -15,9 +16,11 @@ from backend.question_parser import RuleBasedQuestionParser
 
 
 class FakeRepository:
-    def __init__(self, results=None):
+    def __init__(self, results=None, detail_results=None):
         self.results = results or []
+        self.detail_results = detail_results or []
         self.search_args = None
+        self.detail_search_args = None
         self.connected = False
 
     def connect(self):
@@ -32,6 +35,10 @@ class FakeRepository:
     def search_events(self, **kwargs):
         self.search_args = kwargs
         return self.results
+
+    def search_related_entities(self, **kwargs):
+        self.detail_search_args = kwargs
+        return self.detail_results
 
 
 def test_parser_extracts_location_and_hours():
@@ -244,6 +251,104 @@ def test_chat_returns_structured_graph_results():
         "limit": 5,
     }
     assert body["answer"].startswith("Tìm thấy 1 sự kiện tại Hà Nội:")
+
+
+def test_detail_command_returns_related_entity_post_counts():
+    repository = FakeRepository(
+        detail_results=[
+            {
+                "entity_type": "LOCATION",
+                "entity_name": "Việt Nam",
+                "post_count": 30,
+            },
+            {
+                "entity_type": "PERSON",
+                "entity_name": "Phú Lê",
+                "post_count": 5,
+            },
+        ]
+    )
+    app = create_app(Settings(gemini_api_key=""), repository)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/chat",
+            json={"message": "  /DETAIL   hà nội  ", "limit": 20},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query"] == {"intent": "detail", "subject": "hà nội"}
+    assert body["count"] == 2
+    assert body["results"] == []
+    assert body["details"] == [
+        {
+            "entity_type": "LOCATION",
+            "entity_name": "Việt Nam",
+            "post_count": 30,
+        },
+        {
+            "entity_type": "PERSON",
+            "entity_name": "Phú Lê",
+            "post_count": 5,
+        },
+    ]
+    assert repository.detail_search_args == {"subject": "hà nội", "limit": 20}
+    assert repository.search_args is None
+    assert "30 bài viết chung" in body["answer"]
+
+
+def test_detail_command_requires_a_subject():
+    repository = FakeRepository()
+    app = create_app(Settings(gemini_api_key=""), repository)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/chat",
+            json={"message": "/detail", "limit": 10},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"].startswith("Thiếu chủ thể")
+    assert repository.search_args is None
+    assert repository.detail_search_args is None
+
+
+def test_repository_searches_related_entities_with_normalized_subject():
+    rows = [
+        {
+            "entity_type": "LOCATION",
+            "entity_name": "Việt Nam",
+            "post_count": 30,
+        }
+    ]
+    session = MagicMock()
+    session.run.return_value.data.return_value = rows
+    driver = MagicMock()
+    driver.session.return_value.__enter__.return_value = session
+    repository = Neo4jRepository(Settings())
+    repository.driver = driver
+
+    assert repository.search_related_entities(subject="Hà Nội", limit=10) == rows
+    session.run.assert_called_once_with(
+        SEARCH_RELATED_ENTITIES_QUERY,
+        subject_key="hà nội",
+        subject_search_key="ha noi",
+        limit=10,
+    )
+
+
+def test_detail_query_prefers_exact_subject_before_contains_matches():
+    assert "WITH collect(DISTINCT subject) AS candidates" in (
+        SEARCH_RELATED_ENTITIES_QUERY
+    )
+    assert "WHEN any(candidate IN candidates WHERE" in (
+        SEARCH_RELATED_ENTITIES_QUERY
+    )
+    assert "ELSE candidates" in SEARCH_RELATED_ENTITIES_QUERY
+    assert "WHERE NOT related IN selected_subjects" in (
+        SEARCH_RELATED_ENTITIES_QUERY
+    )
 
 
 def test_search_endpoint_and_empty_answer():

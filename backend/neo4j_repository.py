@@ -195,6 +195,41 @@ RETURN event.event_key AS event_key,
 """
 
 
+SEARCH_RELATED_ENTITIES_QUERY = """
+MATCH (post:Post)-[:MENTIONS]->(subject:Entity)
+WHERE coalesce(subject.normalized_name, toLower(subject.name), '')
+        CONTAINS $subject_key
+   OR coalesce(subject.search_name, '') CONTAINS $subject_search_key
+   OR $subject_key IN coalesce(subject.aliases, [])
+WITH collect(DISTINCT subject) AS candidates
+WITH CASE
+       WHEN any(candidate IN candidates WHERE
+         coalesce(candidate.normalized_name, toLower(candidate.name), '')
+           = $subject_key
+         OR coalesce(candidate.search_name, '') = $subject_search_key
+         OR $subject_key IN coalesce(candidate.aliases, [])
+       )
+       THEN [candidate IN candidates WHERE
+         coalesce(candidate.normalized_name, toLower(candidate.name), '')
+           = $subject_key
+         OR coalesce(candidate.search_name, '') = $subject_search_key
+         OR $subject_key IN coalesce(candidate.aliases, [])
+       ]
+       ELSE candidates
+     END AS selected_subjects
+UNWIND selected_subjects AS subject
+MATCH (post:Post)-[:MENTIONS]->(subject)
+MATCH (post)-[:MENTIONS]->(related:Entity)
+WHERE NOT related IN selected_subjects
+RETURN coalesce(related.type, 'UNKNOWN') AS entity_type,
+       coalesce(related.name, related.normalized_name, 'Không rõ')
+         AS entity_name,
+       count(DISTINCT post) AS post_count
+ORDER BY post_count DESC, entity_name
+LIMIT $limit
+"""
+
+
 def normalize_name(value: str) -> str:
     return unicodedata.normalize("NFC", " ".join(value.casefold().split()))
 
@@ -308,3 +343,22 @@ class Neo4jRepository:
             ),
             reverse=True,
         )[:limit]
+
+    def search_related_entities(
+        self,
+        *,
+        subject: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if self.driver is None:
+            raise RuntimeError("Neo4j chưa được kết nối")
+        parameters = {
+            "subject_key": normalize_name(subject),
+            "subject_search_key": make_search_name(subject),
+            "limit": limit,
+        }
+        with self.driver.session(database=self.settings.neo4j_database) as session:
+            return session.run(
+                SEARCH_RELATED_ENTITIES_QUERY,
+                **parameters,
+            ).data()
