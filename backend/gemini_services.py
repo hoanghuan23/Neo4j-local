@@ -130,7 +130,8 @@ class GeminiQuestionParser:
                 "đặt tên người "
                 "vào location. Quy đổi số ngày hoặc số tuần sang giờ, dùng "
                 "24 giờ nếu "
-                "không nêu khoảng thời gian, và giới hạn hours trong khoảng "
+                "không nêu khoảng thời gian; riêng cụm 'tuần trước' tạm đặt "
+                "hours=168. Giới hạn hours trong khoảng "
                 "1 đến 720. Intent luôn là "
                 f"search_events. Câu hỏi: {question}"
             ),

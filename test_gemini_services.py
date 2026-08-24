@@ -145,6 +145,23 @@ def test_question_parser_falls_back_on_client_error():
     assert parsed.hours == 48
 
 
+def test_gemini_parser_uses_168_hours_for_previous_week():
+    client = Mock()
+    client.models.generate_content.return_value = SimpleNamespace(
+        parsed={"location": "Lạng Sơn", "hours": 168},
+    )
+    parser = GeminiQuestionParser(
+        client=client,
+        types_module=FakeTypes,
+        model="test-model",
+    )
+
+    parsed = parser.parse("tình hình Lạng Sơn trong tuần trước")
+
+    assert parsed.location == "Lạng Sơn"
+    assert parsed.hours == 168
+
+
 def test_gemini_answer_generator_uses_structured_graph_data():
     client = Mock()
     client.models.generate_content.return_value = SimpleNamespace(
@@ -218,7 +235,10 @@ def test_chat_service_preserves_results_with_injected_gemini_dependencies():
     assert response.count == 1
     assert response.results[0].event_key == "event-1"
     repository.search_events.assert_called_once_with(
-        location="Hà Nội", entity=None, hours=24, limit=5
+        location="Hà Nội",
+        entity=None,
+        hours=24,
+        limit=5,
     )
 
 

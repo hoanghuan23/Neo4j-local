@@ -9,8 +9,10 @@ _DAYS_RE = re.compile(r"\b(\d{1,2})\s*ngày\b", re.IGNORECASE)
 _WEEKS_RE = re.compile(r"\b(\d{1,2})\s*tuần\b", re.IGNORECASE)
 _TIME_MARKER = (
     r"(?:trong\s+)?\d+\s*(?:h|giờ|tiếng|ngày|tuần)"
+    r"|(?:trong\s+)?tuần\s+trước"
     r"|hôm\s+nay|hôm\s+qua|gần\s+đây|vừa\s+qua"
 )
+_PREVIOUS_WEEK_RE = re.compile(r"\b(?:trong\s+)?tuần\s+trước\b", re.IGNORECASE)
 _LOCATION_AFTER_PREPOSITION_RE = re.compile(
     rf"\b(?:ở|tại|khu\s+vực)\s+(.+?)(?=\s+(?:{_TIME_MARKER})\b|[?.,!]|$)",
     re.IGNORECASE,
@@ -23,7 +25,8 @@ _ENTITY_RE = re.compile(
 )
 _LEADING_QUESTION_RE = re.compile(
     r"^(?:cho\s+(?:tôi|mình)\s+biết\s+|tìm\s+|tin\s+tức\s+|"
-    r"sự\s+kiện\s+|có\s+gì\s+xảy\s+ra\s+)(?:ở\s+|tại\s+)?",
+    r"sự\s+kiện\s+|tình\s+hình\s+|có\s+gì\s+xảy\s+ra\s+)"
+    r"(?:ở\s+|tại\s+)?",
     re.IGNORECASE,
 )
 _EVENT_LOCATION_RE = re.compile(
@@ -37,18 +40,28 @@ _SUPPORTED_BARE_LOCATIONS = {"hà nội"}
 class RuleBasedQuestionParser:
     """Small deterministic parser that can later be replaced by an LLM parser."""
 
-    def __init__(self, default_hours: int = 24, max_hours: int = 720):
+    def __init__(
+        self,
+        default_hours: int = 24,
+        max_hours: int = 720,
+    ):
         self.default_hours = default_hours
         self.max_hours = max_hours
 
     def parse(self, question: str) -> ParsedQuestion:
         text = _SPACE_RE.sub(" ", question.strip())
-        hours = self._parse_hours(text)
         entity = self._parse_entity(text)
         location = self._parse_location(text)
-        return ParsedQuestion(location=location, entity=entity, hours=hours)
+        return ParsedQuestion(
+            location=location,
+            entity=entity,
+            hours=self._parse_hours(text),
+        )
 
     def _parse_hours(self, text: str) -> int:
+        if _PREVIOUS_WEEK_RE.search(text):
+            return min(7 * 24, self.max_hours)
+
         hours_match = _HOURS_RE.search(text)
         if hours_match:
             return min(max(int(hours_match.group(1)), 1), self.max_hours)

@@ -89,6 +89,15 @@ def test_parser_supports_multiple_entities_and_weeks():
     assert parsed_with_and.hours == 336
 
 
+def test_parser_treats_previous_week_as_last_168_hours():
+    parsed = RuleBasedQuestionParser().parse(
+        "tình hình lạng sơn trong tuần trước"
+    )
+
+    assert parsed.location == "lạng sơn"
+    assert parsed.hours == 168
+
+
 def test_entity_alternatives_become_or_search_terms():
     assert make_entity_terms("Huấn Hoa Hồng hoặc Phú Lê") == [
         {"key": "huấn hoa hồng", "search_key": "huan hoa hong"},
@@ -103,6 +112,7 @@ def test_entity_alternatives_become_or_search_terms():
 def test_event_query_filters_by_time_and_can_match_post_content():
     assert "post.posted_at IS NOT NULL" in SEARCH_EVENTS_QUERY
     assert "localdatetime() - duration({hours: $hours})" in SEARCH_EVENTS_QUERY
+    assert "sibling_event_count = 1 AND" in SEARCH_EVENTS_QUERY
     assert "toLower(coalesce(post.content, '')) CONTAINS $location_key" in (
         SEARCH_EVENTS_QUERY
     )
@@ -116,6 +126,7 @@ def test_event_query_filters_by_time_and_can_match_post_content():
     assert "MATCH (event)-[:HAS_PARTICIPANT]->(event_entity:Entity)" in (
         SEARCH_LEGACY_EVENTS_QUERY
     )
+    assert "sibling_event_count = 1 AND" in SEARCH_LEGACY_EVENTS_QUERY
 
 
 def test_repository_merges_current_and_legacy_results_by_event_key():

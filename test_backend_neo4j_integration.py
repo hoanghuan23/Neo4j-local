@@ -186,3 +186,142 @@ def test_search_events_ranks_event_matching_both_entities_first():
                 marker=marker,
             ).consume()
         driver.close()
+
+
+def test_location_filter_is_event_scoped_for_current_and_legacy_schemas():
+    settings = Settings()
+    marker = f"codex-location-scope-{uuid4().hex}"
+    driver = GraphDatabase.driver(
+        settings.neo4j_uri,
+        auth=(settings.neo4j_user, settings.neo4j_password),
+    )
+
+    try:
+        with driver.session(database=settings.neo4j_database) as session:
+            session.run(
+                """
+                CREATE (location:Entity {
+                    test_marker: $marker,
+                    entity_id: $marker + '-location',
+                    name: $marker,
+                    normalized_name: $marker,
+                    search_name: $marker,
+                    type: 'LOCATION'
+                })
+                CREATE (current_post:Post {
+                    test_marker: $marker,
+                    platform: 'codex-test',
+                    platform_id: $marker + '-current-post',
+                    content: 'Bài tổng hợp tại ' + $marker,
+                    posted_at: localdatetime() - duration({hours: 1})
+                })
+                CREATE (current_post)-[:MENTIONS]->(location)
+                FOREACH (row IN [
+                    {suffix: 'linked', description: 'Event có cạnh địa điểm'},
+                    {suffix: 'text', description: 'Event tại ' + $marker},
+                    {suffix: 'sibling', description: 'Event không liên quan'}
+                ] |
+                    CREATE (mention:EventMention {
+                        test_marker: $marker,
+                        mention_key: $marker + '-current-mention-' + row.suffix,
+                        description: row.description
+                    })
+                    CREATE (event:Event {
+                        test_marker: $marker,
+                        event_key: $marker + '-current-event-' + row.suffix,
+                        description: row.description
+                    })
+                    CREATE (current_post)-[:HAS_EVENT_MENTION]->(mention)
+                    CREATE (mention)-[:EVIDENCE_FOR]->(event)
+                )
+                WITH location, current_post
+                MATCH (current_post)-[:HAS_EVENT_MENTION]->(linked:EventMention)
+                WHERE linked.mention_key ENDS WITH '-linked'
+                CREATE (linked)-[:HAS_PARTICIPANT {role: 'LOCATION'}]->(location)
+                CREATE (single_post:Post {
+                    test_marker: $marker,
+                    platform: 'codex-test',
+                    platform_id: $marker + '-current-single-post',
+                    content: 'Bài đơn tại ' + $marker,
+                    posted_at: localdatetime() - duration({hours: 1})
+                })
+                CREATE (single_mention:EventMention {
+                    test_marker: $marker,
+                    mention_key: $marker + '-current-single-mention',
+                    description: 'Event đơn không nhắc địa điểm'
+                })
+                CREATE (single_event:Event {
+                    test_marker: $marker,
+                    event_key: $marker + '-current-single-event',
+                    description: 'Event đơn không nhắc địa điểm'
+                })
+                CREATE (single_post)-[:MENTIONS]->(location)
+                CREATE (single_post)-[:HAS_EVENT_MENTION]->(single_mention)
+                CREATE (single_mention)-[:EVIDENCE_FOR]->(single_event)
+                CREATE (legacy_post:Post {
+                    test_marker: $marker,
+                    platform: 'codex-test',
+                    platform_id: $marker + '-legacy-post',
+                    content: 'Bài legacy tổng hợp tại ' + $marker,
+                    posted_at: localdatetime() - duration({hours: 1})
+                })
+                CREATE (legacy_post)-[:MENTIONS]->(location)
+                FOREACH (row IN [
+                    {suffix: 'linked', description: 'Legacy có cạnh địa điểm'},
+                    {suffix: 'text', description: 'Legacy tại ' + $marker},
+                    {suffix: 'sibling', description: 'Legacy không liên quan'}
+                ] |
+                    CREATE (event:Event {
+                        test_marker: $marker,
+                        event_key: $marker + '-legacy-event-' + row.suffix,
+                        description: row.description
+                    })
+                    CREATE (legacy_post)-[:DESCRIBES]->(event)
+                )
+                WITH location, legacy_post
+                MATCH (legacy_post)-[:DESCRIBES]->(legacy_linked:Event)
+                WHERE legacy_linked.event_key ENDS WITH '-linked'
+                CREATE (legacy_linked)-[:HAS_PARTICIPANT {role: 'LOCATION'}]
+                       ->(location)
+                CREATE (legacy_single_post:Post {
+                    test_marker: $marker,
+                    platform: 'codex-test',
+                    platform_id: $marker + '-legacy-single-post',
+                    content: 'Bài legacy đơn tại ' + $marker,
+                    posted_at: localdatetime() - duration({hours: 1})
+                })
+                CREATE (legacy_single_event:Event {
+                    test_marker: $marker,
+                    event_key: $marker + '-legacy-single-event',
+                    description: 'Legacy đơn không nhắc địa điểm'
+                })
+                CREATE (legacy_single_post)-[:MENTIONS]->(location)
+                CREATE (legacy_single_post)-[:DESCRIBES]->(legacy_single_event)
+                """,
+                marker=marker,
+            ).consume()
+
+        repository = Neo4jRepository(settings)
+        repository.driver = driver
+        results = repository.search_events(
+            location=marker,
+            entity=None,
+            hours=24,
+            limit=20,
+        )
+
+        assert {item["event_key"] for item in results} == {
+            f"{marker}-current-event-linked",
+            f"{marker}-current-event-text",
+            f"{marker}-current-single-event",
+            f"{marker}-legacy-event-linked",
+            f"{marker}-legacy-event-text",
+            f"{marker}-legacy-single-event",
+        }
+    finally:
+        with driver.session(database=settings.neo4j_database) as session:
+            session.run(
+                "MATCH (node {test_marker: $marker}) DETACH DELETE node",
+                marker=marker,
+            ).consume()
+        driver.close()

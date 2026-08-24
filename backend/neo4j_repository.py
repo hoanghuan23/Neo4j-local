@@ -12,30 +12,6 @@ MATCH (post:Post)-[:HAS_EVENT_MENTION]->(mention:EventMention)
       -[:EVIDENCE_FOR]->(event:Event)
 WHERE post.posted_at IS NOT NULL
   AND post.posted_at >= localdatetime() - duration({hours: $hours})
-  AND (
-    $location_key IS NULL
-    OR EXISTS {
-      MATCH (mention)-[:HAS_PARTICIPANT]->(location:Entity)
-      WHERE location.type = 'LOCATION'
-        AND (
-          location.normalized_name CONTAINS $location_key
-          OR $location_key IN coalesce(location.aliases, [])
-          OR location.search_name CONTAINS $location_search_key
-        )
-    }
-    OR EXISTS {
-      MATCH (post)-[:MENTIONS]->(location:Entity)
-      WHERE location.type = 'LOCATION'
-        AND (
-          location.normalized_name CONTAINS $location_key
-          OR $location_key IN coalesce(location.aliases, [])
-          OR location.search_name CONTAINS $location_search_key
-        )
-    }
-    OR toLower(coalesce(post.content, '')) CONTAINS $location_key
-    OR toLower(coalesce(mention.description, '')) CONTAINS $location_key
-    OR toLower(coalesce(event.description, '')) CONTAINS $location_key
-  )
 OPTIONAL MATCH (mention)-[:HAS_PARTICIPANT]->(mention_entity:Entity)
 OPTIONAL MATCH (event)-[:HAS_PARTICIPANT]->(event_entity:Entity)
 OPTIONAL MATCH (post)-[:MENTIONS]->(post_entity:Entity)
@@ -46,6 +22,31 @@ WITH post, mention, event,
      collect(DISTINCT post_entity) AS post_entities,
      count(DISTINCT sibling_mention) AS sibling_event_count
 WITH post, mention, event,
+     (
+       $location_key IS NULL
+       OR any(related_entity IN event_entities WHERE
+         related_entity.type = 'LOCATION' AND (
+           coalesce(related_entity.normalized_name, '') CONTAINS $location_key
+           OR $location_key IN coalesce(related_entity.aliases, [])
+           OR coalesce(related_entity.search_name, '')
+                CONTAINS $location_search_key
+         )
+       )
+       OR toLower(coalesce(mention.description, '')) CONTAINS $location_key
+       OR toLower(coalesce(event.description, '')) CONTAINS $location_key
+       OR (sibling_event_count = 1 AND (
+         any(related_entity IN post_entities WHERE
+           related_entity.type = 'LOCATION' AND (
+             coalesce(related_entity.normalized_name, '')
+                  CONTAINS $location_key
+             OR $location_key IN coalesce(related_entity.aliases, [])
+             OR coalesce(related_entity.search_name, '')
+                  CONTAINS $location_search_key
+           )
+         )
+         OR toLower(coalesce(post.content, '')) CONTAINS $location_key
+       ))
+     ) AS location_matches,
      [term IN $entity_terms WHERE
       any(related_entity IN event_entities WHERE
         coalesce(related_entity.normalized_name, '') CONTAINS term.key
@@ -70,12 +71,14 @@ WITH post, mention, event,
      ] AS post_matched_terms,
      sibling_event_count
 WITH post, mention, event,
+     location_matches,
      CASE
        WHEN size(event_matched_terms) > 0 THEN size(event_matched_terms)
        WHEN size(post_matched_terms) > 0 AND sibling_event_count = 1 THEN 1
        ELSE 0
      END AS matched_entity_count
-WHERE size($entity_terms) = 0 OR matched_entity_count > 0
+WHERE location_matches
+  AND (size($entity_terms) = 0 OR matched_entity_count > 0)
 OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
 OPTIONAL MATCH (mention)-[participation:HAS_PARTICIPANT]->(entity:Entity)
 WITH post, mention, event, source,
@@ -108,29 +111,6 @@ SEARCH_LEGACY_EVENTS_QUERY = """
 MATCH (post:Post)-[:DESCRIBES]->(event:Event)
 WHERE post.posted_at IS NOT NULL
   AND post.posted_at >= localdatetime() - duration({hours: $hours})
-  AND (
-    $location_key IS NULL
-    OR EXISTS {
-      MATCH (event)-[:HAS_PARTICIPANT]->(location:Entity)
-      WHERE location.type = 'LOCATION'
-        AND (
-          location.normalized_name CONTAINS $location_key
-          OR $location_key IN coalesce(location.aliases, [])
-          OR location.search_name CONTAINS $location_search_key
-        )
-    }
-    OR EXISTS {
-      MATCH (post)-[:MENTIONS]->(location:Entity)
-      WHERE location.type = 'LOCATION'
-        AND (
-          location.normalized_name CONTAINS $location_key
-          OR $location_key IN coalesce(location.aliases, [])
-          OR location.search_name CONTAINS $location_search_key
-        )
-    }
-    OR toLower(coalesce(post.content, '')) CONTAINS $location_key
-    OR toLower(coalesce(event.description, '')) CONTAINS $location_key
-  )
 OPTIONAL MATCH (event)-[:HAS_PARTICIPANT]->(event_entity:Entity)
 OPTIONAL MATCH (post)-[:MENTIONS]->(post_entity:Entity)
 OPTIONAL MATCH (post)-[:DESCRIBES]->(sibling_event:Event)
@@ -139,6 +119,30 @@ WITH post, event,
      collect(DISTINCT post_entity) AS post_entities,
      count(DISTINCT sibling_event) AS sibling_event_count
 WITH post, event,
+     (
+       $location_key IS NULL
+       OR any(related_entity IN event_entities WHERE
+         related_entity.type = 'LOCATION' AND (
+           coalesce(related_entity.normalized_name, '') CONTAINS $location_key
+           OR $location_key IN coalesce(related_entity.aliases, [])
+           OR coalesce(related_entity.search_name, '')
+                CONTAINS $location_search_key
+         )
+       )
+       OR toLower(coalesce(event.description, '')) CONTAINS $location_key
+       OR (sibling_event_count = 1 AND (
+         any(related_entity IN post_entities WHERE
+           related_entity.type = 'LOCATION' AND (
+             coalesce(related_entity.normalized_name, '')
+                  CONTAINS $location_key
+             OR $location_key IN coalesce(related_entity.aliases, [])
+             OR coalesce(related_entity.search_name, '')
+                  CONTAINS $location_search_key
+           )
+         )
+         OR toLower(coalesce(post.content, '')) CONTAINS $location_key
+       ))
+     ) AS location_matches,
      [term IN $entity_terms WHERE
       any(related_entity IN event_entities WHERE
         coalesce(related_entity.normalized_name, '') CONTAINS term.key
@@ -161,12 +165,14 @@ WITH post, event,
      ] AS post_matched_terms,
      sibling_event_count
 WITH post, event,
+     location_matches,
      CASE
        WHEN size(event_matched_terms) > 0 THEN size(event_matched_terms)
        WHEN size(post_matched_terms) > 0 AND sibling_event_count = 1 THEN 1
        ELSE 0
      END AS matched_entity_count
-WHERE size($entity_terms) = 0 OR matched_entity_count > 0
+WHERE location_matches
+  AND (size($entity_terms) = 0 OR matched_entity_count > 0)
 OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
 OPTIONAL MATCH (event)-[participation:HAS_PARTICIPANT]->(entity:Entity)
 WITH post, event, source,
