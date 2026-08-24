@@ -222,6 +222,9 @@ class GeminiAnswerGenerator:
             "Không lấy thông tin của event khác để bổ sung vào event hiện tại.\n"
             "8. Không suy đoán, không tra cứu thông tin bên ngoài.\n"
             "9. Nếu một event có nhiều nguồn thì chỉ gắn các nguồn thuộc event đó.\n\n"
+            "10. `sources` là danh sách đầy đủ các bài viết nguồn đã khử "
+            "trùng. Mỗi phần tử có `source`, `posted_at` và `url`. "
+            "`post` chỉ là bài đại diện và không phải một nguồn bổ sung.\n\n"
 
             "ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:\n"
             "- Mỗi event phải nằm trên một block Markdown riêng.\n"

@@ -69,7 +69,10 @@ class TemplateAnswerGenerator:
 
         lines = [f"Tìm thấy {len(events)} sự kiện{scope}:"]
         for index, event in enumerate(events, start=1):
-            source = event.post.source_name or event.post.platform
+            source = event.sources[0].source
+            additional_source_count = len(event.sources) - 1
+            if additional_source_count:
+                source = f"{source} +{additional_source_count}"
             lines.append(f"{index}. {event.description} (Nguồn: {source})")
         return "\n".join(lines)
 

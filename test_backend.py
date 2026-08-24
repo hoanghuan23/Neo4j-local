@@ -203,6 +203,57 @@ def test_repository_ranks_shared_entity_events_before_individual_events():
     ]
 
 
+def test_repository_returns_distinct_sources_for_each_event():
+    def event_row(post_id, posted_at, description="Sự kiện đã gộp"):
+        return {
+            "event_key": "event-shared",
+            "description": description,
+            "matched_entity_count": 1,
+            "post": {
+                "platform": "facebook",
+                "platform_id": post_id,
+                "content": f"Nội dung {post_id}",
+                "posted_at": posted_at,
+                "source_name": f"Nguồn {post_id}",
+            },
+        }
+
+    posts = [
+        event_row(f"post-{index}", f"2026-08-{19 + index:02d}T08:00:00")
+        for index in range(1, 6)
+    ]
+    legacy_duplicate = event_row(
+        "post-1", "2026-08-20T08:00:00", "Kết quả schema cũ"
+    )
+    session = MagicMock()
+    session.run.side_effect = [
+        Mock(data=Mock(return_value=posts)),
+        Mock(data=Mock(return_value=[legacy_duplicate])),
+    ]
+    driver = MagicMock()
+    driver.session.return_value.__enter__.return_value = session
+    repository = Neo4jRepository(Settings())
+    repository.driver = driver
+
+    results = repository.search_events(
+        location=None,
+        entity=None,
+        hours=24,
+        limit=10,
+    )
+
+    assert len(results) == 1
+    assert results[0]["post"]["platform_id"] == "post-5"
+    assert results[0]["sources"] == [
+        {
+            "source": f"Nguồn post-{index}",
+            "posted_at": f"2026-08-{19 + index:02d}T08:00:00",
+            "url": None,
+        }
+        for index in range(5, 0, -1)
+    ]
+
+
 def test_chat_returns_structured_graph_results():
     repository = FakeRepository(
         [
@@ -244,6 +295,13 @@ def test_chat_returns_structured_graph_results():
         "hours": 24,
     }
     assert body["results"][0]["post"]["platform_id"] == "post-1"
+    assert body["results"][0]["sources"] == [
+        {
+            "source": "Nguồn thử nghiệm",
+            "posted_at": "2026-08-22T08:00:00+07:00",
+            "url": "https://example.test/post-1",
+        }
+    ]
     assert repository.search_args == {
         "location": "Hà Nội",
         "entity": None,

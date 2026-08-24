@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ChatRequest(BaseModel):
@@ -35,6 +35,12 @@ class PostResult(BaseModel):
     source_name: str | None = None
 
 
+class SourceResult(BaseModel):
+    source: str
+    posted_at: str | None = None
+    url: str | None = None
+
+
 class EventResult(BaseModel):
     event_key: str
     type: str
@@ -43,6 +49,19 @@ class EventResult(BaseModel):
     time_expression: str | None = None
     entities: list[EntityResult] = Field(default_factory=list)
     post: PostResult
+    sources: list[SourceResult] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def populate_sources(self) -> "EventResult":
+        if not self.sources:
+            self.sources = [
+                SourceResult(
+                    source=self.post.source_name or self.post.platform,
+                    posted_at=self.post.posted_at,
+                    url=self.post.url,
+                )
+            ]
+        return self
 
 
 class DetailResult(BaseModel):

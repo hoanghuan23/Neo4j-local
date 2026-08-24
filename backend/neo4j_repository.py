@@ -266,6 +266,26 @@ def make_entity_terms(value: str | None) -> list[dict[str, str]]:
     ]
 
 
+def _post_identity(post: dict[str, Any]) -> tuple[Any, ...]:
+    platform = post.get("platform")
+    platform_id = post.get("platform_id")
+    if platform and platform_id:
+        return ("platform_id", platform, platform_id)
+
+    url = post.get("url")
+    if url:
+        return ("url", url)
+
+    return (
+        "fields",
+        platform,
+        platform_id,
+        post.get("content"),
+        post.get("posted_at"),
+        post.get("source_name"),
+    )
+
+
 class Neo4jRepository:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -321,8 +341,15 @@ class Neo4jRepository:
             ).data()
 
         results_by_event_key: dict[str, dict[str, Any]] = {}
+        posts_by_event_key: dict[
+            str, dict[tuple[Any, ...], dict[str, Any]]
+        ] = {}
         for result in current_results + legacy_results:
             event_key = result["event_key"]
+            post = result["post"]
+            posts_by_event_key.setdefault(event_key, {})[
+                _post_identity(post)
+            ] = post
             existing = results_by_event_key.get(event_key)
             result_rank = (
                 result.get("matched_entity_count", 0),
@@ -334,6 +361,28 @@ class Neo4jRepository:
             ) if existing is not None else None
             if existing_rank is None or result_rank > existing_rank:
                 results_by_event_key[event_key] = result
+
+        for event_key, result in results_by_event_key.items():
+            primary_post = result["post"]
+            primary_identity = _post_identity(primary_post)
+            other_posts = [
+                post
+                for identity, post in posts_by_event_key[event_key].items()
+                if identity != primary_identity
+            ]
+            other_posts.sort(
+                key=lambda post: post.get("posted_at") or "",
+                reverse=True,
+            )
+            posts = [primary_post, *other_posts]
+            result["sources"] = [
+                {
+                    "source": post.get("source_name") or post.get("platform"),
+                    "posted_at": post.get("posted_at"),
+                    "url": post.get("url"),
+                }
+                for post in posts
+            ]
 
         return sorted(
             results_by_event_key.values(),
