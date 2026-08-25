@@ -1,9 +1,9 @@
 from knowledge_settings import (
     EVENT_RELATION_TYPES,
+    GEMINI_MODEL,
     KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
     KNOWLEDGE_PROMPT_VERSION,
     OLLAMA_LOG_PREVIEW_CHARS,
-    OLLAMA_MODEL,
 )
 from knowledge_extraction import normalize_name, prepare_entity
 from knowledge_validation import build_anonymous_participant_key
@@ -334,7 +334,7 @@ def upsert_events(
             status=event["status"],
             time_expression=event["time_expression"],
             confidence=event["confidence"],
-            knowledge_model=OLLAMA_MODEL,
+            knowledge_model=GEMINI_MODEL,
             knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
         ).consume()
 
@@ -637,7 +637,7 @@ def save_knowledge_tx(
         """,
         platform=platform,
         post_id=post_id,
-        knowledge_model=OLLAMA_MODEL,
+        knowledge_model=GEMINI_MODEL,
         knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
         classifier_should_deep=(
             classification.get("should_deep_analyze") if classification else None
@@ -673,7 +673,7 @@ def mark_knowledge_failure(tx, platform: str, post_id: str, error: str) -> None:
         """,
         platform=platform,
         post_id=post_id,
-        knowledge_model=OLLAMA_MODEL,
+        knowledge_model=GEMINI_MODEL,
         knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
         knowledge_error=error[:OLLAMA_LOG_PREVIEW_CHARS],
     ).consume()

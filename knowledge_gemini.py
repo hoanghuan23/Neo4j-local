@@ -9,7 +9,6 @@ from knowledge_settings import (
     GEMINI_INPUT_PRICE_PER_MILLION,
     GEMINI_MODEL,
     GEMINI_OUTPUT_PRICE_PER_MILLION,
-    LOGGER,
 )
 from knowledge_tracing import (
     set_langsmith_model,
@@ -100,14 +99,6 @@ class GeminiKnowledgeCaller:
         if not isinstance(result, dict):
             raise ValueError("Gemini không trả về JSON object theo schema yêu cầu")
 
-        LOGGER.info(
-            "Gemini hoàn tất | model=%s | input_tokens=%s | "
-            "output_tokens=%s | thinking_tokens=%s",
-            self.model,
-            usage.input_tokens,
-            usage.output_tokens,
-            usage.thinking_tokens,
-        )
         return result
 
     def _add_usage(self, usage: GeminiUsage) -> None:

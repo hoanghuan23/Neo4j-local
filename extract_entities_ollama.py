@@ -1,5 +1,7 @@
 import logging
 
+# Ollama imports are retained only as a disabled compatibility fallback for
+# older tools/tests. The runtime pipeline below uses Gemini exclusively.
 import requests
 from neo4j import GraphDatabase
 
@@ -14,6 +16,7 @@ from knowledge_extraction import (
     parse_ollama_payload,
     prepare_entity,
 )
+from knowledge_gemini import GeminiKnowledgeCaller
 from knowledge_persistence import (
     create_entity_schema,
     create_knowledge_schema,
@@ -39,9 +42,28 @@ from knowledge_validation import (
     validate_knowledge,
 )
 
-# Legacy public patch point retained for older callers and tests. Runtime
-# behavior remains Ollama-backed; the historical name cannot be removed yet.
-call_groq = call_ollama
+_gemini_caller: GeminiKnowledgeCaller | None = None
+
+
+def get_gemini_caller() -> GeminiKnowledgeCaller:
+    """Create one Gemini client and reuse it for the whole pipeline."""
+    global _gemini_caller
+    if _gemini_caller is None:
+        _gemini_caller = GeminiKnowledgeCaller()
+    return _gemini_caller
+
+
+def call_gemini(prompt: str, output_schema: dict) -> dict:
+    return get_gemini_caller()(prompt, output_schema)
+
+
+# Disabled Ollama runtime path (kept above only as a compatibility fallback):
+# call_groq = call_ollama
+
+
+def call_groq(prompt: str, output_schema: dict) -> dict:
+    """Legacy patch point; route historical callers through Gemini."""
+    return call_gemini(prompt, output_schema)
 
 
 def extract_knowledge(content: str) -> dict:
@@ -54,30 +76,32 @@ def extract_entities(content: str) -> list[dict]:
     return extract_knowledge(content)["entities"]
 
 
-def process_new_posts(session) -> dict:
-    """Process and consolidate posts entirely with the configured Ollama model."""
+def process_new_posts(session, call_model=None) -> dict:
+    """Process and consolidate posts entirely with the configured Gemini model."""
+    if call_model is None:
+        call_model = get_gemini_caller()
     return _process_new_posts(
         session,
         classify_post_fn=lambda content: (
             _extraction.classify_knowledge_potential(
                 content,
-                call_model=call_ollama,
+                call_model=call_model,
             )
         ),
         extract_knowledge_fn=lambda content: _extraction.extract_knowledge(
             content,
-            call_model=call_ollama,
+            call_model=call_model,
         ),
         consolidate_fn=lambda session: consolidate_pending_mentions(
             session,
-            call_model=call_ollama,
+            call_model=call_model,
         ),
     )
 
 
 def main() -> None:
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
     driver = GraphDatabase.driver(
@@ -87,8 +111,15 @@ def main() -> None:
 
     try:
         with driver.session(database="neo4j") as session:
-            process_new_posts(session)
+            summary = process_new_posts(session)
+            if _gemini_caller is not None:
+                _gemini_caller.print_cost_summary(
+                    target_posts=summary["total"],
+                    stage_label="toàn bộ pipeline",
+                )
     finally:
+        if _gemini_caller is not None:
+            _gemini_caller.close()
         driver.close()
 
 
