@@ -58,6 +58,45 @@ class EventConsolidationTests(unittest.TestCase):
         self.assertEqual(action_family(mention["description"]), "APOLOGY")
         self.assertEqual(select_candidates(mention, [event]), [])
 
+    def test_investigation_of_same_assault_is_a_candidate(self):
+        mention = self.mention(
+            "Công an phường Hoàng Mai đang xác minh vụ người đàn ông mặc đồ "
+            "bảo vệ hành hung tài xế xe ôm công nghệ tại Louis City"
+        )
+        mention.update({
+            "type": "INVESTIGATION",
+            "participants": ["công an phường hoàng mai"],
+        })
+        event = self.event(
+            "assault",
+            "Người đàn ông mặc đồ bảo vệ hành hung tài xế xe ôm công nghệ "
+            "tại Louis City Hoàng Mai",
+        )
+        event.update({
+            "type": "ASSAULT",
+            "participants": ["tài xế xe ôm công nghệ", "louis city hoàng mai"],
+        })
+
+        selected = select_candidates(mention, [event])
+
+        self.assertEqual([item["event_key"] for item in selected], ["assault"])
+        self.assertGreaterEqual(selected[0]["retrieval_score"], 0.20)
+
+    def test_unrelated_investigation_is_not_a_candidate(self):
+        mention = self.mention(
+            "Công an xác minh vụ bảo vệ hành hung tài xế tại Louis City"
+        )
+        mention["type"] = "INVESTIGATION"
+        mention["participants"] = ["công an phường hoàng mai"]
+        event = self.event(
+            "unrelated",
+            "Một người bị bắt giữ trong vụ trộm xe máy tại quận khác",
+        )
+        event["type"] = "ARREST"
+        event["participants"] = ["nghi phạm"]
+
+        self.assertEqual(select_candidates(mention, [event]), [])
+
     def test_invalid_or_unknown_model_decisions_are_dropped(self):
         candidates = [self.event("known", "VETC tạm dừng thu phí")]
         raw = {
@@ -182,7 +221,11 @@ class EventConsolidationIntegrationTests(unittest.TestCase):
             }
 
         with self.driver.session(database="neo4j") as session:
-            stats = consolidate_pending_mentions(session, model)
+            stats = consolidate_pending_mentions(
+                session,
+                model,
+                mention_keys=["codex-m1", "codex-m2"],
+            )
             record = session.run(
                 """
                 MATCH (post:Post {platform: $platform})-[:DESCRIBES]->(event:Event)

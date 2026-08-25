@@ -155,6 +155,7 @@ def process_new_posts(
             for index, post in enumerate(posts, start=1)
         }
         summary = {"total": len(posts), "skipped": 0, "deep": 0, "failed": 0}
+        batch_mention_keys = []
         for completed, future in enumerate(as_completed(future_to_post), start=1):
             original_index, post = future_to_post[future]
             outcome = _save_extracted_post(
@@ -164,6 +165,7 @@ def process_new_posts(
                 original_index=original_index,
                 completed=completed,
                 total=len(posts),
+                mention_keys_out=batch_mention_keys,
             )
             summary[outcome] += 1
 
@@ -177,7 +179,10 @@ def process_new_posts(
     }
     if KNOWLEDGE_PIPELINE_ENABLED and consolidate_fn is not None:
         try:
-            consolidation = consolidate_fn(session)
+            consolidation = consolidate_fn(
+                session,
+                mention_keys=batch_mention_keys,
+            )
         except Exception:
             LOGGER.exception("Lỗi bước consolidation cuối batch")
             consolidation["failed"] += 1
@@ -208,6 +213,7 @@ def _save_extracted_post(
     original_index: int,
     completed: int,
     total: int,
+    mention_keys_out: list[str] | None = None,
 ) -> str:
     """Validate and persist one completed extraction on the main thread."""
     platform = post["platform"]
@@ -239,6 +245,11 @@ def _save_extracted_post(
             classification,
             classifier_decision,
         )
+        if mention_keys_out is not None:
+            mention_keys_out.extend(
+                event.get("mention_key", event["event_key"])
+                for event in knowledge["events"]
+            )
         print(
             "Đã lưu "
             f"{counts['entities']} Entity, {counts['events']} Event, "

@@ -9,6 +9,53 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
     @patch.object(subject, "create_knowledge_schema")
     @patch.object(subject, "validate_knowledge")
     @patch.object(subject, "_load_posts")
+    def test_consolidates_only_mentions_saved_by_current_batch(
+        self,
+        load_posts,
+        validate_knowledge,
+        _create_schema,
+    ):
+        load_posts.return_value = [
+            {"platform": "facebook", "post_id": "1", "content": "one"}
+        ]
+        validate_knowledge.return_value = {
+            "entities": [],
+            "events": [{"event_key": "event-1", "mention_key": "mention-1"}],
+            "event_relations": [],
+        }
+        session = Mock()
+        session.execute_write.return_value = {
+            "entities": 0,
+            "events": 1,
+            "event_relations": 0,
+        }
+        consolidate = Mock(return_value={
+            "mentions": 1,
+            "events_created": 1,
+            "auto_merged": 0,
+            "possible": 0,
+            "descriptions_updated": 1,
+            "failed": 0,
+        })
+
+        subject.process_new_posts(
+            session,
+            extract_knowledge_fn=lambda _content: {},
+            classify_post_fn=lambda _content: {
+                "should_deep_analyze": True,
+                "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
+            },
+            consolidate_fn=consolidate,
+        )
+
+        consolidate.assert_called_once_with(
+            session,
+            mention_keys=["mention-1"],
+        )
+
+    @patch.object(subject, "create_knowledge_schema")
+    @patch.object(subject, "validate_knowledge")
+    @patch.object(subject, "_load_posts")
     def test_extracts_with_two_workers_but_writes_on_main_thread(
         self,
         load_posts,

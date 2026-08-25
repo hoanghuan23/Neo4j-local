@@ -16,13 +16,18 @@ NEO4J_PASSWORD = os.environ["NEO4J_PASSWORD"]
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.getenv("KNOWLEDGE_MODEL", "gemma4:e2b")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("KNOWLEDGE_MODEL", "gemini-3.1-flash-lite")
+GEMINI_MODEL = os.getenv(
+    "GEMINI_KNOWLEDGE_MODEL", "gemini-3.1-flash-lite"
+)
 # Standard paid-tier text pricing from the official Gemini API pricing page.
 GEMINI_INPUT_PRICE_PER_MILLION = os.getenv(
     "GEMINI_INPUT_PRICE_PER_MILLION", "0.25"
 )
 GEMINI_OUTPUT_PRICE_PER_MILLION = os.getenv(
     "GEMINI_OUTPUT_PRICE_PER_MILLION", "1.50"
+)
+GEMINI_TIMEOUT_SECONDS = max(
+    1, float(os.getenv("GEMINI_KNOWLEDGE_TIMEOUT_SECONDS", "120"))
 )
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
@@ -35,7 +40,7 @@ OLLAMA_CONTEXT_TOKENS = max(
     2_048,
     int(os.getenv("OLLAMA_CONTEXT_TOKENS", "32768")),
 )
-POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "10"))
+POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
 KNOWLEDGE_PROMPT_VERSION = "knowledge-v10"

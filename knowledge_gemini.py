@@ -9,6 +9,7 @@ from knowledge_settings import (
     GEMINI_INPUT_PRICE_PER_MILLION,
     GEMINI_MODEL,
     GEMINI_OUTPUT_PRICE_PER_MILLION,
+    GEMINI_TIMEOUT_SECONDS,
 )
 from knowledge_tracing import (
     set_langsmith_model,
@@ -53,7 +54,12 @@ class GeminiKnowledgeCaller:
                 raise RuntimeError(
                     "Chưa cài google-genai. Hãy chạy: pip install google-genai"
                 ) from error
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(
+                api_key=api_key,
+                http_options=types.HttpOptions(
+                    timeout=int(GEMINI_TIMEOUT_SECONDS * 1_000),
+                ),
+            )
             types_module = types
         elif types_module is None:
             raise ValueError("types_module là bắt buộc khi truyền client tùy chỉnh")

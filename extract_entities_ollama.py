@@ -80,6 +80,13 @@ def process_new_posts(session, call_model=None) -> dict:
     """Process and consolidate posts entirely with the configured Gemini model."""
     if call_model is None:
         call_model = get_gemini_caller()
+
+    def consolidate_batch(session, mention_keys=None):
+        kwargs = {"call_model": call_model}
+        if mention_keys is not None:
+            kwargs["mention_keys"] = mention_keys
+        return consolidate_pending_mentions(session, **kwargs)
+
     return _process_new_posts(
         session,
         classify_post_fn=lambda content: (
@@ -92,10 +99,7 @@ def process_new_posts(session, call_model=None) -> dict:
             content,
             call_model=call_model,
         ),
-        consolidate_fn=lambda session: consolidate_pending_mentions(
-            session,
-            call_model=call_model,
-        ),
+        consolidate_fn=consolidate_batch,
     )
 
 
