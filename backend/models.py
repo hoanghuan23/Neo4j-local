@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class ChatRequest(BaseModel):
@@ -9,28 +9,9 @@ class ChatRequest(BaseModel):
 
 
 class ParsedQuestion(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={
-            "required": [
-                "intent",
-                "location",
-                "entity",
-                "topic",
-                "search_terms",
-                "hours",
-            ]
-        }
-    )
-
     intent: Literal["search_events"] = "search_events"
     location: str | None = None
     entity: str | None = None
-    topic: str | None = None
-    search_terms: list[str] = Field(
-        default_factory=list,
-        max_length=5,
-        json_schema_extra={"default": []},
-    )
     hours: int = Field(ge=1, le=720)
 
 

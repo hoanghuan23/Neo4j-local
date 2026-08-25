@@ -149,24 +149,15 @@ def test_gemini_question_parser_uses_configured_default_hours_in_prompt():
     assert parsed.hours == 168
 
 
-def test_parsed_question_schema_matches_gemini_search_plan():
+def test_parsed_question_schema_uses_original_search_fields():
     schema = ParsedQuestion.model_json_schema()
 
-    assert schema["required"] == [
+    assert schema["required"] == ["hours"]
+    assert set(schema["properties"]) == {
         "intent",
         "location",
         "entity",
-        "topic",
-        "search_terms",
         "hours",
-    ]
-    assert schema["properties"]["topic"]["default"] is None
-    assert schema["properties"]["search_terms"] == {
-        "default": [],
-        "items": {"type": "string"},
-        "maxItems": 5,
-        "title": "Search Terms",
-        "type": "array",
     }
 
 
@@ -288,9 +279,8 @@ def test_answer_generator_skips_gemini_for_empty_results():
 def test_chat_service_preserves_results_with_injected_gemini_dependencies():
     parser = Mock()
     parser.parse.return_value = ParsedQuestion(
-        topic="thể thao Việt Nam",
-        search_terms=["bóng đá Việt Nam", "VFF"],
-        hours=168,
+        location="Hà Nội",
+        hours=24,
     )
     repository = Mock()
     repository.search_events.return_value = [event_data()]
@@ -298,17 +288,15 @@ def test_chat_service_preserves_results_with_injected_gemini_dependencies():
     answer_generator.generate.return_value = "Câu trả lời Gemini"
     service = ChatService(parser, repository, answer_generator)
 
-    response = service.chat("Thể thao Việt Nam trong tuần qua", limit=5)
+    response = service.chat("Hà Nội 24h qua có gì?", limit=5)
 
     assert response.answer == "Câu trả lời Gemini"
     assert response.count == 1
     assert response.results[0].event_key == "event-1"
     repository.search_events.assert_called_once_with(
-        location=None,
+        location="Hà Nội",
         entity=None,
-        topic="thể thao Việt Nam",
-        search_terms=["bóng đá Việt Nam", "VFF"],
-        hours=168,
+        hours=24,
         limit=5,
     )
 

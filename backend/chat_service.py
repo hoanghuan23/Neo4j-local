@@ -30,8 +30,6 @@ class EventRepository(Protocol):
         *,
         location: str | None,
         entity: str | None,
-        topic: str | None,
-        search_terms: list[str],
         hours: int,
         limit: int,
     ) -> list[dict]: ...
@@ -104,8 +102,6 @@ class ChatService:
         raw_results = self.repository.search_events(
             location=parsed.location,
             entity=parsed.entity,
-            topic=parsed.topic,
-            search_terms=parsed.search_terms,
             hours=parsed.hours,
             limit=limit,
         )
