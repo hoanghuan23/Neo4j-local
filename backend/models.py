@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -14,6 +15,7 @@ class ParsedQuestion(BaseModel):
     location: str | None = None
     entity: str | None = None
     hours: int = Field(ge=1, le=720)
+    posted_date: date | None = None
 
 
 class EventSearchCursor(BaseModel):

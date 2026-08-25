@@ -1,3 +1,4 @@
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -118,6 +119,27 @@ def test_parser_supports_short_hanoi_queries():
     assert parser.parse("sự kiện hà nội").location == "hà nội"
 
 
+def test_parser_extracts_exact_posted_date_without_polluting_location():
+    parser = RuleBasedQuestionParser(
+        today_provider=lambda: date(2026, 8, 25)
+    )
+
+    parsed = parser.parse("sự kiện hà nội ngày 24 tháng 8")
+
+    assert parsed.location == "hà nội"
+    assert parsed.posted_date == date(2026, 8, 24)
+    assert parsed.hours == 24
+
+
+def test_parser_supports_explicit_year_for_exact_posted_date():
+    parsed = RuleBasedQuestionParser().parse(
+        "sự kiện tại Hà Nội ngày 24 tháng 8 năm 2025"
+    )
+
+    assert parsed.location == "Hà Nội"
+    assert parsed.posted_date == date(2025, 8, 24)
+
+
 def test_parser_extracts_entity_without_treating_it_as_location():
     parsed = RuleBasedQuestionParser().parse(
         "Sự kiện liên quan tới Phú Lê trong 48h qua"
@@ -144,6 +166,25 @@ def test_parser_supports_multiple_entities_and_weeks():
     assert parsed_with_and.hours == 336
 
 
+def test_parser_removes_between_relation_from_multiple_entities():
+    parsed = RuleBasedQuestionParser().parse(
+        "sự kiện có liên quan giữa hà nội và lào cai"
+    )
+
+    assert parsed.entity == "hà nội và lào cai"
+    assert parsed.location is None
+
+
+def test_parser_extracts_month_duration_without_polluting_entities():
+    parsed = RuleBasedQuestionParser(default_hours=168).parse(
+        "sự kiện có liên quan giữa hà nội và lào cai 1 tháng trở lại đây"
+    )
+
+    assert parsed.entity == "hà nội và lào cai"
+    assert parsed.hours == 720
+    assert parsed.posted_date is None
+
+
 def test_parser_treats_previous_week_as_last_168_hours():
     parsed = RuleBasedQuestionParser().parse(
         "tình hình lạng sơn trong tuần trước"
@@ -162,11 +203,20 @@ def test_entity_alternatives_become_or_entity_terms():
         {"key": "huấn", "search_key": "huan"},
         {"key": "phú lê", "search_key": "phu le"},
     ]
+    assert make_entity_terms("giữa Hà Nội và Lào Cai") == [
+        {"key": "hà nội", "search_key": "ha noi"},
+        {"key": "lào cai", "search_key": "lao cai"},
+    ]
 
 
 def test_event_query_filters_by_time_and_can_match_post_content():
     assert "post.posted_at IS NOT NULL" in SEARCH_EVENTS_QUERY
     assert "localdatetime() - duration({hours: $hours})" in SEARCH_EVENTS_QUERY
+    assert "post.posted_at + duration({" in SEARCH_EVENTS_QUERY
+    assert "hours: $posted_at_utc_offset_hours" in SEARCH_EVENTS_QUERY
+    assert "post.posted_at + duration({" in (
+        SEARCH_LEGACY_EVENTS_QUERY
+    )
     assert "sibling_event_count = 1 AND" in SEARCH_EVENTS_QUERY
     assert "toLower(coalesce(post.content, '')) CONTAINS $location_key" in (
         SEARCH_EVENTS_QUERY
@@ -231,6 +281,41 @@ def test_repository_merges_current_and_legacy_results_by_event_key():
     assert session.run.call_count == 2
     assert session.run.call_args_list[0].args[0] == SEARCH_EVENTS_QUERY
     assert session.run.call_args_list[1].args[0] == SEARCH_LEGACY_EVENTS_QUERY
+
+
+def test_repository_passes_exact_posted_date_to_both_queries():
+    matching = {
+        "event_key": "event-24",
+        "description": "Đúng ngày",
+        "post": {"posted_at": "2026-08-24T16:59:59"},
+    }
+    leaked = {
+        "event_key": "event-25",
+        "description": "Sai ngày",
+        "post": {"posted_at": "2026-08-24T17:00:00"},
+    }
+    session = MagicMock()
+    session.run.side_effect = [
+        Mock(data=Mock(return_value=[matching, leaked])),
+        Mock(data=Mock(return_value=[])),
+    ]
+    driver = MagicMock()
+    driver.session.return_value.__enter__.return_value = session
+    repository = Neo4jRepository(Settings())
+    repository.driver = driver
+
+    results = repository.search_events(
+        location="Hà Nội",
+        entity=None,
+        hours=24,
+        posted_date=date(2026, 8, 24),
+        limit=10,
+    )
+
+    for call in session.run.call_args_list:
+        assert call.kwargs["posted_date"] == "2026-08-24"
+        assert call.kwargs["posted_at_utc_offset_hours"] == 7
+    assert [result["event_key"] for result in results] == ["event-24"]
 
 
 def test_repository_ranks_shared_entity_events_before_individual_events():
@@ -382,6 +467,7 @@ def test_chat_returns_structured_graph_results():
         "location": "Hà Nội",
         "entity": None,
         "hours": 24,
+        "posted_date": None,
     }
     assert body["results"][0]["post"]["platform_id"] == "post-1"
     assert body["results"][0]["sources"] == [
@@ -395,6 +481,7 @@ def test_chat_returns_structured_graph_results():
         "location": "Hà Nội",
         "entity": None,
         "hours": 24,
+        "posted_date": None,
         "limit": 6,
         "after": None,
     }
@@ -516,6 +603,7 @@ def test_search_endpoint_and_empty_answer():
         "location": "Huế",
         "entity": None,
         "hours": 24,
+        "posted_date": None,
         "limit": 11,
         "after": None,
     }
@@ -577,12 +665,14 @@ def test_chat_endpoint_uses_gemini_parser_and_answer_generator():
         "location": "Đà Nẵng",
         "entity": None,
         "hours": 48,
+        "posted_date": None,
     }
     assert body["count"] == 1
     assert repository.search_args == {
         "location": "Đà Nẵng",
         "entity": None,
         "hours": 48,
+        "posted_date": None,
         "limit": 6,
         "after": None,
     }

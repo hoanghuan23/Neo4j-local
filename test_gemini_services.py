@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -130,6 +131,93 @@ def test_gemini_question_parser_broadens_administrative_location():
     assert "'thành phố Lạng Sơn', 'tỉnh Lạng Sơn' -> 'Lạng Sơn'" in prompt
 
 
+def test_gemini_question_parser_normalizes_between_entities():
+    payload = {
+        "intent": "search_events",
+        "location": None,
+        "entity": "giữa Hà Nội và Lào Cai",
+        "hours": 24,
+    }
+    client = Mock()
+    client.models.generate_content.return_value = SimpleNamespace(parsed=payload)
+    parser = GeminiQuestionParser(
+        client=client,
+        types_module=FakeTypes,
+        model="test-model",
+    )
+
+    parsed = parser.parse("sự kiện có liên quan giữa hà nội và lào cai")
+
+    assert parsed.entity == "Hà Nội và Lào Cai"
+    prompt = client.models.generate_content.call_args.kwargs["contents"]
+    assert "chỉ trả 'A và B'" in prompt
+
+
+def test_gemini_question_parser_uses_deterministic_month_duration():
+    payload = {
+        "intent": "search_events",
+        "location": None,
+        "entity": "giữa Hà Nội và Lào Cai 1 tháng trở lại đây",
+        "hours": 168,
+    }
+    client = Mock()
+    client.models.generate_content.return_value = SimpleNamespace(parsed=payload)
+    parser = GeminiQuestionParser(
+        client=client,
+        types_module=FakeTypes,
+        model="test-model",
+        default_hours=168,
+    )
+
+    parsed = parser.parse(
+        "sự kiện có liên quan giữa hà nội và lào cai 1 tháng trở lại đây"
+    )
+
+    assert parsed.entity == "Hà Nội và Lào Cai"
+    assert parsed.hours == 720
+
+
+def test_gemini_question_parser_keeps_model_hours_for_unrecognized_duration():
+    payload = {
+        "intent": "search_events",
+        "location": "Hà Nội",
+        "entity": None,
+        "hours": 360,
+    }
+    client = Mock()
+    client.models.generate_content.return_value = SimpleNamespace(parsed=payload)
+    parser = GeminiQuestionParser(
+        client=client,
+        types_module=FakeTypes,
+        model="test-model",
+        default_hours=168,
+    )
+
+    parsed = parser.parse("sự kiện Hà Nội trong nửa tháng qua")
+
+    assert parsed.hours == 360
+
+
+def test_gemini_question_parser_uses_deterministic_exact_date():
+    client = Mock()
+    client.models.generate_content.return_value = SimpleNamespace(
+        parsed={
+            "intent": "search_events",
+            "location": "Hà Nội",
+            "hours": 24,
+        },
+    )
+    parser = GeminiQuestionParser(
+        client=client,
+        types_module=FakeTypes,
+        model="test-model",
+    )
+
+    parsed = parser.parse("sự kiện Hà Nội ngày 24 tháng 8 năm 2025")
+
+    assert parsed.posted_date == date(2025, 8, 24)
+
+
 def test_gemini_question_parser_uses_configured_default_hours_in_prompt():
     client = Mock()
     client.models.generate_content.return_value = SimpleNamespace(
@@ -183,6 +271,7 @@ def test_parsed_question_schema_uses_original_search_fields():
         "location",
         "entity",
         "hours",
+        "posted_date",
     }
 
 
@@ -322,6 +411,7 @@ def test_chat_service_preserves_results_with_injected_gemini_dependencies():
         location="Hà Nội",
         entity=None,
         hours=24,
+        posted_date=None,
         limit=6,
         after=None,
     )
@@ -359,6 +449,7 @@ def test_chat_continuation_reuses_query_without_parser_or_answer_model():
         "location": "Hà Nội",
         "entity": None,
         "hours": 24,
+        "posted_date": None,
         "limit": 2,
         "after": (0, "2026-08-23T08:00:00", "event-2"),
     }

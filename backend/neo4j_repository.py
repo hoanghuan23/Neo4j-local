@@ -1,17 +1,26 @@
 import re
 import unicodedata
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from neo4j import GraphDatabase
 
 from backend.config import Settings
+from backend.question_parser import normalize_entity_for_search
 
 
 SEARCH_EVENTS_QUERY = """
 MATCH (post:Post)-[:HAS_EVENT_MENTION]->(mention:EventMention)
       -[:EVIDENCE_FOR]->(event:Event)
 WHERE post.posted_at IS NOT NULL
-  AND post.posted_at >= localdatetime() - duration({hours: $hours})
+  AND (
+    ($posted_date IS NULL
+      AND post.posted_at >= localdatetime() - duration({hours: $hours}))
+    OR ($posted_date IS NOT NULL
+      AND date(post.posted_at + duration({
+        hours: $posted_at_utc_offset_hours
+      })) = date($posted_date))
+  )
 OPTIONAL MATCH (mention)-[:HAS_PARTICIPANT]->(mention_entity:Entity)
 OPTIONAL MATCH (event)-[:HAS_PARTICIPANT]->(event_entity:Entity)
 OPTIONAL MATCH (post)-[:MENTIONS]->(post_entity:Entity)
@@ -110,7 +119,14 @@ RETURN event.event_key AS event_key,
 SEARCH_LEGACY_EVENTS_QUERY = """
 MATCH (post:Post)-[:DESCRIBES]->(event:Event)
 WHERE post.posted_at IS NOT NULL
-  AND post.posted_at >= localdatetime() - duration({hours: $hours})
+  AND (
+    ($posted_date IS NULL
+      AND post.posted_at >= localdatetime() - duration({hours: $hours}))
+    OR ($posted_date IS NOT NULL
+      AND date(post.posted_at + duration({
+        hours: $posted_at_utc_offset_hours
+      })) = date($posted_date))
+  )
 OPTIONAL MATCH (event)-[:HAS_PARTICIPANT]->(event_entity:Entity)
 OPTIONAL MATCH (post)-[:MENTIONS]->(post_entity:Entity)
 OPTIONAL MATCH (post)-[:DESCRIBES]->(sibling_event:Event)
@@ -256,11 +272,12 @@ _ENTITY_ALTERNATIVE_RE = re.compile(
 
 
 def make_entity_terms(value: str | None) -> list[dict[str, str]]:
-    if not value:
+    normalized_value = normalize_entity_for_search(value)
+    if not normalized_value:
         return []
     alternatives = (
         alternative.strip()
-        for alternative in _ENTITY_ALTERNATIVE_RE.split(value)
+        for alternative in _ENTITY_ALTERNATIVE_RE.split(normalized_value)
     )
     return [
         {
@@ -290,6 +307,27 @@ def _post_identity(post: dict[str, Any]) -> tuple[Any, ...]:
         post.get("posted_at"),
         post.get("source_name"),
     )
+
+
+def _post_matches_date(
+    post: dict[str, Any],
+    posted_date: date,
+    utc_offset_hours: int,
+) -> bool:
+    value = post.get("posted_at")
+    if not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+
+    local_timezone = timezone(timedelta(hours=utc_offset_hours))
+    if parsed.tzinfo is None:
+        local_posted_at = parsed + timedelta(hours=utc_offset_hours)
+    else:
+        local_posted_at = parsed.astimezone(local_timezone)
+    return local_posted_at.date() == posted_date
 
 
 class Neo4jRepository:
@@ -327,6 +365,7 @@ class Neo4jRepository:
         entity: str | None,
         hours: int,
         limit: int,
+        posted_date: date | None = None,
         after: tuple[int, str, str] | None = None,
     ) -> list[dict[str, Any]]:
         if self.driver is None:
@@ -338,6 +377,10 @@ class Neo4jRepository:
             "location_search_key": location_search_key,
             "entity_terms": make_entity_terms(entity),
             "hours": hours,
+            "posted_date": posted_date.isoformat() if posted_date else None,
+            "posted_at_utc_offset_hours": (
+                self.settings.posted_at_utc_offset_hours
+            ),
         }
         with self.driver.session(database=self.settings.neo4j_database) as session:
             current_results = session.run(
@@ -351,7 +394,19 @@ class Neo4jRepository:
         posts_by_event_key: dict[
             str, dict[tuple[Any, ...], dict[str, Any]]
         ] = {}
-        for result in current_results + legacy_results:
+        combined_results = current_results + legacy_results
+        if posted_date is not None:
+            combined_results = [
+                result
+                for result in combined_results
+                if _post_matches_date(
+                    result["post"],
+                    posted_date,
+                    self.settings.posted_at_utc_offset_hours,
+                )
+            ]
+
+        for result in combined_results:
             event_key = result["event_key"]
             post = result["post"]
             posts_by_event_key.setdefault(event_key, {})[

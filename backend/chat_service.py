@@ -1,4 +1,5 @@
 import re
+from datetime import date
 from typing import Protocol
 
 from backend.models import (
@@ -37,6 +38,7 @@ class EventRepository(Protocol):
         location: str | None,
         entity: str | None,
         hours: int,
+        posted_date: date | None,
         limit: int,
         after: tuple[int, str, str] | None = None,
     ) -> list[dict]: ...
@@ -160,6 +162,7 @@ class ChatService:
             location=parsed.location,
             entity=parsed.entity,
             hours=parsed.hours,
+            posted_date=parsed.posted_date,
             limit=limit + 1,
             after=after,
         )

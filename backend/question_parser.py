@@ -1,4 +1,5 @@
 import re
+from datetime import date
 
 from backend.models import ParsedQuestion
 
@@ -7,9 +8,30 @@ _SPACE_RE = re.compile(r"\s+")
 _HOURS_RE = re.compile(r"\b(\d{1,3})\s*(?:h|giờ|tiếng)\b", re.IGNORECASE)
 _DAYS_RE = re.compile(r"\b(\d{1,2})\s*ngày\b", re.IGNORECASE)
 _WEEKS_RE = re.compile(r"\b(\d{1,2})\s*tuần\b", re.IGNORECASE)
+_MONTH_DURATION_PATTERN = (
+    r"(?<!ngày\s)\d{1,2}\s*tháng"
+    r"(?:\s+(?:qua|trở\s+lại\s+đây))?"
+)
+_MONTHS_RE = re.compile(
+    rf"\b({_MONTH_DURATION_PATTERN})\b",
+    re.IGNORECASE,
+)
+_CALENDAR_DATE_PATTERN = (
+    r"ngày\s+(?:0?[1-9]|[12]\d|3[01])\s+"
+    r"tháng\s+(?:0?[1-9]|1[0-2])"
+    r"(?:\s+năm\s+\d{4})?"
+)
+_CALENDAR_DATE_RE = re.compile(
+    r"\bngày\s+(0?[1-9]|[12]\d|3[01])\s+"
+    r"tháng\s+(0?[1-9]|1[0-2])"
+    r"(?:\s+năm\s+(\d{4}))?\b",
+    re.IGNORECASE,
+)
 _TIME_MARKER = (
     r"(?:trong\s+)?\d+\s*(?:h|giờ|tiếng|ngày|tuần)"
     r"|(?:trong\s+)?tuần\s+trước"
+    rf"|{_CALENDAR_DATE_PATTERN}"
+    rf"|{_MONTH_DURATION_PATTERN}"
     r"|hôm\s+nay|hôm\s+qua|gần\s+đây|vừa\s+qua"
 )
 _PREVIOUS_WEEK_RE = re.compile(r"\b(?:trong\s+)?tuần\s+trước\b", re.IGNORECASE)
@@ -18,14 +40,14 @@ _LOCATION_AFTER_PREPOSITION_RE = re.compile(
     re.IGNORECASE,
 )
 _ENTITY_RE = re.compile(
-    rf"\b(?:liên\s+quan(?:\s+(?:đến|tới))?|nhắc\s+(?:đến|tới)|về)\s+"
+    rf"\b(?:liên\s+quan(?:\s+(?:đến|tới|giữa))?|nhắc\s+(?:đến|tới)|về)\s+"
     rf"(.+?)(?=\s+(?:(?:ở|tại|khu\s+vực)\s+|(?:{_TIME_MARKER})\b)"
     r"|[?.,!]|$)",
     re.IGNORECASE,
 )
 _LEADING_QUESTION_RE = re.compile(
     r"^(?:cho\s+(?:tôi|mình)\s+biết\s+|tìm\s+|tin\s+tức\s+|"
-    r"sự\s+kiện\s+|tình\s+hình\s+|có\s+gì\s+xảy\s+ra\s+)"
+    r"(?:các\s+)?sự\s+kiện\s+|tình\s+hình\s+|có\s+gì\s+xảy\s+ra\s+)"
     r"(?:ở\s+|tại\s+)?",
     re.IGNORECASE,
 )
@@ -39,6 +61,14 @@ _BROAD_LOCATION_PREFIX_RE = re.compile(
     r"^(?:(?:thành\s+phố|tỉnh|tp)\.?\s+)",
     re.IGNORECASE,
 )
+_ENTITY_RELATION_PREFIX_RE = re.compile(
+    r"^giữa\s+(?=.+\s+(?:và|hoặc|hay)\s+.+$)",
+    re.IGNORECASE,
+)
+_ENTITY_TIME_SUFFIX_RE = re.compile(
+    rf"\s+(?:{_TIME_MARKER})(?:\s+qua)?$",
+    re.IGNORECASE,
+)
 
 
 def normalize_location_for_search(location: str | None) -> str | None:
@@ -49,6 +79,30 @@ def normalize_location_for_search(location: str | None) -> str | None:
     return normalized or None
 
 
+def normalize_entity_for_search(entity: str | None) -> str | None:
+    """Remove relation wording while retaining the requested entity names."""
+    if entity is None:
+        return None
+    normalized = " ".join(entity.strip().split())
+    normalized = _ENTITY_TIME_SUFFIX_RE.sub("", normalized).strip()
+    normalized = _ENTITY_RELATION_PREFIX_RE.sub("", normalized).strip()
+    return normalized or None
+
+
+def has_explicit_duration(text: str) -> bool:
+    """Return whether the deterministic parser recognizes a duration."""
+    return any(
+        pattern.search(text)
+        for pattern in (
+            _HOURS_RE,
+            _DAYS_RE,
+            _WEEKS_RE,
+            _MONTHS_RE,
+            _PREVIOUS_WEEK_RE,
+        )
+    )
+
+
 class RuleBasedQuestionParser:
     """Small deterministic parser that can later be replaced by an LLM parser."""
 
@@ -56,19 +110,36 @@ class RuleBasedQuestionParser:
         self,
         default_hours: int = 24,
         max_hours: int = 720,
+        today_provider=date.today,
     ):
         self.default_hours = default_hours
         self.max_hours = max_hours
+        self.today_provider = today_provider
 
     def parse(self, question: str) -> ParsedQuestion:
         text = _SPACE_RE.sub(" ", question.strip())
-        entity = self._parse_entity(text)
+        entity = normalize_entity_for_search(self._parse_entity(text))
         location = self._parse_location(text)
         return ParsedQuestion(
             location=normalize_location_for_search(location),
             entity=entity,
             hours=self._parse_hours(text),
+            posted_date=self._parse_posted_date(text),
         )
+
+    def _parse_posted_date(self, text: str) -> date | None:
+        match = _CALENDAR_DATE_RE.search(text)
+        if not match:
+            return None
+        day, month, year = match.groups()
+        try:
+            return date(
+                int(year) if year else self.today_provider().year,
+                int(month),
+                int(day),
+            )
+        except ValueError:
+            return None
 
     def _parse_hours(self, text: str) -> int:
         if _PREVIOUS_WEEK_RE.search(text):
@@ -85,6 +156,11 @@ class RuleBasedQuestionParser:
         weeks_match = _WEEKS_RE.search(text)
         if weeks_match:
             return min(max(int(weeks_match.group(1)) * 7 * 24, 1), self.max_hours)
+
+        months_match = _MONTHS_RE.search(text)
+        if months_match:
+            months = int(re.match(r"\d+", months_match.group(1)).group())
+            return min(max(months * 30 * 24, 1), self.max_hours)
 
         return min(max(self.default_hours, 1), self.max_hours)
 

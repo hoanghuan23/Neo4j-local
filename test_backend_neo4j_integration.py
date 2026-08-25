@@ -162,7 +162,7 @@ def test_search_events_ranks_event_matching_both_entities_first():
         repository.driver = driver
         results = repository.search_events(
             location=None,
-            entity=f"{marker}-huan và {marker}-phu",
+            entity=f"giữa {marker}-huan và {marker}-phu",
             hours=24,
             limit=10,
         )

@@ -6,7 +6,12 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from backend.models import EventResult, ParsedQuestion
-from backend.question_parser import normalize_location_for_search
+from backend.question_parser import (
+    RuleBasedQuestionParser,
+    has_explicit_duration,
+    normalize_entity_for_search,
+    normalize_location_for_search,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -145,16 +150,24 @@ class GeminiQuestionParser:
                 "cần lọc.\n"
                 "- Nếu có nhiều chủ thể cụ thể, giữ đầy đủ tên và giữ nguyên quan hệ "
                 "'và' hoặc 'hoặc' theo câu hỏi.\n\n"
+                "- Với cấu trúc 'giữa A và B', chỉ trả 'A và B'; không đưa từ "
+                "'giữa' vào entity.\n\n"
 
                 "3. time:\n"
                 "- Quy đổi khoảng thời gian sang hours.\n"
                 "- Số ngày = số ngày * 24.\n"
                 "- Số tuần = số tuần * 168.\n"
+                "- Số tháng = số tháng * 720 (quy ước 30 ngày).\n"
                 f"- Nếu không nêu khoảng thời gian, dùng hours={self.default_hours}.\n"
                 "- Riêng 'tuần trước' tạm dùng hours=168.\n"
                 "- Giới hạn hours trong khoảng 1 đến 720.\n\n"
 
-                "4. Intent luôn là 'search_events'.\n\n"
+                "4. posted_date:\n"
+                "- Nếu câu hỏi chỉ định đúng một ngày theo dạng 'ngày D tháng M' "
+                "hoặc 'ngày D tháng M năm YYYY', trả ngày ISO tương ứng.\n"
+                "- Nếu không có ngày lịch chính xác, trả null.\n\n"
+
+                "5. Intent luôn là 'search_events'.\n\n"
                 f"Câu hỏi: {question}"
             ),
             config=self.types.GenerateContentConfig(
@@ -176,15 +189,31 @@ class GeminiQuestionParser:
         parsed = ParsedQuestion.model_validate(
             _validate_structured_response(response, ParsedQuestion)
         )
+        rule_parsed = RuleBasedQuestionParser(
+            default_hours=self.default_hours
+        ).parse(question)
         location = normalize_location_for_search(parsed.location)
-        entity = parsed.entity
+        entity = normalize_entity_for_search(parsed.entity)
+        posted_date = rule_parsed.posted_date
+        hours = (
+            rule_parsed.hours
+            if has_explicit_duration(question)
+            else parsed.hours
+        )
+        if posted_date is not None and rule_parsed.location is not None:
+            location = rule_parsed.location
         if location is None and entity is None:
             # An unconstrained repository query means "latest events".  If the
             # model misses a broad topic, using the original text as a search
             # condition is safer than returning unrelated recent events.
             entity = " ".join(question.strip().strip("?.!,;:").split()) or None
         return parsed.model_copy(
-            update={"location": location, "entity": entity}
+            update={
+                "location": location,
+                "entity": entity,
+                "hours": hours,
+                "posted_date": posted_date,
+            }
         )
 
 

@@ -26,6 +26,9 @@ class Settings:
     default_search_hours: int = int(os.getenv("DEFAULT_SEARCH_HOURS", "24"))
     max_search_hours: int = int(os.getenv("MAX_SEARCH_HOURS", "720"))
     default_result_limit: int = int(os.getenv("DEFAULT_RESULT_LIMIT", "10"))
+    posted_at_utc_offset_hours: int = int(
+        os.getenv("POSTED_AT_UTC_OFFSET_HOURS", "7")
+    )
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     chat_gemini_model: str = os.getenv(
         "CHAT_GEMINI_MODEL", "gemini-3.1-flash-lite"
