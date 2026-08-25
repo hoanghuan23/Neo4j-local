@@ -322,8 +322,46 @@ def test_chat_service_preserves_results_with_injected_gemini_dependencies():
         location="Hà Nội",
         entity=None,
         hours=24,
-        limit=5,
+        limit=6,
+        after=None,
     )
+
+
+def test_chat_continuation_reuses_query_without_parser_or_answer_model():
+    parser = Mock()
+    parser.parse.return_value = ParsedQuestion(location="Hà Nội", hours=24)
+    first_event = event_data()
+    first_event["event_key"] = "event-2"
+    first_event["post"] = {
+        **first_event["post"],
+        "platform_id": "post-2",
+        "posted_at": "2026-08-23T08:00:00",
+    }
+    second_event = event_data()
+    repository = Mock()
+    repository.search_events.side_effect = [
+        [first_event, second_event],
+        [second_event],
+    ]
+    answer_generator = Mock()
+    answer_generator.generate.return_value = "Câu trả lời Gemini"
+    service = ChatService(parser, repository, answer_generator)
+
+    first = service.chat("Hà Nội 24h qua có gì?", limit=1)
+    second = service.chat("xem tiếp", limit=1, cursor=first.next_cursor)
+
+    assert second.start_index == 2
+    assert second.results[0].event_key == "event-1"
+    assert "2. Một vụ tai nạn" in second.answer
+    parser.parse.assert_called_once_with("Hà Nội 24h qua có gì?")
+    answer_generator.generate.assert_called_once()
+    assert repository.search_events.call_args_list[1].kwargs == {
+        "location": "Hà Nội",
+        "entity": None,
+        "hours": 24,
+        "limit": 2,
+        "after": (0, "2026-08-23T08:00:00", "event-2"),
+    }
 
 
 def test_template_answer_describes_entity_as_subject_not_location():

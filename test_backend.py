@@ -41,6 +41,51 @@ class FakeRepository:
         return self.detail_results
 
 
+class PagingRepository(FakeRepository):
+    def search_events(self, **kwargs):
+        self.search_args = kwargs
+        after = kwargs.get("after")
+        rows = sorted(
+            self.results,
+            key=lambda row: (
+                row.get("matched_entity_count", 0),
+                row["post"].get("posted_at") or "",
+                row["event_key"],
+            ),
+            reverse=True,
+        )
+        if after is not None:
+            rows = [
+                row
+                for row in rows
+                if (
+                    row.get("matched_entity_count", 0),
+                    row["post"].get("posted_at") or "",
+                    row["event_key"],
+                )
+                < after
+            ]
+        return rows[: kwargs["limit"]]
+
+
+def pagination_event(index: int, *, matched_entity_count: int = 1):
+    return {
+        "event_key": f"event-{index:02d}",
+        "type": "OTHER",
+        "description": f"Sự kiện số {index}",
+        "matched_entity_count": matched_entity_count,
+        "entities": [],
+        "post": {
+            "platform": "facebook",
+            "platform_id": f"post-{index:02d}",
+            "content": f"Nội dung {index}",
+            "url": None,
+            "posted_at": f"2026-08-{index:02d}T08:00:00",
+            "source_name": "Nguồn thử nghiệm",
+        },
+    }
+
+
 def test_parser_extracts_location_and_hours():
     parsed = RuleBasedQuestionParser().parse("Hà Nội 24h qua có gì?")
 
@@ -224,6 +269,29 @@ def test_repository_ranks_shared_entity_events_before_individual_events():
     ]
 
 
+def test_repository_applies_stable_cursor_after_sorting():
+    rows = [pagination_event(index) for index in range(1, 4)]
+    session = MagicMock()
+    session.run.side_effect = [
+        Mock(data=Mock(return_value=rows)),
+        Mock(data=Mock(return_value=[])),
+    ]
+    driver = MagicMock()
+    driver.session.return_value.__enter__.return_value = session
+    repository = Neo4jRepository(Settings())
+    repository.driver = driver
+
+    results = repository.search_events(
+        location=None,
+        entity=None,
+        hours=24,
+        limit=10,
+        after=(1, "2026-08-02T08:00:00", "event-02"),
+    )
+
+    assert [result["event_key"] for result in results] == ["event-01"]
+
+
 def test_repository_returns_distinct_sources_for_each_event():
     def event_row(post_id, posted_at, description="Sự kiện đã gộp"):
         return {
@@ -327,7 +395,8 @@ def test_chat_returns_structured_graph_results():
         "location": "Hà Nội",
         "entity": None,
         "hours": 24,
-        "limit": 5,
+        "limit": 6,
+        "after": None,
     }
     assert body["answer"].startswith("Tìm thấy 1 sự kiện tại Hà Nội:")
 
@@ -432,7 +501,10 @@ def test_detail_query_prefers_exact_subject_before_contains_matches():
 
 def test_search_endpoint_and_empty_answer():
     repository = FakeRepository()
-    app = create_app(Settings(gemini_api_key=""), repository)
+    app = create_app(
+        Settings(gemini_api_key="", default_search_hours=24),
+        repository,
+    )
 
     with TestClient(app) as client:
         response = client.get("/api/search", params={"q": "Ở Huế hôm nay có gì?"})
@@ -444,7 +516,8 @@ def test_search_endpoint_and_empty_answer():
         "location": "Huế",
         "entity": None,
         "hours": 24,
-        "limit": 10,
+        "limit": 11,
+        "after": None,
     }
     assert health.json() == {"status": "ok", "neo4j": "connected"}
 
@@ -510,7 +583,112 @@ def test_chat_endpoint_uses_gemini_parser_and_answer_generator():
         "location": "Đà Nẵng",
         "entity": None,
         "hours": 48,
-        "limit": 5,
+        "limit": 6,
+        "after": None,
     }
     assert gemini_client.models.generate_content.call_count == 2
     gemini_client.close.assert_called_once_with()
+
+
+def test_chat_cursor_returns_next_page_with_continuous_numbering():
+    repository = PagingRepository(
+        [pagination_event(index) for index in range(1, 13)]
+    )
+    app = create_app(
+        Settings(gemini_api_key="", default_search_hours=24),
+        repository,
+    )
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/chat",
+            json={"message": "Hà Nội 24h qua có gì?", "limit": 10},
+        )
+        first_body = first.json()
+        second = client.post(
+            "/api/chat",
+            json={
+                "message": "xem tiếp",
+                "limit": 10,
+                "cursor": first_body["next_cursor"],
+            },
+        )
+
+    assert first.status_code == 200
+    assert first_body["count"] == 10
+    assert first_body["has_more"] is True
+    assert first_body["next_cursor"]
+    assert first_body["start_index"] == 1
+
+    assert second.status_code == 200
+    second_body = second.json()
+    assert [item["event_key"] for item in second_body["results"]] == [
+        "event-02",
+        "event-01",
+    ]
+    assert second_body["start_index"] == 11
+    assert second_body["has_more"] is False
+    assert second_body["next_cursor"] is None
+    assert "11. Sự kiện số 2" in second_body["answer"]
+    assert second_body["query"] == first_body["query"]
+
+
+def test_chat_cursor_does_not_repeat_when_a_newer_event_is_inserted():
+    repository = PagingRepository(
+        [pagination_event(index) for index in range(1, 13)]
+    )
+    app = create_app(
+        Settings(gemini_api_key="", default_search_hours=24),
+        repository,
+    )
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/chat",
+            json={"message": "Hà Nội 24h qua có gì?", "limit": 10},
+        ).json()
+        repository.results.append(
+            {
+                **pagination_event(13),
+                "event_key": "event-new",
+                "post": {
+                    **pagination_event(13)["post"],
+                    "posted_at": "2026-08-25T12:00:00",
+                },
+            }
+        )
+        second = client.post(
+            "/api/chat",
+            json={
+                "message": "xem tiếp",
+                "limit": 10,
+                "cursor": first["next_cursor"],
+            },
+        ).json()
+
+    first_keys = {item["event_key"] for item in first["results"]}
+    second_keys = {item["event_key"] for item in second["results"]}
+    assert first_keys.isdisjoint(second_keys)
+    assert "event-new" not in second_keys
+
+
+def test_chat_rejects_invalid_or_missing_continuation_cursor():
+    app = create_app(
+        Settings(gemini_api_key="", default_search_hours=24),
+        FakeRepository(),
+    )
+
+    with TestClient(app) as client:
+        missing = client.post(
+            "/api/chat",
+            json={"message": "xem tiếp", "limit": 10},
+        )
+        invalid = client.post(
+            "/api/chat",
+            json={"message": "xem tiếp", "limit": 10, "cursor": "bad!"},
+        )
+
+    assert missing.status_code == 400
+    assert "Không có truy vấn trước" in missing.json()["detail"]
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"] == "Cursor không hợp lệ"

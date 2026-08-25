@@ -5,14 +5,20 @@ from backend.models import (
     ChatResponse,
     DetailQuery,
     DetailResult,
+    EventSearchCursor,
     EventResult,
     ParsedQuestion,
 )
+from backend.pagination import decode_event_cursor, encode_event_cursor
 
 
 _DETAIL_COMMAND_RE = re.compile(
     r"^/detail(?:\s+(.*))?$",
     re.IGNORECASE | re.DOTALL,
+)
+_CONTINUE_COMMAND_RE = re.compile(
+    r"^(?:xem\s+tiếp|tiếp|xem\s+thêm|thêm(?:\s+nữa)?)\W*$",
+    re.IGNORECASE,
 )
 
 
@@ -32,6 +38,7 @@ class EventRepository(Protocol):
         entity: str | None,
         hours: int,
         limit: int,
+        after: tuple[int, str, str] | None = None,
     ) -> list[dict]: ...
 
     def search_related_entities(
@@ -59,6 +66,7 @@ class TemplateAnswerGenerator:
         question: str,
         parsed: ParsedQuestion,
         events: list[EventResult],
+        start_index: int = 1,
     ) -> str:
         del question
         area = f" tại {parsed.location}" if parsed.location else ""
@@ -68,7 +76,7 @@ class TemplateAnswerGenerator:
             return f"Không tìm thấy sự kiện{scope}."
 
         lines = [f"Tìm thấy {len(events)} sự kiện{scope}:"]
-        for index, event in enumerate(events, start=1):
+        for index, event in enumerate(events, start=start_index):
             source = event.sources[0].source
             additional_source_count = len(event.sources) - 1
             if additional_source_count:
@@ -88,7 +96,15 @@ class ChatService:
         self.repository = repository
         self.answer_generator = answer_generator or TemplateAnswerGenerator()
 
-    def chat(self, message: str, limit: int) -> ChatResponse:
+    def chat(
+        self,
+        message: str,
+        limit: int,
+        cursor: str | None = None,
+    ) -> ChatResponse:
+        if cursor is not None:
+            return self._continue_search(message, limit, cursor)
+
         detail_match = _DETAIL_COMMAND_RE.fullmatch(message.strip())
         if detail_match:
             subject = (detail_match.group(1) or "").strip()
@@ -98,23 +114,89 @@ class ChatService:
                 )
             return self._get_subject_detail(subject, limit)
 
+        if _CONTINUE_COMMAND_RE.fullmatch(message.strip()):
+            raise InvalidChatCommand(
+                "Không có truy vấn trước để xem tiếp. Hãy tìm kiếm lại."
+            )
+
         parsed = self.parser.parse(message)
+        return self._search_events(
+            message=message,
+            parsed=parsed,
+            limit=limit,
+            start_index=1,
+        )
+
+    def _continue_search(
+        self,
+        message: str,
+        limit: int,
+        cursor: str,
+    ) -> ChatResponse:
+        try:
+            decoded = decode_event_cursor(cursor)
+        except ValueError as exc:
+            raise InvalidChatCommand(str(exc)) from exc
+        return self._search_events(
+            message=message,
+            parsed=decoded.query,
+            limit=limit,
+            start_index=decoded.returned + 1,
+            after=decoded.sort_key,
+            continuation=True,
+        )
+
+    def _search_events(
+        self,
+        *,
+        message: str,
+        parsed: ParsedQuestion,
+        limit: int,
+        start_index: int,
+        after: tuple[int, str, str] | None = None,
+        continuation: bool = False,
+    ) -> ChatResponse:
         raw_results = self.repository.search_events(
             location=parsed.location,
             entity=parsed.entity,
             hours=parsed.hours,
-            limit=limit,
+            limit=limit + 1,
+            after=after,
         )
-        results = [EventResult.model_validate(item) for item in raw_results]
+        has_more = len(raw_results) > limit
+        page_rows = raw_results[:limit]
+        results = [EventResult.model_validate(item) for item in page_rows]
+        answer_generator = (
+            TemplateAnswerGenerator() if continuation else self.answer_generator
+        )
+        answer_kwargs = {
+            "question": message,
+            "parsed": parsed,
+            "events": results,
+        }
+        if continuation:
+            answer_kwargs["start_index"] = start_index
+
+        next_cursor = None
+        if has_more and page_rows:
+            last = page_rows[-1]
+            next_cursor = encode_event_cursor(
+                EventSearchCursor(
+                    query=parsed,
+                    returned=start_index - 1 + len(page_rows),
+                    matched_entity_count=last.get("matched_entity_count", 0),
+                    posted_at=last["post"].get("posted_at") or "",
+                    event_key=last["event_key"],
+                )
+            )
         return ChatResponse(
-            answer=self.answer_generator.generate(
-                question=message,
-                parsed=parsed,
-                events=results,
-            ),
+            answer=answer_generator.generate(**answer_kwargs),
             query=parsed,
             count=len(results),
             results=results,
+            has_more=has_more,
+            next_cursor=next_cursor,
+            start_index=start_index,
         )
 
     def _get_subject_detail(self, subject: str, limit: int) -> ChatResponse:

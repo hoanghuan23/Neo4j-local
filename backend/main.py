@@ -117,9 +117,14 @@ def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    def run_chat(request: Request, message: str, limit: int) -> ChatResponse:
+    def run_chat(
+        request: Request,
+        message: str,
+        limit: int,
+        cursor: str | None = None,
+    ) -> ChatResponse:
         try:
-            return request.app.state.chat_service.chat(message, limit)
+            return request.app.state.chat_service.chat(message, limit, cursor)
         except InvalidChatCommand as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Neo4jError as exc:
@@ -139,7 +144,12 @@ def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
 
     @app.post("/api/chat", response_model=ChatResponse)
     def chat(payload: ChatRequest, request: Request) -> ChatResponse:
-        return run_chat(request, payload.message.strip(), payload.limit)
+        return run_chat(
+            request,
+            payload.message.strip(),
+            payload.limit,
+            payload.cursor,
+        )
 
     @app.get("/api/search", response_model=ChatResponse)
     def search(
@@ -150,8 +160,9 @@ def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
             ge=1,
             le=30,
         ),
+        cursor: str | None = Query(default=None, max_length=4_096),
     ) -> ChatResponse:
-        return run_chat(request, q.strip(), limit)
+        return run_chat(request, q.strip(), limit, cursor)
 
     return app
 

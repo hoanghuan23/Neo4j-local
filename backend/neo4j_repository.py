@@ -327,6 +327,7 @@ class Neo4jRepository:
         entity: str | None,
         hours: int,
         limit: int,
+        after: tuple[int, str, str] | None = None,
     ) -> list[dict[str, Any]]:
         if self.driver is None:
             raise RuntimeError("Neo4j chưa được kết nối")
@@ -390,14 +391,27 @@ class Neo4jRepository:
                 for post in posts
             ]
 
-        return sorted(
+        sorted_results = sorted(
             results_by_event_key.values(),
             key=lambda result: (
                 result.get("matched_entity_count", 0),
                 result["post"].get("posted_at") or "",
+                result["event_key"],
             ),
             reverse=True,
-        )[:limit]
+        )
+        if after is not None:
+            sorted_results = [
+                result
+                for result in sorted_results
+                if (
+                    result.get("matched_entity_count", 0),
+                    result["post"].get("posted_at") or "",
+                    result["event_key"],
+                )
+                < after
+            ]
+        return sorted_results[:limit]
 
     def search_related_entities(
         self,

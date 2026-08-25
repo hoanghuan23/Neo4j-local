@@ -1,11 +1,12 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2_000)
     limit: int = Field(default=10, ge=1, le=50)
+    cursor: str | None = Field(default=None, max_length=4_096)
 
 
 class ParsedQuestion(BaseModel):
@@ -13,6 +14,25 @@ class ParsedQuestion(BaseModel):
     location: str | None = None
     entity: str | None = None
     hours: int = Field(ge=1, le=720)
+
+
+class EventSearchCursor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1] = 1
+    query: ParsedQuestion
+    returned: int = Field(ge=0)
+    matched_entity_count: int = Field(ge=0)
+    posted_at: str
+    event_key: str = Field(min_length=1)
+
+    @property
+    def sort_key(self) -> tuple[int, str, str]:
+        return (
+            self.matched_entity_count,
+            self.posted_at,
+            self.event_key,
+        )
 
 
 class DetailQuery(BaseModel):
@@ -76,6 +96,9 @@ class ChatResponse(BaseModel):
     count: int
     results: list[EventResult] = Field(default_factory=list)
     details: list[DetailResult] = Field(default_factory=list)
+    has_more: bool = False
+    next_cursor: str | None = None
+    start_index: int = Field(default=1, ge=1)
 
 
 class HealthResponse(BaseModel):
