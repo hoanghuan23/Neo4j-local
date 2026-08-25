@@ -105,6 +105,71 @@ def test_gemini_question_parser_returns_validated_structure(
     assert call["config"]["response_schema"] is ParsedQuestion
 
 
+def test_gemini_question_parser_broadens_administrative_location():
+    payload = {
+        "intent": "search_events",
+        "location": "thành phố Lạng Sơn",
+        "hours": 168,
+    }
+    client = Mock()
+    client.models.generate_content.return_value = SimpleNamespace(
+        parsed=payload,
+        text=json.dumps(payload),
+    )
+    parser = GeminiQuestionParser(
+        client=client,
+        types_module=FakeTypes,
+        model="test-model",
+    )
+
+    parsed = parser.parse("Sự kiện thành phố Lạng Sơn trong 1 tuần")
+
+    assert parsed.location == "Lạng Sơn"
+    prompt = client.models.generate_content.call_args.kwargs["contents"]
+    assert "tên địa lý ngắn gọn" in prompt
+    assert "'thành phố Lạng Sơn', 'tỉnh Lạng Sơn' -> 'Lạng Sơn'" in prompt
+
+
+def test_gemini_question_parser_uses_configured_default_hours_in_prompt():
+    client = Mock()
+    client.models.generate_content.return_value = SimpleNamespace(
+        parsed={"location": "Hà Nội", "hours": 168},
+    )
+    parser = GeminiQuestionParser(
+        client=client,
+        types_module=FakeTypes,
+        model="test-model",
+        default_hours=168,
+    )
+
+    parsed = parser.parse("sự kiện Hà Nội")
+
+    prompt = client.models.generate_content.call_args.kwargs["contents"]
+    assert "Nếu không nêu khoảng thời gian, dùng hours=168" in prompt
+    assert parsed.hours == 168
+
+
+def test_parsed_question_schema_matches_gemini_search_plan():
+    schema = ParsedQuestion.model_json_schema()
+
+    assert schema["required"] == [
+        "intent",
+        "location",
+        "entity",
+        "topic",
+        "search_terms",
+        "hours",
+    ]
+    assert schema["properties"]["topic"]["default"] is None
+    assert schema["properties"]["search_terms"] == {
+        "default": [],
+        "items": {"type": "string"},
+        "maxItems": 5,
+        "title": "Search Terms",
+        "type": "array",
+    }
+
+
 @pytest.mark.parametrize(
     "response",
     [
@@ -222,22 +287,28 @@ def test_answer_generator_skips_gemini_for_empty_results():
 
 def test_chat_service_preserves_results_with_injected_gemini_dependencies():
     parser = Mock()
-    parser.parse.return_value = ParsedQuestion(location="Hà Nội", hours=24)
+    parser.parse.return_value = ParsedQuestion(
+        topic="thể thao Việt Nam",
+        search_terms=["bóng đá Việt Nam", "VFF"],
+        hours=168,
+    )
     repository = Mock()
     repository.search_events.return_value = [event_data()]
     answer_generator = Mock()
     answer_generator.generate.return_value = "Câu trả lời Gemini"
     service = ChatService(parser, repository, answer_generator)
 
-    response = service.chat("Hà Nội 24h qua có gì?", limit=5)
+    response = service.chat("Thể thao Việt Nam trong tuần qua", limit=5)
 
     assert response.answer == "Câu trả lời Gemini"
     assert response.count == 1
     assert response.results[0].event_key == "event-1"
     repository.search_events.assert_called_once_with(
-        location="Hà Nội",
+        location=None,
         entity=None,
-        hours=24,
+        topic="thể thao Việt Nam",
+        search_terms=["bóng đá Việt Nam", "VFF"],
+        hours=168,
         limit=5,
     )
 

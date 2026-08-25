@@ -69,6 +69,23 @@ WITH post, mention, event,
       OR (size(split(term.key, ' ')) > 1
           AND toLower(coalesce(post.content, '')) CONTAINS term.key)
      ] AS post_matched_terms,
+     [term IN $topic_terms WHERE
+      any(related_entity IN event_entities WHERE
+        coalesce(related_entity.normalized_name, '') CONTAINS term.key
+        OR term.key IN coalesce(related_entity.aliases, [])
+        OR coalesce(related_entity.search_name, '') CONTAINS term.search_key
+      )
+      OR toLower(coalesce(mention.description, '')) CONTAINS term.key
+      OR toLower(coalesce(event.description, '')) CONTAINS term.key
+     ] AS event_matched_topic_terms,
+     [term IN $topic_terms WHERE
+      any(related_entity IN post_entities WHERE
+        coalesce(related_entity.normalized_name, '') CONTAINS term.key
+        OR term.key IN coalesce(related_entity.aliases, [])
+        OR coalesce(related_entity.search_name, '') CONTAINS term.search_key
+      )
+      OR toLower(coalesce(post.content, '')) CONTAINS term.key
+     ] AS post_matched_topic_terms,
      sibling_event_count
 WITH post, mention, event,
      location_matches,
@@ -76,25 +93,42 @@ WITH post, mention, event,
        WHEN size(event_matched_terms) > 0 THEN size(event_matched_terms)
        WHEN size(post_matched_terms) > 0 AND sibling_event_count = 1 THEN 1
        ELSE 0
-     END AS matched_entity_count
-WHERE location_matches
-  AND (size($entity_terms) = 0 OR matched_entity_count > 0)
+     END AS matched_entity_count,
+     CASE
+       WHEN size(event_matched_topic_terms) > 0
+         THEN size(event_matched_topic_terms)
+       WHEN size(post_matched_topic_terms) > 0 AND sibling_event_count = 1
+         THEN size(post_matched_topic_terms)
+       ELSE 0
+     END AS matched_topic_count
+WHERE (
+  (
+    ($location_key IS NOT NULL
+      OR size($entity_terms) > 0
+      OR size($topic_terms) = 0)
+    AND location_matches
+    AND (size($entity_terms) = 0 OR matched_entity_count > 0)
+  )
+  OR matched_topic_count > 0
+)
 OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
 OPTIONAL MATCH (mention)-[participation:HAS_PARTICIPANT]->(entity:Entity)
 WITH post, mention, event, source,
-     matched_entity_count,
+     matched_entity_count, matched_topic_count,
      collect(DISTINCT CASE WHEN entity IS NULL THEN NULL ELSE {
        name: coalesce(entity.name, entity.normalized_name),
        type: entity.type,
        role: participation.role
      } END) AS entities
-ORDER BY matched_entity_count DESC, post.posted_at DESC
+ORDER BY matched_entity_count DESC, matched_topic_count DESC,
+         post.posted_at DESC
 RETURN event.event_key AS event_key,
        coalesce(event.type, mention.type, 'OTHER') AS type,
        coalesce(event.description, mention.description, post.content) AS description,
        coalesce(mention.status, event.status) AS status,
        mention.time_expression AS time_expression,
        matched_entity_count,
+       matched_topic_count,
        entities,
        {
          platform: post.platform,
@@ -163,6 +197,22 @@ WITH post, event,
       OR (size(split(term.key, ' ')) > 1
           AND toLower(coalesce(post.content, '')) CONTAINS term.key)
      ] AS post_matched_terms,
+     [term IN $topic_terms WHERE
+      any(related_entity IN event_entities WHERE
+        coalesce(related_entity.normalized_name, '') CONTAINS term.key
+        OR term.key IN coalesce(related_entity.aliases, [])
+        OR coalesce(related_entity.search_name, '') CONTAINS term.search_key
+      )
+      OR toLower(coalesce(event.description, '')) CONTAINS term.key
+     ] AS event_matched_topic_terms,
+     [term IN $topic_terms WHERE
+      any(related_entity IN post_entities WHERE
+        coalesce(related_entity.normalized_name, '') CONTAINS term.key
+        OR term.key IN coalesce(related_entity.aliases, [])
+        OR coalesce(related_entity.search_name, '') CONTAINS term.search_key
+      )
+      OR toLower(coalesce(post.content, '')) CONTAINS term.key
+     ] AS post_matched_topic_terms,
      sibling_event_count
 WITH post, event,
      location_matches,
@@ -170,25 +220,42 @@ WITH post, event,
        WHEN size(event_matched_terms) > 0 THEN size(event_matched_terms)
        WHEN size(post_matched_terms) > 0 AND sibling_event_count = 1 THEN 1
        ELSE 0
-     END AS matched_entity_count
-WHERE location_matches
-  AND (size($entity_terms) = 0 OR matched_entity_count > 0)
+     END AS matched_entity_count,
+     CASE
+       WHEN size(event_matched_topic_terms) > 0
+         THEN size(event_matched_topic_terms)
+       WHEN size(post_matched_topic_terms) > 0 AND sibling_event_count = 1
+         THEN size(post_matched_topic_terms)
+       ELSE 0
+     END AS matched_topic_count
+WHERE (
+  (
+    ($location_key IS NOT NULL
+      OR size($entity_terms) > 0
+      OR size($topic_terms) = 0)
+    AND location_matches
+    AND (size($entity_terms) = 0 OR matched_entity_count > 0)
+  )
+  OR matched_topic_count > 0
+)
 OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
 OPTIONAL MATCH (event)-[participation:HAS_PARTICIPANT]->(entity:Entity)
 WITH post, event, source,
-     matched_entity_count,
+     matched_entity_count, matched_topic_count,
      collect(DISTINCT CASE WHEN entity IS NULL THEN NULL ELSE {
        name: coalesce(entity.name, entity.normalized_name),
        type: entity.type,
        role: participation.role
      } END) AS entities
-ORDER BY matched_entity_count DESC, post.posted_at DESC
+ORDER BY matched_entity_count DESC, matched_topic_count DESC,
+         post.posted_at DESC
 RETURN event.event_key AS event_key,
        coalesce(event.type, 'OTHER') AS type,
        coalesce(event.description, post.content) AS description,
        event.status AS status,
        event.time_expression AS time_expression,
        matched_entity_count,
+       matched_topic_count,
        entities,
        {
          platform: post.platform,
@@ -272,6 +339,25 @@ def make_entity_terms(value: str | None) -> list[dict[str, str]]:
     ]
 
 
+def make_topic_terms(
+    topic: str | None,
+    search_terms: list[str] | None,
+) -> list[dict[str, str]]:
+    """Normalize and deduplicate Gemini's topical query expansion."""
+    values = [topic, *(search_terms or [])]
+    terms: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for value in values:
+        if not value or not value.strip():
+            continue
+        key = normalize_name(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        terms.append({"key": key, "search_key": make_search_name(value)})
+    return terms
+
+
 def _post_identity(post: dict[str, Any]) -> tuple[Any, ...]:
     platform = post.get("platform")
     platform_id = post.get("platform_id")
@@ -325,6 +411,8 @@ class Neo4jRepository:
         *,
         location: str | None,
         entity: str | None,
+        topic: str | None = None,
+        search_terms: list[str] | None = None,
         hours: int,
         limit: int,
     ) -> list[dict[str, Any]]:
@@ -336,6 +424,7 @@ class Neo4jRepository:
             "location_key": location_key,
             "location_search_key": location_search_key,
             "entity_terms": make_entity_terms(entity),
+            "topic_terms": make_topic_terms(topic, search_terms),
             "hours": hours,
         }
         with self.driver.session(database=self.settings.neo4j_database) as session:
@@ -359,10 +448,12 @@ class Neo4jRepository:
             existing = results_by_event_key.get(event_key)
             result_rank = (
                 result.get("matched_entity_count", 0),
+                result.get("matched_topic_count", 0),
                 result["post"].get("posted_at") or "",
             )
             existing_rank = (
                 existing.get("matched_entity_count", 0),
+                existing.get("matched_topic_count", 0),
                 existing["post"].get("posted_at") or "",
             ) if existing is not None else None
             if existing_rank is None or result_rank > existing_rank:
@@ -394,6 +485,7 @@ class Neo4jRepository:
             results_by_event_key.values(),
             key=lambda result: (
                 result.get("matched_entity_count", 0),
+                result.get("matched_topic_count", 0),
                 result["post"].get("posted_at") or "",
             ),
             reverse=True,

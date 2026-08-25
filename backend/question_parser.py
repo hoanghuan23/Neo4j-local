@@ -35,6 +35,18 @@ _EVENT_LOCATION_RE = re.compile(
     re.IGNORECASE,
 )
 _SUPPORTED_BARE_LOCATIONS = {"hà nội"}
+_BROAD_LOCATION_PREFIX_RE = re.compile(
+    r"^(?:(?:thành\s+phố|tỉnh|tp)\.?\s+)",
+    re.IGNORECASE,
+)
+
+
+def normalize_location_for_search(location: str | None) -> str | None:
+    """Drop broad administrative labels while retaining the place name."""
+    if location is None:
+        return None
+    normalized = _BROAD_LOCATION_PREFIX_RE.sub("", location.strip()).strip()
+    return normalized or None
 
 
 class RuleBasedQuestionParser:
@@ -53,7 +65,7 @@ class RuleBasedQuestionParser:
         entity = self._parse_entity(text)
         location = self._parse_location(text)
         return ParsedQuestion(
-            location=location,
+            location=normalize_location_for_search(location),
             entity=entity,
             hours=self._parse_hours(text),
         )

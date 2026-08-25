@@ -11,6 +11,7 @@ from backend.neo4j_repository import (
     SEARCH_RELATED_ENTITIES_QUERY,
     Neo4jRepository,
     make_entity_terms,
+    make_topic_terms,
 )
 from backend.question_parser import RuleBasedQuestionParser
 
@@ -54,6 +55,16 @@ def test_parser_supports_explicit_location_and_days():
 
     assert parsed.location == "Đà Nẵng"
     assert parsed.hours == 48
+
+
+def test_parser_broadens_province_and_city_location_names():
+    parser = RuleBasedQuestionParser()
+
+    assert (
+        parser.parse("Sự kiện tại thành phố Lạng Sơn trong 1 tuần").location
+        == "Lạng Sơn"
+    )
+    assert parser.parse("Sự kiện tại tỉnh Lạng Sơn").location == "Lạng Sơn"
 
 
 def test_parser_supports_short_hanoi_queries():
@@ -109,6 +120,17 @@ def test_entity_alternatives_become_or_search_terms():
     ]
 
 
+def test_topic_terms_include_topic_and_deduplicate_search_expansion():
+    assert make_topic_terms(
+        "Thể thao Việt Nam",
+        ["thể thao Việt Nam", "Bóng đá Việt Nam", "VFF"],
+    ) == [
+        {"key": "thể thao việt nam", "search_key": "the thao viet nam"},
+        {"key": "bóng đá việt nam", "search_key": "bong da viet nam"},
+        {"key": "vff", "search_key": "vff"},
+    ]
+
+
 def test_event_query_filters_by_time_and_can_match_post_content():
     assert "post.posted_at IS NOT NULL" in SEARCH_EVENTS_QUERY
     assert "localdatetime() - duration({hours: $hours})" in SEARCH_EVENTS_QUERY
@@ -119,7 +141,15 @@ def test_event_query_filters_by_time_and_can_match_post_content():
     assert "[term IN $entity_terms WHERE" in (
         SEARCH_EVENTS_QUERY
     )
-    assert "ORDER BY matched_entity_count DESC" in SEARCH_EVENTS_QUERY
+    assert "[term IN $topic_terms WHERE" in SEARCH_EVENTS_QUERY
+    assert "OR matched_topic_count > 0" in (
+        SEARCH_EVENTS_QUERY
+    )
+    assert "OR size($topic_terms) = 0" in SEARCH_EVENTS_QUERY
+    assert "AND (size($topic_terms) = 0 OR matched_topic_count > 0)" not in (
+        SEARCH_EVENTS_QUERY
+    )
+    assert "matched_topic_count DESC" in SEARCH_EVENTS_QUERY
     assert "MATCH (post:Post)-[:DESCRIBES]->(event:Event)" in (
         SEARCH_LEGACY_EVENTS_QUERY
     )
@@ -127,6 +157,42 @@ def test_event_query_filters_by_time_and_can_match_post_content():
         SEARCH_LEGACY_EVENTS_QUERY
     )
     assert "sibling_event_count = 1 AND" in SEARCH_LEGACY_EVENTS_QUERY
+    assert "[term IN $topic_terms WHERE" in SEARCH_LEGACY_EVENTS_QUERY
+    assert "OR matched_topic_count > 0" in (
+        SEARCH_LEGACY_EVENTS_QUERY
+    )
+    assert "AND (size($topic_terms) = 0 OR matched_topic_count > 0)" not in (
+        SEARCH_LEGACY_EVENTS_QUERY
+    )
+
+
+def test_repository_passes_topic_terms_to_both_event_queries():
+    session = MagicMock()
+    session.run.side_effect = [
+        Mock(data=Mock(return_value=[])),
+        Mock(data=Mock(return_value=[])),
+    ]
+    driver = MagicMock()
+    driver.session.return_value.__enter__.return_value = session
+    repository = Neo4jRepository(Settings())
+    repository.driver = driver
+
+    repository.search_events(
+        location=None,
+        entity=None,
+        topic="Thể thao Việt Nam",
+        search_terms=["bóng đá Việt Nam", "VFF"],
+        hours=168,
+        limit=10,
+    )
+
+    expected_terms = [
+        {"key": "thể thao việt nam", "search_key": "the thao viet nam"},
+        {"key": "bóng đá việt nam", "search_key": "bong da viet nam"},
+        {"key": "vff", "search_key": "vff"},
+    ]
+    for call in session.run.call_args_list:
+        assert call.kwargs["topic_terms"] == expected_terms
 
 
 def test_repository_merges_current_and_legacy_results_by_event_key():

@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from backend.models import EventResult, ParsedQuestion
+from backend.question_parser import normalize_location_for_search
 
 
 LOGGER = logging.getLogger(__name__)
@@ -105,12 +106,14 @@ class GeminiQuestionParser:
         client: Any,
         types_module: Any,
         model: str,
+        default_hours: int = 24,
         input_price_per_million_usd: str | Decimal = "0.25",
         output_price_per_million_usd: str | Decimal = "1.50",
     ):
         self.client = client
         self.types = types_module
         self.model = model
+        self.default_hours = default_hours
         self.input_price_per_million_usd = _price(
             input_price_per_million_usd
         )
@@ -122,17 +125,74 @@ class GeminiQuestionParser:
         response = self.client.models.generate_content(
             model=self.model,
             contents=(
-                "Phân tích câu hỏi tìm kiếm sự kiện tiếng Việt dưới đây. "
-                "location chỉ chứa một địa điểm được yêu cầu hoặc null. "
-                "entity chứa người, tổ chức hoặc chủ thể mà câu hỏi muốn tìm "
-                "sự kiện liên quan, hoặc null. Nếu có nhiều chủ thể, giữ đủ "
-                "tên và giữ nguyên từ nối 'và' hoặc 'hoặc' của câu hỏi; không "
-                "đặt tên người "
-                "vào location. Quy đổi số ngày hoặc số tuần sang giờ, dùng "
-                "24 giờ nếu "
-                "không nêu khoảng thời gian; riêng cụm 'tuần trước' tạm đặt "
-                "hours=168. Giới hạn hours trong khoảng "
-                "1 đến 720. Intent luôn là "
+                "Phân tích câu hỏi tìm kiếm sự kiện tiếng Việt dưới đây và chuyển nó "
+                "thành các điều kiện tìm kiếm có thể dùng để truy vấn dữ liệu sự kiện. \n\n"
+
+                "Mục tiêu là hiểu ý nghĩa của người dùng, không chỉ trích xuất "
+                "đúng các từ xuất hiện trong câu hỏi. Cần tạo thêm các từ khóa liên quan "
+                "hợp lý để tăng khả năng tìm thấy dữ liệu khi tên người dùng nhập không "
+                "trùng chính xác với Entity trong cơ sở dữ liệu.\n\n"
+
+                "Quy tắc: \n"
+                "1. location:\n"
+                "- Chứa một địa điểm chính được yêu cầu hoặc null.\n"
+                "- Dùng tên địa lý ngắn gọn, đủ phân biệt để tìm kiếm bao quát.\n"
+                "- Bỏ các tiền tố hành chính như 'tỉnh', 'thành phố', 'TP.'.\n"
+                "- Ví dụ: 'thành phố Lạng Sơn', 'tỉnh Lạng Sơn' -> 'Lạng Sơn'.\n"
+                "- Không đặt tên người hoặc tổ chức vào location.\n\n"
+
+                "2. entity:\n"
+                "- Chứa người, tổ chức hoặc chủ thể CỤ THỂ mà người dùng trực tiếp "
+                "muốn tìm sự kiện liên quan, hoặc null.\n"
+                "- Chỉ đặt vào entity khi câu hỏi có thể xác định được một chủ thể cụ thể.\n"
+                "- Không ép các khái niệm rộng như 'bóng đá Việt Nam', 'thể thao Việt Nam', "
+                "'kinh tế Việt Nam', 'giáo dục', 'giao thông' thành một Entity cụ thể nếu "
+                "không có căn cứ.\n"
+                "- Nếu có nhiều chủ thể cụ thể, giữ đầy đủ tên và giữ nguyên quan hệ "
+                "'và' hoặc 'hoặc' theo câu hỏi.\n\n"
+
+                "3. topic:\n"
+                "- Xác định chủ đề hoặc lĩnh vực mà người dùng muốn tìm, hoặc null.\n"
+                "- Topic có thể rộng hơn Entity.\n"
+                "- Ví dụ: 'bóng đá Việt Nam' -> topic='bóng đá Việt Nam'; "
+                "'sự kiện thể thao Việt Nam' -> topic='thể thao Việt Nam'.\n\n"
+
+                "4. search_terms:\n"
+                "- Tạo danh sách các từ hoặc cụm từ có thể dùng để mở rộng truy vấn.\n"
+                "- Bao gồm từ khóa trực tiếp trong câu hỏi và một số khái niệm gần nghĩa, "
+                "chuyên biệt hơn hoặc các chủ thể tiêu biểu có quan hệ trực tiếp với ý định "
+                "tìm kiếm.\n"
+                "- Các từ mở rộng phải có quan hệ ngữ nghĩa rõ ràng với câu hỏi, không được "
+                "suy diễn quá xa.\n"
+                "- Ưu tiên từ khóa có khả năng xuất hiện trong Entity, Event description "
+                "hoặc Post content.\n"
+                "- Không tạo quá 5 search_terms.\n\n"
+
+                "Ví dụ mở rộng:\n"
+                "- 'bóng đá Việt Nam' có thể tạo các search_terms như "
+                "['bóng đá Việt Nam', 'đội tuyển Việt Nam', 'tuyển Việt Nam', "
+                "'V.League', 'VFF'].\n"
+                "- 'thể thao Việt Nam' có thể tạo các search_terms như "
+                "['thể thao Việt Nam', 'đội tuyển Việt Nam', 'bóng đá Việt Nam', "
+                "'vận động viên Việt Nam', 'SEA Games'].\n"
+                "- 'xe điện Việt Nam' có thể mở rộng thành các khái niệm trực tiếp như "
+                "['xe điện Việt Nam', 'ô tô điện', 'VinFast'], nhưng không thêm các công ty "
+                "hoặc chủ đề không có quan hệ rõ ràng.\n\n"
+
+                "5. time:\n"
+                "- Quy đổi khoảng thời gian sang hours.\n"
+                "- Số ngày = số ngày * 24.\n"
+                "- Số tuần = số tuần * 168.\n"
+                f"- Nếu không nêu khoảng thời gian, dùng hours={self.default_hours}.\n"
+                "- Riêng 'tuần trước' tạm dùng hours=168.\n"
+                "- Giới hạn hours trong khoảng 1 đến 720.\n\n"
+
+                "6. Intent luôn là 'search_events'.\n\n"
+
+                "Không được giả định rằng Entity hoặc search_term chắc chắn tồn tại "
+                "trong database. Nhiệm vụ chỉ là tạo kế hoạch tìm kiếm hợp lý để backend "
+                "có thể thử từ chính xác đến mở rộng.\n\n"
+
                 f"search_events. Câu hỏi: {question}"
             ),
             config=self.types.GenerateContentConfig(
@@ -151,8 +211,13 @@ class GeminiQuestionParser:
             input_price_per_million_usd=self.input_price_per_million_usd,
             output_price_per_million_usd=self.output_price_per_million_usd,
         )
-        return ParsedQuestion.model_validate(
+        parsed = ParsedQuestion.model_validate(
             _validate_structured_response(response, ParsedQuestion)
+        )
+        return parsed.model_copy(
+            update={
+                "location": normalize_location_for_search(parsed.location)
+            }
         )
 
 

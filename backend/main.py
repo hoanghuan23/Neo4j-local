@@ -58,6 +58,7 @@ def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
                     client=gemini_client,
                     types_module=types,
                     model=settings.chat_gemini_model,
+                    default_hours=settings.default_search_hours,
                     input_price_per_million_usd=(
                         settings.chat_gemini_input_price_per_million_usd
                     ),
