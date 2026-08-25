@@ -42,6 +42,7 @@ def get_posts():
                 FROM posts p
                 JOIN sources s ON s.id = p.source_id
                 WHERE p.is_tracked IS TRUE
+                  AND p.metric_tier IN ('hot', 'warm')
                 ORDER BY p.posted_at DESC;
             """)
 
