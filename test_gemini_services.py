@@ -149,6 +149,31 @@ def test_gemini_question_parser_uses_configured_default_hours_in_prompt():
     assert parsed.hours == 168
 
 
+def test_gemini_question_parser_keeps_broad_topic_as_search_condition():
+    client = Mock()
+    client.models.generate_content.return_value = SimpleNamespace(
+        parsed={
+            "intent": "search_events",
+            "location": None,
+            "entity": None,
+            "hours": 168,
+        },
+    )
+    parser = GeminiQuestionParser(
+        client=client,
+        types_module=FakeTypes,
+        model="test-model",
+        default_hours=168,
+    )
+
+    parsed = parser.parse("bóng đá việt nam")
+
+    assert parsed.entity == "bóng đá việt nam"
+    prompt = client.models.generate_content.call_args.kwargs["contents"]
+    assert "'bóng đá Việt Nam'" in prompt
+    assert "phải được giữ trong entity, không trả null" in prompt
+
+
 def test_parsed_question_schema_uses_original_search_fields():
     schema = ParsedQuestion.model_json_schema()
 

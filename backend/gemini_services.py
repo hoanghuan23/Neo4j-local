@@ -135,12 +135,14 @@ class GeminiQuestionParser:
                 "- Không đặt tên người hoặc tổ chức vào location.\n\n"
 
                 "2. entity:\n"
-                "- Chứa người, tổ chức hoặc chủ thể CỤ THỂ mà người dùng trực tiếp "
-                "muốn tìm sự kiện liên quan, hoặc null.\n"
-                "- Chỉ đặt vào entity khi câu hỏi có thể xác định được một chủ thể cụ thể.\n"
-                "- Không ép các khái niệm rộng như 'bóng đá Việt Nam', 'thể thao Việt Nam', "
-                "'kinh tế Việt Nam', 'giáo dục', 'giao thông' thành một Entity cụ thể nếu "
-                "không có căn cứ.\n"
+                "- Chứa người, tổ chức, chủ thể CỤ THỂ hoặc CHỦ ĐỀ mà người dùng "
+                "trực tiếp muốn tìm sự kiện liên quan.\n"
+                "- Với chủ đề rộng, vẫn giữ nguyên cụm chủ đề trong entity để dùng làm "
+                "điều kiện tìm kiếm văn bản; không có nghĩa chủ đề đó là một node Entity.\n"
+                "- Ví dụ: 'bóng đá Việt Nam', 'thể thao Việt Nam', 'kinh tế Việt Nam', "
+                "'giáo dục', 'giao thông' phải được giữ trong entity, không trả null.\n"
+                "- Chỉ trả entity=null khi câu hỏi thực sự không có chủ thể hoặc chủ đề "
+                "cần lọc.\n"
                 "- Nếu có nhiều chủ thể cụ thể, giữ đầy đủ tên và giữ nguyên quan hệ "
                 "'và' hoặc 'hoặc' theo câu hỏi.\n\n"
 
@@ -174,10 +176,15 @@ class GeminiQuestionParser:
         parsed = ParsedQuestion.model_validate(
             _validate_structured_response(response, ParsedQuestion)
         )
+        location = normalize_location_for_search(parsed.location)
+        entity = parsed.entity
+        if location is None and entity is None:
+            # An unconstrained repository query means "latest events".  If the
+            # model misses a broad topic, using the original text as a search
+            # condition is safer than returning unrelated recent events.
+            entity = " ".join(question.strip().strip("?.!,;:").split()) or None
         return parsed.model_copy(
-            update={
-                "location": normalize_location_for_search(parsed.location)
-            }
+            update={"location": location, "entity": entity}
         )
 
 
