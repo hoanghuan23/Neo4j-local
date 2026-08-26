@@ -40,13 +40,13 @@ OLLAMA_CONTEXT_TOKENS = max(
     2_048,
     int(os.getenv("OLLAMA_CONTEXT_TOKENS", "32768")),
 )
-POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
+POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "10"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
 KNOWLEDGE_PROMPT_VERSION = "knowledge-v10"
 KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v2"
 EVENT_CONSOLIDATION_VERSION = "event-consolidation-v1"
-EVENT_SUMMARY_VERSION = "event-summary-v1"
+EVENT_SUMMARY_VERSION = "event-summary-v2"
 EVENT_AUTO_MERGE_THRESHOLD = float(
     os.getenv("EVENT_AUTO_MERGE_THRESHOLD", "0.90")
 )
@@ -182,6 +182,7 @@ EVENT_ITEM_SCHEMA = _strict_object(
     {
         "local_id": {"type": "string"},
         "type": {"type": "string", "enum": sorted(EVENT_TYPES)},
+        "title": {"type": "string"},
         "description": {"type": "string"},
         "evidence_text": {"type": "string"},
         "status": {"type": "string", "enum": sorted(EVENT_STATUSES)},
@@ -199,6 +200,7 @@ EVENT_ITEM_SCHEMA = _strict_object(
     [
         "local_id",
         "type",
+        "title",
         "description",
         "evidence_text",
         "status",
@@ -272,6 +274,7 @@ EVENT_CONSOLIDATION_SCHEMA = _strict_object(
 
 EVENT_SUMMARY_SCHEMA = _strict_object(
     {
+        "title": {"type": "string"},
         "description": {"type": "string"},
         "type": {"type": "string", "enum": sorted(EVENT_TYPES)},
         "status": {"type": "string", "enum": sorted(EVENT_STATUSES)},
@@ -280,7 +283,12 @@ EVENT_SUMMARY_SCHEMA = _strict_object(
             "items": {"type": "string"},
         },
     },
-    ["description", "type", "status", "source_mention_keys"],
+    ["title", "description", "type", "status", "source_mention_keys"],
+)
+
+EVENT_TITLE_SCHEMA = _strict_object(
+    {"title": {"type": "string"}},
+    ["title"],
 )
 
 KNOWLEDGE_DEEP_REASON_CODES = {

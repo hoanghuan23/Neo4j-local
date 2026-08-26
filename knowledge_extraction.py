@@ -8,6 +8,7 @@ import requests
 
 from langsmith import traceable
 
+from event_titles import resolve_event_title
 from knowledge_settings import (
     CONFIDENCE_LEVELS,
     COUNTRY_ENTITY_ALIASES,
@@ -960,6 +961,15 @@ description:
   thời hạn, kết quả và hậu quả;
 - không suy diễn.
 
+title:
+- luôn tạo title ngắn cho mỗi Event, dài khoảng 10-25 từ;
+- ưu tiên cấu trúc: [chủ thể] + [hành động chính] + [đối tượng]
+  + [địa điểm nếu có] + [thời gian nếu có];
+- chỉ sử dụng thông tin được hỗ trợ bởi description;
+- không thêm thời gian/địa điểm nếu description không xác định được;
+- không đưa chi tiết phụ, nguyên nhân, bình luận hoặc trạng thái điều tra vào title;
+- không suy diễn.
+
 Nếu câu kế tiếp chỉ bổ sung chi tiết cho Event trước → gộp vào cùng Event.
 
 evidence_text:
@@ -1270,9 +1280,21 @@ Văn bản:
     if call_model is None:
         call_model = call_ollama
     result = call_model(prompt, KNOWLEDGE_SCHEMA)
+    events = result.get("events", [])
+    if isinstance(events, list):
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            title, needs_backfill = resolve_event_title(
+                event.get("description"),
+                event.get("title"),
+                call_model,
+            )
+            event["title"] = title
+            event["title_needs_backfill"] = needs_backfill
     knowledge = {
         "entities": result.get("entities", []),
-        "events": result.get("events", []),
+        "events": events,
         "event_relations": result.get("event_relations", []),
     }
     return recover_explicit_country_entities(content, knowledge)

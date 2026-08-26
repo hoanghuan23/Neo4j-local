@@ -271,6 +271,7 @@ def upsert_events(
                           mention.consolidation_status = 'PENDING'
             ON MATCH SET mention.consolidation_status = CASE
                 WHEN coalesce(mention.type, '') <> $event_type
+                  OR coalesce(mention.title, '') <> $title
                   OR coalesce(mention.description, '') <> $description
                   OR coalesce(mention.evidence_text, '') <> $evidence_text
                   OR coalesce(mention.status, '') <> $status
@@ -280,6 +281,8 @@ def upsert_events(
                 ELSE mention.consolidation_status
             END
             SET mention.type = $event_type,
+                mention.title = $title,
+                mention.title_needs_backfill = $title_needs_backfill,
                 mention.description = $description,
                 mention.evidence_text = $evidence_text,
                 mention.status = $status,
@@ -308,7 +311,13 @@ def upsert_events(
                               created.schema_version = 2
                 RETURN created AS event
             }
+            WITH p, mention, event, event.title IS NULL AS event_missing_title
             SET event.type = coalesce(event.type, $event_type),
+                event.title = coalesce(event.title, $title),
+                event.title_needs_backfill = CASE
+                    WHEN event_missing_title THEN $title_needs_backfill
+                    ELSE coalesce(event.title_needs_backfill, false)
+                END,
                 event.description = coalesce(event.description, $description),
                 event.status = coalesce(event.status, $status),
                 event.last_seen_at = CASE
@@ -329,6 +338,8 @@ def upsert_events(
             mention_key=mention_key,
             event_key=event["event_key"],
             event_type=event["type"],
+            title=event.get("title") or event["description"],
+            title_needs_backfill=event.get("title_needs_backfill", False),
             description=event["description"],
             evidence_text=event["evidence_text"],
             status=event["status"],

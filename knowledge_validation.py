@@ -1,6 +1,7 @@
 import hashlib
 import re
 
+from event_titles import is_valid_event_title
 from knowledge_settings import (
     ANONYMOUS_PARTICIPANT_PATTERN,
     EVENT_ACTION_TRIGGERS,
@@ -211,6 +212,7 @@ def validate_events(
         seen_local_ids.add(local_id)
 
         event_type = _enum_value(raw.get("type"), EVENT_TYPES)
+        title = _clean_text(raw.get("title"))
         description = _clean_text(raw.get("description"))
         evidence_text = _clean_text(raw.get("evidence_text"))
         confidence = _valid_confidence(raw.get("confidence"))
@@ -304,6 +306,11 @@ def validate_events(
         event = {
             "local_id": local_id,
             "type": event_type,
+            "title": title if is_valid_event_title(title) else description,
+            "title_needs_backfill": bool(
+                raw.get("title_needs_backfill")
+                or not is_valid_event_title(title)
+            ),
             "description": description,
             "evidence_text": evidence_text,
             "status": status,

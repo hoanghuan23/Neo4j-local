@@ -56,6 +56,7 @@ def load_legacy_rows(session, entity_name: str) -> list[dict]:
                post.posted_at AS posted_at,
                event.event_key AS event_key,
                event.type AS type,
+               event.title AS title,
                event.description AS description,
                event.evidence_text AS evidence_text,
                event.status AS status,
@@ -77,6 +78,7 @@ def load_legacy_rows(session, entity_name: str) -> list[dict]:
 
 
 def migrate_legacy_row(tx, row: dict) -> str:
+    parameters = {**row, "title": row.get("title")}
     tx.run(
         """
         MATCH (post:Post {platform: $platform, platform_id: $post_id})
@@ -84,6 +86,8 @@ def migrate_legacy_row(tx, row: dict) -> str:
         MERGE (mention:EventMention {mention_key: $mention_key})
         ON CREATE SET mention.created_at = datetime()
         SET mention.type = $type,
+            mention.title = coalesce($title, $description),
+            mention.title_needs_backfill = $title IS NULL,
             mention.description = $description,
             mention.evidence_text = $evidence_text,
             mention.status = $status,
@@ -108,7 +112,7 @@ def migrate_legacy_row(tx, row: dict) -> str:
         MERGE (mention)-[copy:HAS_PARTICIPANT {role: participant.role}]->(target)
         SET copy.confidence = participant.confidence
         """,
-        **row,
+        **parameters,
     ).consume()
     return row["mention_key"]
 
@@ -143,6 +147,7 @@ def dry_run(rows: list[dict], caller: GeminiKnowledgeCaller) -> dict:
         {
             "event_key": row["event_key"],
             "type": row["type"],
+            "title": row.get("title") or row["description"],
             "description": row["description"],
             "descriptions": [row["description"]],
             "status": row["status"],
@@ -188,7 +193,7 @@ def dry_run(rows: list[dict], caller: GeminiKnowledgeCaller) -> dict:
             {
                 key: row.get(key)
                 for key in (
-                    "mention_key", "type", "description", "evidence_text",
+                    "mention_key", "type", "title", "description", "evidence_text",
                     "status", "time_expression",
                 )
             }

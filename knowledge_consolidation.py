@@ -4,6 +4,7 @@ import re
 import unicodedata
 from collections.abc import Callable
 
+from event_titles import resolve_event_title
 from knowledge_persistence import refresh_canonical_event_projections
 from knowledge_settings import (
     EVENT_AUTO_MERGE_THRESHOLD,
@@ -406,6 +407,11 @@ Viết description tiếng Việt tự đầy đủ trong 1-3 câu, nêu chủ t
 post làm đại diện, không thêm suy đoán/bình luận. Chi tiết mâu thuẫn phải bỏ qua
 hoặc diễn đạt có quy nguồn. source_mention_keys chỉ gồm khóa thật sự hỗ trợ mô tả.
 
+Luôn tạo title tiếng Việt dài 10-25 từ từ chính description đã tổng hợp. Ưu tiên
+cấu trúc [chủ thể] + [hành động chính] + [đối tượng] + [địa điểm nếu có]
++ [thời gian nếu có]. Không thêm thời gian/địa điểm không xác định, chi tiết phụ,
+nguyên nhân, bình luận hoặc trạng thái điều tra. Không suy diễn ngoài description.
+
 
 Nguồn:
 {json.dumps(mentions, ensure_ascii=False, default=str)}
@@ -423,6 +429,7 @@ def _model_summary(call_model: Callable, mentions: list[dict]) -> dict:
         partials.append({
             "mention_key": f"summary-chunk-{index // 25 + 1}",
             "type": partial.get("type"),
+            "title": partial.get("title"),
             "description": partial.get("description"),
             "evidence_text": partial.get("description"),
             "status": partial.get("status"),
@@ -453,6 +460,9 @@ def summarize_event(session, event_key: str, call_model: Callable) -> bool:
                   ->(:Event {event_key: $event_key})
             RETURN mention.mention_key AS mention_key,
                    mention.type AS type,
+                   mention.title AS title,
+                   coalesce(mention.title_needs_backfill, false)
+                     AS title_needs_backfill,
                    mention.description AS description,
                    mention.evidence_text AS evidence_text,
                    mention.status AS status,
@@ -466,6 +476,7 @@ def summarize_event(session, event_key: str, call_model: Callable) -> bool:
         return False
     if len(mentions) == 1:
         summary = {
+            "title": mentions[0]["title"],
             "description": mentions[0]["description"],
             "type": mentions[0]["type"],
             "status": mentions[0]["status"],
@@ -489,10 +500,17 @@ def summarize_event(session, event_key: str, call_model: Callable) -> bool:
     description = str(summary.get("description") or "").strip()
     if not description or not source_keys:
         raise ValueError("Event summary không có description/source hợp lệ")
+    title, title_needs_backfill = resolve_event_title(
+        description,
+        summary.get("title"),
+        call_model,
+    )
     session.run(
         """
         MATCH (event:Event {event_key: $event_key})
-        SET event.description = $description,
+        SET event.title = $title,
+            event.title_needs_backfill = $title_needs_backfill,
+            event.description = $description,
             event.type = $event_type,
             event.status = $status,
             event.description_source_keys = $source_keys,
@@ -502,6 +520,8 @@ def summarize_event(session, event_key: str, call_model: Callable) -> bool:
             event.consolidation_error = null
         """,
         event_key=event_key,
+        title=title,
+        title_needs_backfill=title_needs_backfill,
         description=description,
         event_type=summary["type"],
         status=summary["status"],

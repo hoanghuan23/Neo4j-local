@@ -66,12 +66,21 @@ class SourceResult(BaseModel):
 class EventResult(BaseModel):
     event_key: str
     type: str
+    title: str
     description: str
     status: str | None = None
     time_expression: str | None = None
     entities: list[EntityResult] = Field(default_factory=list)
     post: PostResult
     sources: list[SourceResult] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_title(cls, data):
+        if isinstance(data, dict) and not data.get("title"):
+            data = dict(data)
+            data["title"] = data.get("description") or ""
+        return data
 
     @model_validator(mode="after")
     def populate_sources(self) -> "EventResult":

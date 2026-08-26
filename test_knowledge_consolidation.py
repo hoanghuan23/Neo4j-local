@@ -211,6 +211,7 @@ class EventConsolidationIntegrationTests(unittest.TestCase):
                     }]
                 }
             return {
+                "title": "VETC quyết định chưa áp dụng và tạm dừng chính sách thu phí ví điện tử",
                 "description": (
                     "VETC quyết định chưa áp dụng và tạm dừng chính sách "
                     "thu phí ví điện tử."
@@ -234,6 +235,7 @@ class EventConsolidationIntegrationTests(unittest.TestCase):
                 RETURN count(DISTINCT event) AS events,
                        posts,
                        count(DISTINCT mention) AS mentions,
+                       event.title AS title,
                        event.description AS description,
                        event.member_count AS member_count
                 """,
@@ -245,6 +247,7 @@ class EventConsolidationIntegrationTests(unittest.TestCase):
         self.assertEqual(record["posts"], 2)
         self.assertEqual(record["mentions"], 2)
         self.assertEqual(record["member_count"], 2)
+        self.assertIn("VETC quyết định", record["title"])
         self.assertIn("chưa áp dụng", record["description"])
 
     def test_legacy_event_is_converted_idempotently(self):

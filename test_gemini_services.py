@@ -343,6 +343,7 @@ def test_gemini_answer_generator_uses_structured_graph_data():
         model="test-model",
     )
     event = EventResult.model_validate(event_data())
+    assert event.title == event.description
 
     answer = generator.generate(
         question="Hà Nội 24h qua có gì?",
@@ -354,6 +355,7 @@ def test_gemini_answer_generator_uses_structured_graph_data():
     contents = client.models.generate_content.call_args.kwargs["contents"]
     assert '"event_key": "event-1"' in contents
     assert '"source_name": "Nguồn thử nghiệm"' in contents
+    assert '"title":' not in contents
     assert "không thêm" in contents
     assert "mỗi sự kiện thành một mục riêng" in contents
     assert "danh sách Markdown đánh số" in contents

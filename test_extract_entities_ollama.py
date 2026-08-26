@@ -229,6 +229,7 @@ class ExtractionTests(unittest.TestCase):
                 {
                     "local_id": "ev1",
                     "type": "MEETING",
+                    "title": "Hai bên tổ chức một cuộc gặp chính thức để trao đổi công việc",
                     "description": "A meeting",
                     "status": None,
                     "time_expression": None,
@@ -241,7 +242,7 @@ class ExtractionTests(unittest.TestCase):
         call_groq.return_value = expected
 
         self.assertEqual(subject.extract_knowledge("A meeting happened."), expected)
-        self.assertIs(call_groq.call_args.args[1], subject.ENTITY_SCHEMA)
+        self.assertIs(call_groq.call_args_list[0].args[1], subject.ENTITY_SCHEMA)
 
     @patch.object(subject, "call_groq")
     def test_prompt_rejects_non_events_and_limits_event_count(self, call_groq):

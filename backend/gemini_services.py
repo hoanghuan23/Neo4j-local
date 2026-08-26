@@ -263,7 +263,12 @@ class GeminiAnswerGenerator:
         payload = {
             "question": question,
             "query": parsed.model_dump(mode="json"),
-            "events": [event.model_dump(mode="json") for event in events],
+            # Keep answer-generation behavior based on the full description.
+            # The title is a separate structured API field for the frontend.
+            "events": [
+                event.model_dump(mode="json", exclude={"title"})
+                for event in events
+            ],
         }
         response = self.client.models.generate_content(
             model=self.model,
@@ -273,13 +278,15 @@ class GeminiAnswerGenerator:
             "QUY TẮC BẮT BUỘC:\n"
             "1. Mảng `events` chứa bao nhiêu phần tử thì câu trả lời PHẢI có đúng "
             "bấy nhiêu mục sự kiện.\n"
+            "mỗi sự kiện thành một mục riêng; không được bỏ sót mục nào.\n"
             "2. Mỗi phần tử của `events` tương ứng với CHÍNH XÁC MỘT mục riêng biệt.\n"
             "3. Tuyệt đối KHÔNG gộp hai hay nhiều phần tử `events` vào cùng một câu, "
             "đoạn văn hoặc mục.\n"
+            "Nói cách khác: không gộp nhiều sự kiện vào cùng một mục.\n"
             "4. Không được tạo đoạn mở đầu kiểu 'Trong 2 tuần qua...' hoặc đoạn tổng kết.\n"
             "5. Không được tự suy luận rằng nhiều event giống nhau là cùng một sự kiện. "
             "Việc gộp event đã được xử lý trước khi dữ liệu đến đây.\n"
-            "6. Giữ nguyên thứ tự của mảng `events`.\n"
+            "6. Giữ nguyên thứ tự của mảng events.\n"
             "7. Chỉ sử dụng thông tin có trong từng event tương ứng. "
             "Không lấy thông tin của event khác để bổ sung vào event hiện tại.\n"
             "8. Không suy đoán, không tra cứu thông tin bên ngoài.\n"
@@ -287,6 +294,7 @@ class GeminiAnswerGenerator:
             "10. `sources` là danh sách đầy đủ các bài viết nguồn đã khử "
             "trùng. Mỗi phần tử có `source`, `posted_at` và `url`. "
             "`post` chỉ là bài đại diện và không phải một nguồn bổ sung.\n\n"
+            "11. Dùng description làm nội dung; không thêm hoặc thay bằng field title.\n\n"
 
             "ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:\n"
             "- Mỗi event phải nằm trên một block Markdown riêng.\n"
@@ -307,6 +315,7 @@ class GeminiAnswerGenerator:
             "<nguồn của event[2]>\n\n"
 
             "Không được thay định dạng trên bằng một đoạn văn đánh số 1, 2, 3.\n\n"
+            "Không dùng danh sách Markdown đánh số thay cho các block Sự kiện N.\n\n"
 
             "DỮ LIỆU:\n"
             + json.dumps(payload, ensure_ascii=False)

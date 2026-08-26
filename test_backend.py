@@ -434,6 +434,7 @@ def test_chat_returns_structured_graph_results():
             {
                 "event_key": "event-1",
                 "type": "ACCIDENT",
+                "title": "Xe tải gặp tai nạn giao thông trên tuyến đường tại Hà Nội",
                 "description": "Một vụ tai nạn đã xảy ra.",
                 "status": "REPORTED",
                 "time_expression": "sáng nay",
@@ -462,6 +463,9 @@ def test_chat_returns_structured_graph_results():
     assert response.status_code == 200
     body = response.json()
     assert body["count"] == 1
+    assert body["results"][0]["title"] == (
+        "Xe tải gặp tai nạn giao thông trên tuyến đường tại Hà Nội"
+    )
     assert body["query"] == {
         "intent": "search_events",
         "location": "Hà Nội",
