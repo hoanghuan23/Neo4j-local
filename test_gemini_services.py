@@ -262,6 +262,30 @@ def test_gemini_question_parser_keeps_broad_topic_as_search_condition():
     assert "phải được giữ trong entity, không trả null" in prompt
 
 
+def test_gemini_question_parser_uses_default_sort_for_latest_events_query():
+    client = Mock()
+    client.models.generate_content.return_value = SimpleNamespace(
+        parsed={
+            "intent": "search_events",
+            "location": "mới nhất",
+            "entity": "các sự kiện mới nhất",
+            "hours": 168,
+        },
+    )
+    parser = GeminiQuestionParser(
+        client=client,
+        types_module=FakeTypes,
+        model="test-model",
+        default_hours=168,
+    )
+
+    parsed = parser.parse("các sự kiện mới nhất")
+
+    assert parsed.location is None
+    assert parsed.entity is None
+    assert parsed.hours == 168
+
+
 def test_parsed_question_schema_uses_original_search_fields():
     schema = ParsedQuestion.model_json_schema()
 

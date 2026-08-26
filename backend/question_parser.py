@@ -69,6 +69,18 @@ _ENTITY_TIME_SUFFIX_RE = re.compile(
     rf"\s+(?:{_TIME_MARKER})(?:\s+qua)?$",
     re.IGNORECASE,
 )
+_LATEST_EVENTS_QUERY_RE = re.compile(
+    r"^(?:(?:cho\s+(?:tôi|mình)\s+biết|tìm)\s+)?"
+    r"(?:các\s+|những\s+)?sự\s+kiện\s+"
+    r"(?:mới\s+nhất|mới\s+đây|gần\s+đây)$",
+    re.IGNORECASE,
+)
+
+
+def is_latest_events_query(question: str) -> bool:
+    """Return whether the question requests the default latest-event feed."""
+    normalized = _SPACE_RE.sub(" ", question.strip()).strip(" \t,?.!")
+    return _LATEST_EVENTS_QUERY_RE.fullmatch(normalized) is not None
 
 
 def normalize_location_for_search(location: str | None) -> str | None:
@@ -118,8 +130,12 @@ class RuleBasedQuestionParser:
 
     def parse(self, question: str) -> ParsedQuestion:
         text = _SPACE_RE.sub(" ", question.strip())
-        entity = normalize_entity_for_search(self._parse_entity(text))
-        location = self._parse_location(text)
+        if is_latest_events_query(text):
+            entity = None
+            location = None
+        else:
+            entity = normalize_entity_for_search(self._parse_entity(text))
+            location = self._parse_location(text)
         return ParsedQuestion(
             location=normalize_location_for_search(location),
             entity=entity,

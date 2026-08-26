@@ -9,6 +9,7 @@ from backend.models import EventResult, ParsedQuestion
 from backend.question_parser import (
     RuleBasedQuestionParser,
     has_explicit_duration,
+    is_latest_events_query,
     normalize_entity_for_search,
     normalize_location_for_search,
 )
@@ -202,7 +203,10 @@ class GeminiQuestionParser:
         )
         if posted_date is not None and rule_parsed.location is not None:
             location = rule_parsed.location
-        if location is None and entity is None:
+        if is_latest_events_query(question):
+            location = None
+            entity = None
+        elif location is None and entity is None:
             # An unconstrained repository query means "latest events".  If the
             # model misses a broad topic, using the original text as a search
             # condition is safer than returning unrelated recent events.

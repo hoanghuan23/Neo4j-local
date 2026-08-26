@@ -119,6 +119,16 @@ def test_parser_supports_short_hanoi_queries():
     assert parser.parse("sự kiện hà nội").location == "hà nội"
 
 
+def test_parser_treats_latest_events_as_default_unfiltered_query():
+    parsed = RuleBasedQuestionParser(default_hours=168).parse(
+        "các sự kiện mới nhất"
+    )
+
+    assert parsed.location is None
+    assert parsed.entity is None
+    assert parsed.hours == 168
+
+
 def test_parser_extracts_exact_posted_date_without_polluting_location():
     parser = RuleBasedQuestionParser(
         today_provider=lambda: date(2026, 8, 25)
