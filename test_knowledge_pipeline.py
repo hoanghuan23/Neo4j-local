@@ -177,7 +177,7 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         self.assertIn("LIMIT $post_limit", query)
         self.assertEqual(session.run.call_args.kwargs["post_limit"], 30)
 
-    def test_load_posts_does_not_reprocess_when_only_model_changes(self):
+    def test_load_posts_does_not_reprocess_when_model_or_prompt_changes(self):
         session = Mock()
         session.run.return_value = []
 
@@ -187,7 +187,12 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         query = session.run.call_args.args[0]
         self.assertNotIn("p.knowledge_model", query)
         self.assertNotIn("knowledge_model", session.run.call_args.kwargs)
-        self.assertIn("p.knowledge_prompt_version", query)
+        self.assertNotIn("p.knowledge_prompt_version", query)
+        self.assertNotIn("knowledge_prompt_version", session.run.call_args.kwargs)
+        self.assertIn(
+            "coalesce(p.knowledge_processed, false) = false",
+            query,
+        )
 
     def test_load_posts_prioritizes_hot_metric_tier_in_both_modes(self):
         for pipeline_enabled in (True, False):

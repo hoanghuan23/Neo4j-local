@@ -6,7 +6,6 @@ from langsmith import traceable
 from knowledge_settings import (
     KNOWLEDGE_MAX_RETRIES,
     KNOWLEDGE_PIPELINE_ENABLED,
-    KNOWLEDGE_PROMPT_VERSION,
     KNOWLEDGE_WORKERS,
     LOGGER,
     POST_LIMIT,
@@ -68,16 +67,8 @@ def _load_posts(session) -> list:
                 WHERE p.content IS NOT NULL
                   AND trim(p.content) <> ''
                   AND p.platform IN ['facebook', 'tiktok']
-                  AND (
-                    coalesce(p.knowledge_processed, false) = false
-                    OR coalesce(p.knowledge_prompt_version, '')
-                       <> $knowledge_prompt_version
-                  )
-                  AND (
-                    coalesce(p.knowledge_retry_count, 0) < $max_retries
-                    OR coalesce(p.knowledge_prompt_version, '')
-                       <> $knowledge_prompt_version
-                  )
+                  AND coalesce(p.knowledge_processed, false) = false
+                  AND coalesce(p.knowledge_retry_count, 0) < $max_retries
                 RETURN p.platform AS platform,
                        p.platform_id AS post_id,
                        p.content AS content
@@ -97,7 +88,6 @@ def _load_posts(session) -> list:
                 """,
                 post_limit=POST_LIMIT,
                 max_retries=KNOWLEDGE_MAX_RETRIES,
-                knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
             )
         )
     return list(
