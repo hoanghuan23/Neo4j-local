@@ -314,6 +314,56 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(vietnam["type"], "LOCATION")
         self.assertEqual(vietnam["local_id"], "e4")
 
+    def test_country_recovery_ignores_name_nested_in_team_entity(self):
+        result = {
+            "entities": [
+                {
+                    "local_id": "e1",
+                    "name": "Đội tuyển Việt Nam",
+                    "canonical_name": "Đội tuyển Việt Nam",
+                    "type": "ORGANIZATION",
+                    "resolution_confidence": "HIGH",
+                }
+            ],
+            "events": [],
+            "event_relations": [],
+        }
+
+        recovered = subject._extraction.recover_explicit_country_entities(
+            "Đội tuyển Việt Nam thắng đội tuyển Thái Lan.",
+            result,
+        )
+
+        self.assertEqual(
+            [entity["name"] for entity in recovered["entities"]],
+            ["Đội tuyển Việt Nam"],
+        )
+
+    def test_country_recovery_keeps_separate_country_mention(self):
+        result = {
+            "entities": [
+                {
+                    "local_id": "e1",
+                    "name": "Đội tuyển Việt Nam",
+                    "canonical_name": "Đội tuyển Việt Nam",
+                    "type": "ORGANIZATION",
+                    "resolution_confidence": "HIGH",
+                }
+            ],
+            "events": [],
+            "event_relations": [],
+        }
+
+        recovered = subject._extraction.recover_explicit_country_entities(
+            "Đội tuyển Việt Nam trở về Việt Nam sau trận đấu.",
+            result,
+        )
+
+        self.assertEqual(
+            [entity["name"] for entity in recovered["entities"]],
+            ["Đội tuyển Việt Nam", "Việt Nam"],
+        )
+
     @patch.object(subject, "call_groq")
     def test_extract_entities_uses_canonical_schema(self, call_groq):
         expected = [

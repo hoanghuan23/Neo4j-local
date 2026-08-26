@@ -152,14 +152,42 @@ def is_generic_entity(entity: dict) -> bool:
     return False
 
 
-def _source_contains_name(content: str, name: str) -> bool:
-    """Match a complete, explicitly written name after text normalization."""
-    return (
-        re.search(
-            rf"(?<!\w){re.escape(normalize_name(name))}(?!\w)",
-            normalize_name(content),
+def _source_contains_name(
+    content: str,
+    name: str,
+    containing_names=(),
+) -> bool:
+    """Match a complete name that is not only nested in a longer entity name."""
+    normalized_content = normalize_name(content)
+    normalized_name = normalize_name(name)
+    name_pattern = re.compile(
+        rf"(?<!\w){re.escape(normalized_name)}(?!\w)"
+    )
+
+    containing_spans = []
+    for containing_name in containing_names:
+        normalized_container = normalize_name(containing_name)
+        if (
+            not normalized_container
+            or normalized_container == normalized_name
+            or normalized_name not in normalized_container
+        ):
+            continue
+        containing_spans.extend(
+            match.span()
+            for match in re.finditer(
+                rf"(?<!\w){re.escape(normalized_container)}(?!\w)",
+                normalized_content,
+            )
         )
-        is not None
+
+    return any(
+        not any(
+            container_start <= match.start()
+            and match.end() <= container_end
+            for container_start, container_end in containing_spans
+        )
+        for match in name_pattern.finditer(normalized_content)
     )
 
 
@@ -180,6 +208,16 @@ def recover_explicit_country_entities(content: str, result: dict) -> dict:
         )
         if candidate
     }
+    containing_names = {
+        candidate
+        for entity in entities
+        if isinstance(entity, dict)
+        for candidate in (
+            _clean_text(entity.get("name")),
+            _clean_text(entity.get("canonical_name")),
+        )
+        if candidate
+    }
     used_ids = {
         _clean_text(item.get("local_id"))
         for section in ("entities", "events")
@@ -190,7 +228,11 @@ def recover_explicit_country_entities(content: str, result: dict) -> dict:
     next_id = 1
     for source_name, canonical_name in COUNTRY_ENTITY_ALIASES.items():
         identity = make_search_name(canonical_name)
-        if identity in known_names or not _source_contains_name(content, source_name):
+        if identity in known_names or not _source_contains_name(
+            content,
+            source_name,
+            containing_names,
+        ):
             continue
         while f"e{next_id}" in used_ids:
             next_id += 1
@@ -560,6 +602,10 @@ def extract_knowledge(content: str, call_model=None) -> dict:
 
     Không dùng EVENT làm type dự phòng.
     Không dịch tên Entity.
+
+    Quy tắc Entity lồng nhau / substring:
+
+    - Không tạo một Entity riêng chỉ vì tên của nó h
 
     Tên có kính ngữ/chức danh:
     ông Đoàn Bảo Châu -> Đoàn Bảo Châu.
