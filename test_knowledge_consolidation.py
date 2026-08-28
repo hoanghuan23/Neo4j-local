@@ -1,11 +1,15 @@
 import os
 import unittest
 from datetime import date
+from unittest.mock import Mock
 
 from neo4j import GraphDatabase
 
 from knowledge_consolidation import (
+    _delete_possible_pair,
+    _record_match_decisions,
     _resolve_prompt,
+    _sync_possible_decision,
     _validated_decisions,
     action_family,
     best_auto_merge_decision,
@@ -361,6 +365,63 @@ class EventConsolidationTests(unittest.TestCase):
         self.assertIn("semantic_score_components", prompt)
         self.assertNotIn('"retrieval_score"', prompt)
 
+    def test_delete_possible_is_scoped_to_one_event_pair(self):
+        tx = Mock()
+        tx.run.return_value.consume.return_value = None
+
+        _delete_possible_pair(tx, "event-b", "event-a")
+
+        query = tx.run.call_args.args[0]
+        self.assertIn("target:Event {event_key: $target_key}", query)
+        self.assertEqual(tx.run.call_args.kwargs["source_key"], "event-a")
+        self.assertEqual(tx.run.call_args.kwargs["target_key"], "event-b")
+
+    def test_record_match_decision_keeps_audit_after_graph_changes(self):
+        tx = Mock()
+        tx.run.return_value.consume.return_value = None
+        decision = {
+            "candidate_event_key": "candidate",
+            "decision": "POSSIBLE_SAME_EVENT",
+            "resolver_decision": "SAME_EVENT",
+            "confidence": 0.95,
+            "reason": "Cùng hành động nhưng cần review",
+            "guard_status": "REVIEW",
+            "guard_reason_codes": ["EVENT_TYPE_MISMATCH"],
+            "retrieval_score": 0.56,
+        }
+
+        _record_match_decisions(tx, "mention", "source", [decision])
+
+        query = tx.run.call_args.args[0]
+        params = tx.run.call_args.kwargs
+        self.assertIn("EventMatchDecision", query)
+        self.assertEqual(params["mention_key"], "mention")
+        self.assertEqual(params["source_event_key"], "source")
+        self.assertEqual(
+            params["rows"][0]["effective_decision"],
+            "POSSIBLE_SAME_EVENT",
+        )
+        self.assertEqual(
+            params["rows"][0]["guard_reason_codes"],
+            ["EVENT_TYPE_MISMATCH"],
+        )
+
+    def test_sync_different_decision_only_deletes_evaluated_pair(self):
+        tx = Mock()
+        tx.run.return_value.consume.return_value = None
+        decision = {
+            "candidate_event_key": "candidate",
+            "decision": "DIFFERENT_EVENT",
+            "confidence": 0.99,
+            "reason": "Khác occurrence",
+        }
+
+        _sync_possible_decision(tx, "source", "candidate", decision)
+
+        self.assertEqual(tx.run.call_count, 1)
+        self.assertEqual(tx.run.call_args.kwargs["source_key"], "candidate")
+        self.assertEqual(tx.run.call_args.kwargs["target_key"], "source")
+
     def test_migration_dry_run_reports_guard_override(self):
         rows = []
         for event_key, actor in (("infantino", "gianni infantino"),
@@ -472,6 +533,15 @@ class EventConsolidationIntegrationTests(unittest.TestCase):
     def cleanup(self, session):
         session.run(
             """
+            MATCH (decision:EventMatchDecision)
+            WHERE decision.mention_key IN [
+                'codex-m1', 'codex-m2', 'codex-legacy-mention'
+            ]
+            DETACH DELETE decision
+            """
+        ).consume()
+        session.run(
+            """
             MATCH (post:Post {platform: $platform})
             OPTIONAL MATCH (post)-[:HAS_EVENT_MENTION]->(mention:EventMention)
             OPTIONAL MATCH (mention)-[:EVIDENCE_FOR]->(event:Event)
@@ -531,12 +601,20 @@ class EventConsolidationIntegrationTests(unittest.TestCase):
                 """,
                 platform=self.platform,
             ).single()
+            audit_count = session.run(
+                """
+                MATCH (decision:EventMatchDecision)
+                WHERE decision.mention_key IN ['codex-m1', 'codex-m2']
+                RETURN count(decision) AS count
+                """
+            ).single()["count"]
 
         self.assertEqual(stats["auto_merged"], 1)
         self.assertEqual(record["events"], 1)
         self.assertEqual(record["posts"], 2)
         self.assertEqual(record["mentions"], 2)
         self.assertEqual(record["member_count"], 2)
+        self.assertGreaterEqual(audit_count, 1)
         self.assertIn("VETC quyết định", record["title"])
         self.assertIn("chưa áp dụng", record["description"])
 

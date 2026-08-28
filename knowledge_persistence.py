@@ -725,3 +725,8 @@ def create_knowledge_schema(session) -> None:
         CREATE INDEX event_mention_consolidation_status IF NOT EXISTS
         FOR (mention:EventMention) ON (mention.consolidation_status)
         """).consume()
+    session.run("""
+        CREATE CONSTRAINT event_match_decision_key_unique IF NOT EXISTS
+        FOR (decision:EventMatchDecision)
+        REQUIRE decision.decision_key IS UNIQUE
+        """).consume()

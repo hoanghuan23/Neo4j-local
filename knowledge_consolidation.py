@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import re
@@ -540,7 +541,24 @@ def evaluate_merge_guard(mention: dict, candidate: dict) -> dict:
     right_locations = _identities(right["locations"])
     if left_locations and right_locations and not left_locations & right_locations:
         review.append("LOCATION_CONFLICT")
-    if left["type"] and right["type"] and left["type"] != right["type"] and not follow_up:
+    left_actors = _identities(left["actors"])
+    right_actors = _identities(right["actors"])
+    same_action = bool(
+        left["action_family"]
+        and left["action_family"] == right["action_family"]
+    )
+    same_actor = bool(left_actors & right_actors)
+    weakly_compatible_types = (
+        "OTHER" in {left["type"], right["type"]}
+        or (same_action and same_actor)
+    )
+    if (
+        left["type"]
+        and right["type"]
+        and left["type"] != right["type"]
+        and not follow_up
+        and not weakly_compatible_types
+    ):
         review.append("EVENT_TYPE_MISMATCH")
 
     status = "BLOCK" if block else "REVIEW" if review else "PASS"
@@ -714,14 +732,87 @@ def _link_possible(tx, source_key: str, target_key: str, decision: dict) -> None
     ).consume()
 
 
-def _clear_possible(tx, event_key: str) -> None:
+def _delete_possible_pair(tx, source_key: str, target_key: str) -> None:
+    first, second = sorted((source_key, target_key))
     tx.run(
         """
-        MATCH (event:Event {event_key: $event_key})
-              -[relation:POSSIBLE_SAME_EVENT]-(:Event)
+        MATCH (source:Event {event_key: $source_key})
+              -[relation:POSSIBLE_SAME_EVENT]-
+              (target:Event {event_key: $target_key})
         DELETE relation
         """,
-        event_key=event_key,
+        source_key=first,
+        target_key=second,
+    ).consume()
+
+
+def _sync_possible_decision(
+    tx,
+    source_key: str,
+    target_key: str,
+    decision: dict,
+) -> None:
+    if decision["decision"] == "POSSIBLE_SAME_EVENT":
+        _link_possible(tx, source_key, target_key, decision)
+    else:
+        _delete_possible_pair(tx, source_key, target_key)
+
+
+def _decision_key(mention_key: str, candidate_event_key: str) -> str:
+    identity = (
+        f"{EVENT_CONSOLIDATION_VERSION}|{mention_key}|{candidate_event_key}"
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _record_match_decisions(
+    tx,
+    mention_key: str,
+    source_event_key: str,
+    decisions: list[dict],
+) -> None:
+    rows = [
+        {
+            "decision_key": _decision_key(
+                mention_key, decision["candidate_event_key"]
+            ),
+            "candidate_event_key": decision["candidate_event_key"],
+            "resolver_decision": decision.get(
+                "resolver_decision", decision["decision"]
+            ),
+            "effective_decision": decision["decision"],
+            "confidence": decision["confidence"],
+            "reason": decision["reason"],
+            "guard_status": decision.get("guard_status", "NOT_APPLICABLE"),
+            "guard_reason_codes": decision.get("guard_reason_codes", []),
+            "retrieval_score": decision.get("retrieval_score"),
+        }
+        for decision in decisions
+    ]
+    if not rows:
+        return
+    tx.run(
+        """
+        UNWIND $rows AS row
+        MERGE (decision:EventMatchDecision {decision_key: row.decision_key})
+        ON CREATE SET decision.created_at = datetime()
+        SET decision.mention_key = $mention_key,
+            decision.source_event_key = $source_event_key,
+            decision.candidate_event_key = row.candidate_event_key,
+            decision.resolver_decision = row.resolver_decision,
+            decision.effective_decision = row.effective_decision,
+            decision.confidence = row.confidence,
+            decision.reason = row.reason,
+            decision.guard_status = row.guard_status,
+            decision.guard_reason_codes = row.guard_reason_codes,
+            decision.retrieval_score = row.retrieval_score,
+            decision.resolver_version = $version,
+            decision.updated_at = datetime()
+        """,
+        rows=rows,
+        mention_key=mention_key,
+        source_event_key=source_event_key,
+        version=EVENT_CONSOLIDATION_VERSION,
     ).consume()
 
 
@@ -932,8 +1023,20 @@ def consolidate_pending_mentions(
             ]
 
             session.execute_write(
-                _clear_possible, mention["current_event_key"]
+                _record_match_decisions,
+                mention["mention_key"],
+                mention["current_event_key"],
+                decisions,
             )
+            for decision in decisions:
+                session.execute_write(
+                    _sync_possible_decision,
+                    mention["current_event_key"],
+                    decision["candidate_event_key"],
+                    decision,
+                )
+                if decision["decision"] == "POSSIBLE_SAME_EVENT":
+                    stats["possible"] += 1
 
             best = best_auto_merge_decision(decisions)
             if best:
@@ -948,17 +1051,6 @@ def consolidate_pending_mentions(
                 # the in-memory snapshot before resolving the next mention.
                 session.execute_write(refresh_canonical_event_projections)
                 events = _load_canonical_events(session)
-            else:
-                for decision in decisions:
-                    if decision["decision"] == "POSSIBLE_SAME_EVENT":
-                        session.execute_write(
-                            _link_possible,
-                            mention["current_event_key"],
-                            decision["candidate_event_key"],
-                            decision,
-                        )
-                        stats["possible"] += 1
-
             session.execute_write(_mark_resolved, mention["mention_key"])
             for event_key in affected:
                 if summarize_event(session, event_key, call_model):
