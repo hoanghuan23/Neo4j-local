@@ -9,12 +9,12 @@ from knowledge_consolidation import (
     _summary_prompt,
     _validated_decisions,
     consolidate_pending_mentions,
+    effective_match_decision,
     select_candidates,
 )
 from knowledge_gemini import GeminiKnowledgeCaller
 from knowledge_persistence import create_knowledge_schema
 from knowledge_settings import (
-    EVENT_AUTO_MERGE_THRESHOLD,
     EVENT_CONSOLIDATION_SCHEMA,
     EVENT_SUMMARY_SCHEMA,
     EVENT_RELATION_TYPES,
@@ -44,13 +44,15 @@ def load_legacy_rows(session, entity_name: str) -> list[dict]:
                    OR toLower(entity.name) = toLower($entity_name)
             }
           )
-        OPTIONAL MATCH (event)-[:HAS_PARTICIPANT]->(participant)
+        OPTIONAL MATCH (event)-[participation:HAS_PARTICIPANT]->(participant)
         WITH post, event,
-             collect(DISTINCT coalesce(
-                 participant.normalized_name,
-                 participant.normalized_text,
-                 participant.name
-             )) AS participants
+             collect(DISTINCT CASE WHEN participant IS NULL THEN null ELSE {
+                 name: coalesce(participant.normalized_name,
+                                participant.normalized_text,
+                                participant.name),
+                 role: participation.role,
+                 identified: 'Entity' IN labels(participant)
+             } END) AS participants
         RETURN post.platform AS platform,
                post.platform_id AS post_id,
                post.posted_at AS posted_at,
@@ -152,6 +154,7 @@ def dry_run(rows: list[dict], caller: GeminiKnowledgeCaller) -> dict:
             "descriptions": [row["description"]],
             "status": row["status"],
             "participants": row["participants"],
+            "occurrence_times": [row.get("time_expression")],
             "first_seen_at": row["posted_at"],
             "last_seen_at": row["posted_at"],
             "created_at": row["created_at"],
@@ -161,6 +164,7 @@ def dry_run(rows: list[dict], caller: GeminiKnowledgeCaller) -> dict:
     same_pairs = []
     possible = []
     different = []
+    guard_overrides = []
     seen_pairs = set()
     for row in rows:
         candidates = select_candidates(row, events)
@@ -170,16 +174,23 @@ def dry_run(rows: list[dict], caller: GeminiKnowledgeCaller) -> dict:
             caller(_resolve_prompt(row, candidates), EVENT_CONSOLIDATION_SCHEMA),
             candidates,
         )
+        candidates_by_key = {
+            candidate["event_key"]: candidate for candidate in candidates
+        }
         for decision in decisions:
+            decision = effective_match_decision(
+                decision,
+                row,
+                candidates_by_key[decision["candidate_event_key"]],
+            )
             pair = tuple(sorted((row["event_key"], decision["candidate_event_key"])))
             if pair in seen_pairs:
                 continue
             seen_pairs.add(pair)
             item = {"events": pair, **decision}
-            if (
-                decision["decision"] == "SAME_EVENT"
-                and decision["confidence"] >= EVENT_AUTO_MERGE_THRESHOLD
-            ):
+            if decision["resolver_decision"] != decision["decision"]:
+                guard_overrides.append(item)
+            if decision["decision"] == "SAME_EVENT":
                 same_pairs.append(item)
             elif decision["decision"] == "POSSIBLE_SAME_EVENT":
                 possible.append(item)
@@ -205,6 +216,7 @@ def dry_run(rows: list[dict], caller: GeminiKnowledgeCaller) -> dict:
         "same_event": same_pairs,
         "possible_same_event": possible,
         "different_event": different,
+        "guard_overrides": guard_overrides,
         "expected_descriptions": descriptions,
     }
 

@@ -4,17 +4,26 @@ import unittest
 from neo4j import GraphDatabase
 
 from knowledge_consolidation import (
+    _resolve_prompt,
     _validated_decisions,
     action_family,
+    best_auto_merge_decision,
     candidate_score,
+    candidate_score_components,
+    effective_match_decision,
+    evaluate_merge_guard,
     select_candidates,
     consolidate_pending_mentions,
 )
 from knowledge_settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
-from migrate_event_mentions import migrate_legacy_row
+from migrate_event_mentions import dry_run, migrate_legacy_row
 
 
 class EventConsolidationTests(unittest.TestCase):
+    @staticmethod
+    def participant(name, role="ACTOR", identified=True):
+        return {"name": name, "role": role, "identified": identified}
+
     def mention(self, description):
         return {
             "mention_key": "m1",
@@ -55,7 +64,7 @@ class EventConsolidationTests(unittest.TestCase):
         mention = self.mention("VETC xin lỗi khách hàng")
         event = self.event("stop", "VETC tạm dừng thu phí ví điện tử")
 
-        self.assertEqual(action_family(mention["description"]), "APOLOGY")
+        self.assertEqual(action_family(mention["description"]), "APOLOGIZE")
         self.assertEqual(select_candidates(mention, [event]), [])
 
     def test_investigation_of_same_assault_is_a_candidate(self):
@@ -126,6 +135,241 @@ class EventConsolidationTests(unittest.TestCase):
             }],
         )
 
+    def test_attend_synonyms_share_an_action_family(self):
+        self.assertEqual(action_family("Infantino dự khán chung kết"), "ATTEND")
+        self.assertEqual(action_family("Chủ tịch FIFA xem trận chung kết"), "ATTEND")
+        self.assertEqual(
+            action_family("Infantino có mặt trên khán đài"), "ATTEND"
+        )
+
+    def test_same_actor_and_attend_action_rank_above_lexical_similarity(self):
+        mention = self.mention("Infantino dự khán chung kết ASEAN Cup")
+        mention["participants"] = [self.participant("gianni infantino")]
+        event = self.event(
+            "final",
+            "Chủ tịch FIFA xem trận quyết định giữa Việt Nam và Thái Lan",
+        )
+        event["participants"] = [self.participant("gianni infantino")]
+
+        components = candidate_score_components(mention, event)
+
+        self.assertEqual(components["action"], 0.30)
+        self.assertEqual(components["actor"], 0.25)
+        self.assertGreaterEqual(candidate_score(mention, event), 0.60)
+
+    def test_location_or_context_participant_does_not_count_as_actor(self):
+        mention = self.mention("Infantino dự khán chung kết tại Hà Nội")
+        mention["participants"] = [self.participant("hà nội", "LOCATION")]
+        event = self.event("final", "Madam Pang xem chung kết tại Hà Nội")
+        event["participants"] = [self.participant("hà nội", "LOCATION")]
+
+        components = candidate_score_components(mention, event)
+
+        self.assertEqual(components["actor"], 0.0)
+        self.assertEqual(components["location"], 0.05)
+
+    def test_different_named_main_actors_are_a_hard_conflict(self):
+        mention = self.mention("Infantino dự khán chung kết Việt Nam - Thái Lan")
+        mention["participants"] = [
+            self.participant("gianni infantino"),
+            self.participant("việt nam", "TARGET"),
+        ]
+        event = self.event(
+            "madam-pang", "Madam Pang xem chung kết Việt Nam - Thái Lan"
+        )
+        event["participants"] = [
+            self.participant("madam pang"),
+            self.participant("việt nam", "TARGET"),
+        ]
+
+        guard = evaluate_merge_guard(mention, event)
+        effective = effective_match_decision({
+            "candidate_event_key": "madam-pang",
+            "decision": "SAME_EVENT",
+            "confidence": 0.99,
+            "reason": "Cùng trận",
+        }, mention, event)
+
+        self.assertEqual(guard["status"], "BLOCK")
+        self.assertIn("MAIN_ACTOR_CONFLICT", guard["reason_codes"])
+        self.assertEqual(effective["decision"], "DIFFERENT_EVENT")
+
+    def test_different_actions_in_same_trip_are_not_candidates(self):
+        mention = self.mention("Infantino khảo sát sân vận động 60.000 chỗ")
+        mention["participants"] = [self.participant("gianni infantino")]
+        event = self.event("attend", "Infantino dự khán chung kết ASEAN Cup")
+        event["participants"] = [self.participant("gianni infantino")]
+
+        self.assertEqual(action_family(mention["description"]), "INSPECT")
+        self.assertEqual(select_candidates(mention, [event]), [])
+        self.assertEqual(evaluate_merge_guard(mention, event)["status"], "BLOCK")
+
+    def test_additional_target_and_location_are_not_conflicts(self):
+        mention = self.mention("Infantino dự khán chung kết ASEAN Cup")
+        mention["participants"] = [self.participant("gianni infantino")]
+        event = self.event(
+            "detailed",
+            "Infantino dự khán chung kết ASEAN Cup giữa Việt Nam và Thái Lan tại Hà Nội",
+        )
+        event["participants"] = [
+            self.participant("gianni infantino"),
+            self.participant("việt nam", "TARGET"),
+            self.participant("thái lan", "TARGET"),
+            self.participant("hà nội", "LOCATION"),
+        ]
+
+        self.assertEqual(evaluate_merge_guard(mention, event)["status"], "PASS")
+
+    def test_full_occurrence_date_conflict_blocks_high_confidence_merge(self):
+        mention = self.mention("Infantino dự khán trận ngày 25/8/2026")
+        mention.update({
+            "time_expression": "25/8/2026",
+            "participants": [self.participant("gianni infantino")],
+        })
+        event = self.event("other-date", "Infantino dự khán trận ngày 27/8/2026")
+        event.update({
+            "occurrence_times": ["27/8/2026"],
+            "participants": [self.participant("gianni infantino")],
+        })
+
+        components = candidate_score_components(mention, event)
+        effective = effective_match_decision({
+            "candidate_event_key": "other-date",
+            "decision": "SAME_EVENT",
+            "confidence": 0.99,
+            "reason": "Cùng actor và hành động",
+        }, mention, event)
+
+        self.assertEqual(components["time"], -0.45)
+        self.assertEqual(effective["decision"], "DIFFERENT_EVENT")
+        self.assertIn("OCCURRENCE_DATE_CONFLICT", effective["guard_reason_codes"])
+
+    def test_ambiguous_participants_and_partial_time_require_review(self):
+        mention = self.mention("Một quan chức dự khán chung kết ngày 25/8")
+        mention.update({
+            "time_expression": "25/8",
+            "participants": [self.participant("một quan chức", identified=False)],
+        })
+        event = self.event("unknown", "Một lãnh đạo xem chung kết cuối tháng 8")
+        event.update({
+            "occurrence_times": ["cuối tháng 8"],
+            "participants": [self.participant("một lãnh đạo", identified=False)],
+        })
+
+        guard = evaluate_merge_guard(mention, event)
+
+        self.assertEqual(guard["status"], "REVIEW")
+        self.assertIn("MAIN_ACTOR_ANONYMOUS_OR_UNSTABLE", guard["reason_codes"])
+        self.assertIn("OCCURRENCE_TIME_UNCERTAIN", guard["reason_codes"])
+
+    def test_low_confidence_same_event_becomes_possible(self):
+        mention = self.mention("Infantino dự khán chung kết")
+        mention["participants"] = [self.participant("gianni infantino")]
+        event = self.event("candidate", "Infantino xem trận chung kết")
+        event["participants"] = [self.participant("gianni infantino")]
+
+        effective = effective_match_decision({
+            "candidate_event_key": "candidate",
+            "decision": "SAME_EVENT",
+            "confidence": 0.70,
+            "reason": "Có vẻ cùng trận",
+        }, mention, event)
+
+        self.assertEqual(effective["guard_status"], "PASS")
+        self.assertEqual(effective["decision"], "POSSIBLE_SAME_EVENT")
+
+    def test_semantic_score_precedes_confidence_for_merge_choice(self):
+        best = best_auto_merge_decision([
+            {
+                "candidate_event_key": "context-only",
+                "decision": "SAME_EVENT",
+                "confidence": 0.99,
+                "retrieval_score": 0.35,
+            },
+            {
+                "candidate_event_key": "same-occurrence",
+                "decision": "SAME_EVENT",
+                "confidence": 0.92,
+                "retrieval_score": 0.70,
+            },
+        ])
+
+        self.assertEqual(best["candidate_event_key"], "same-occurrence")
+
+    def test_investigation_follow_up_is_not_blocked_by_different_actor(self):
+        mention = self.mention(
+            "Công an xác minh vụ bảo vệ hành hung tài xế tại Louis City"
+        )
+        mention.update({
+            "type": "INVESTIGATION",
+            "participants": [
+                self.participant("công an", "ACTOR"),
+                self.participant("tài xế", "VICTIM", identified=False),
+            ],
+        })
+        event = self.event(
+            "assault", "Bảo vệ hành hung tài xế tại Louis City"
+        )
+        event.update({
+            "type": "ASSAULT",
+            "participants": [
+                self.participant("bảo vệ", "ACTOR", identified=False),
+                self.participant("tài xế", "VICTIM", identified=False),
+            ],
+        })
+
+        self.assertEqual(evaluate_merge_guard(mention, event)["status"], "PASS")
+
+    def test_resolver_prompt_centers_occurrence_and_omits_retrieval_score(self):
+        mention = self.mention("Infantino dự khán chung kết")
+        event = dict(self.event("candidate", "Chủ tịch FIFA xem chung kết"),
+                     retrieval_score=0.80,
+                     score_components={"action": 0.30, "total": 0.60})
+
+        prompt = _resolve_prompt(mention, [event])
+
+        self.assertIn("cùng một occurrence", prompt)
+        self.assertIn("Madam Pang", prompt)
+        self.assertIn("semantic_score_components", prompt)
+        self.assertNotIn('"retrieval_score"', prompt)
+
+    def test_migration_dry_run_reports_guard_override(self):
+        rows = []
+        for event_key, actor in (("infantino", "gianni infantino"),
+                                 ("madam-pang", "madam pang")):
+            rows.append({
+                "event_key": event_key,
+                "mention_key": f"mention-{event_key}",
+                "current_event_key": event_key,
+                "type": "SPORTS_EVENT",
+                "title": "Dự khán chung kết",
+                "description": f"{actor} dự khán chung kết Việt Nam - Thái Lan",
+                "evidence_text": f"{actor} dự khán chung kết Việt Nam - Thái Lan",
+                "status": "COMPLETED",
+                "time_expression": "25/8/2026",
+                "participants": [self.participant(actor)],
+                "posted_at": None,
+                "created_at": None,
+            })
+
+        def model(_prompt, _schema):
+            return {"decisions": [{
+                "candidate_event_key": "madam-pang",
+                "decision": "SAME_EVENT",
+                "confidence": 0.99,
+                "reason": "Cùng trận",
+            }]}
+
+        report = dry_run(rows, model)
+
+        self.assertEqual(report["same_event"], [])
+        self.assertEqual(len(report["different_event"]), 1)
+        self.assertEqual(len(report["guard_overrides"]), 1)
+        self.assertIn(
+            "MAIN_ACTOR_CONFLICT",
+            report["guard_overrides"][0]["guard_reason_codes"],
+        )
+
 @unittest.skipUnless(
     os.getenv("RUN_NEO4J_INTEGRATION") == "1",
     "set RUN_NEO4J_INTEGRATION=1 to exercise the local Neo4j instance",
@@ -180,6 +424,15 @@ class EventConsolidationIntegrationTests(unittest.TestCase):
                 CREATE (post)-[:HAS_EVENT_MENTION]->(mention)
                 CREATE (mention)-[:EVIDENCE_FOR]->(event)
                 CREATE (post)-[:DESCRIBES]->(event)
+                WITH collect(mention) AS mentions
+                MERGE (actor:Entity {
+                    normalized_name: 'codex-vetc-consolidation-actor',
+                    type: 'ORGANIZATION'
+                })
+                ON CREATE SET actor.name = 'Codex VETC consolidation actor'
+                FOREACH (mention IN mentions |
+                    MERGE (mention)-[:HAS_PARTICIPANT {role: 'ACTOR'}]->(actor)
+                )
                 """,
                 platform=self.platform,
             ).consume()
@@ -197,6 +450,15 @@ class EventConsolidationIntegrationTests(unittest.TestCase):
             DETACH DELETE post, mention, event
             """,
             platform=self.platform,
+        ).consume()
+        session.run(
+            """
+            MATCH (actor:Entity {
+                normalized_name: 'codex-vetc-consolidation-actor',
+                type: 'ORGANIZATION'
+            })
+            DETACH DELETE actor
+            """
         ).consume()
 
     def test_merges_two_mentions_and_writes_aggregate_description(self):

@@ -12,6 +12,10 @@ class FakeTypes:
     def GenerateContentConfig(**kwargs):
         return kwargs
 
+    @staticmethod
+    def AutomaticFunctionCallingConfig(**kwargs):
+        return kwargs
+
 
 class GeminiKnowledgeCallerTests(unittest.TestCase):
     def test_accumulates_actual_usage_and_calculates_standard_cost(self):
@@ -45,6 +49,12 @@ class GeminiKnowledgeCallerTests(unittest.TestCase):
 
         caller("post one", {})
         caller("post two", {})
+
+        config = client.models.generate_content.call_args.kwargs["config"]
+        self.assertEqual(
+            config["automatic_function_calling"],
+            {"disable": True},
+        )
 
         self.assertEqual(caller.usage.requests, 2)
         self.assertEqual(caller.usage.input_tokens, 1_000_020)

@@ -83,6 +83,9 @@ class GeminiKnowledgeCaller:
             config=self.types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_json_schema=output_schema,
+                automatic_function_calling=(
+                    self.types.AutomaticFunctionCallingConfig(disable=True)
+                ),
             ),
         )
         usage = _usage_from_response(response)

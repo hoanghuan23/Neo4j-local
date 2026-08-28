@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 POST_TARGET = {
     "platform": "facebook",
     "post_ids": [
-        "1520067480155258",
+        "1556703823150438",
     ],
 }
 
