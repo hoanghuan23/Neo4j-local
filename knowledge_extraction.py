@@ -711,11 +711,12 @@ def extract_knowledge(content: str, call_model=None) -> dict:
     - có thể gồm nhiều câu liền nhau nếu cần.
     - Event taxonomy
 
-    Chỉ dùng: STATEMENT, MEETING, APPOINTMENT, APPROVAL, ELECTION, RESIGNATION, ARREST, ASSAULT, ACCIDENT, DEATH, DROWNING, INVESTIGATION, PROTEST, SPORTS_EVENT, TRANSFER, OTHER
+    Chỉ dùng: STATEMENT, MEETING, VISIT, APPOINTMENT, APPROVAL, ELECTION, RESIGNATION, ARREST, ASSAULT, ACCIDENT, DEATH, DROWNING, INVESTIGATION, PROTEST, SPORTS_EVENT, TRANSFER, OTHER
 
     Quy tắc:
     - gặp/họp → MEETING;
-    - đánh, đẩy, tấn công, ném/tạt/hất vào người → ASSAULT;
+    - thăm, đến thăm, ghé thăm, tới thăm, tham quan → VISIT;
+    - ASSAULT chỉ dùng khi văn bản mô tả hành vi tấn công/bạo lực thực tế như đánh, đẩy, tấn công, ném/tạt/hất vào người; không dùng cho chuyến thăm;
     - chết đuối → DROWNING, không tạo thêm DEATH cho cùng occurrence;
     - trận đấu/diễn biến/kết quả thi đấu → SPORTS_EVENT;
     - chỉ dùng RESIGNATION hoặc TRANSFER khi văn bản nói trực tiếp;

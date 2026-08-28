@@ -110,9 +110,20 @@ def _participant_items(value) -> list[dict]:
     return result
 
 
-def _date_values(values) -> tuple[set[str], bool]:
+def _reference_year(value) -> int | None:
+    if value is None:
+        return None
+    year = getattr(value, "year", None)
+    if isinstance(year, int):
+        return year
+    match = re.match(r"\s*(\d{4})[-/.]", str(value))
+    return int(match.group(1)) if match else None
+
+
+def _date_values(values, reference_date=None) -> tuple[set[str], bool]:
     dates = set()
     has_unparsed = False
+    reference_year = _reference_year(reference_date)
     if not isinstance(values, (list, tuple, set)):
         values = [values] if values else []
     for value in values:
@@ -132,6 +143,22 @@ def _date_values(values) -> tuple[set[str], bool]:
                 parts = [int(match.group(index)) for index in order]
                 try:
                     dates.add(date(*parts).isoformat())
+                    matched = True
+                except ValueError:
+                    pass
+        if not matched and reference_year is not None:
+            for match in re.finditer(
+                r"(?<![\d/.])(\d{1,2})[-/.](\d{1,2})(?![-/.]\d)",
+                text,
+            ):
+                try:
+                    dates.add(
+                        date(
+                            reference_year,
+                            int(match.group(2)),
+                            int(match.group(1)),
+                        ).isoformat()
+                    )
                     matched = True
                 except ValueError:
                     pass
@@ -155,7 +182,14 @@ def comparison_profile(item: dict) -> dict:
     occurrence_times = item.get("occurrence_times")
     if occurrence_times is None:
         occurrence_times = [item.get("time_expression")]
-    occurrence_dates, has_unparsed_time = _date_values(occurrence_times)
+    reference_date = (
+        item.get("posted_at")
+        or item.get("first_seen_at")
+        or item.get("last_seen_at")
+    )
+    occurrence_dates, has_unparsed_time = _date_values(
+        occurrence_times, reference_date
+    )
     return {
         "action_family": action_family(text),
         "actors": actors,

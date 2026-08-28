@@ -43,7 +43,7 @@ OLLAMA_CONTEXT_TOKENS = max(
 POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
-KNOWLEDGE_PROMPT_VERSION = "knowledge-v11"
+KNOWLEDGE_PROMPT_VERSION = "knowledge-v12"
 KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v2"
 EVENT_CONSOLIDATION_VERSION = "event-consolidation-v2"
 EVENT_SUMMARY_VERSION = "event-summary-v2"
@@ -64,6 +64,7 @@ ENTITY_TYPES = {"PERSON", "ORGANIZATION", "LOCATION", "PRODUCT", "SOFTWARE", "EV
 EVENT_TYPES = {
     "STATEMENT",
     "MEETING",
+    "VISIT",
     "APPOINTMENT",
     "APPROVAL",
     "ELECTION",
@@ -513,6 +514,17 @@ EVENT_ACTION_TRIGGERS = {
         "trao đổi",
         "tiếp xúc",
         "đàm phán"
+    },
+    "VISIT": {
+        "visit",
+        "visited",
+        "official visit",
+        "thăm",
+        "đến thăm",
+        "ghé thăm",
+        "tới thăm",
+        "tham quan",
+        "chuyến thăm"
     },
     "APPOINTMENT": {
         "appointed",

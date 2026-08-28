@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import date
 
 from neo4j import GraphDatabase
 
@@ -10,6 +11,7 @@ from knowledge_consolidation import (
     best_auto_merge_decision,
     candidate_score,
     candidate_score_components,
+    comparison_profile,
     effective_match_decision,
     evaluate_merge_guard,
     select_candidates,
@@ -243,6 +245,32 @@ class EventConsolidationTests(unittest.TestCase):
         self.assertEqual(components["time"], -0.45)
         self.assertEqual(effective["decision"], "DIFFERENT_EVENT")
         self.assertIn("OCCURRENCE_DATE_CONFLICT", effective["guard_reason_codes"])
+
+    def test_partial_dates_use_posted_year_and_match_time_of_day_variant(self):
+        mention = self.mention("Infantino thăm PVF ngày 27/8")
+        mention.update({
+            "type": "VISIT",
+            "time_expression": "27/8",
+            "posted_at": date(2026, 8, 28),
+            "participants": [self.participant("gianni infantino")],
+        })
+        event = self.event("pvf", "Infantino thăm PVF sáng 27/8")
+        event.update({
+            "type": "VISIT",
+            "occurrence_times": ["sáng 27/8"],
+            "first_seen_at": date(2026, 8, 27),
+            "participants": [self.participant("gianni infantino")],
+        })
+
+        left = comparison_profile(mention)
+        right = comparison_profile(event)
+        guard = evaluate_merge_guard(mention, event)
+
+        self.assertEqual(left["occurrence_dates"], ["2026-08-27"])
+        self.assertEqual(right["occurrence_dates"], ["2026-08-27"])
+        self.assertFalse(left["has_unparsed_time"])
+        self.assertFalse(right["has_unparsed_time"])
+        self.assertEqual(guard["status"], "PASS")
 
     def test_ambiguous_participants_and_partial_time_require_review(self):
         mention = self.mention("Một quan chức dự khán chung kết ngày 25/8")

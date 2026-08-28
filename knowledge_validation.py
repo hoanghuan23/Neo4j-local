@@ -125,8 +125,24 @@ def resolve_event_type(event_type: str, evidence_text: str) -> str:
         for candidate_type, triggers in EVENT_ACTION_TRIGGERS.items()
         if any(_contains_marker(evidence, trigger) for trigger in triggers)
     }
+    # "bóng đá" is a sport name, not evidence that somebody kicked/assaulted
+    # another person. Without this guard, an otherwise clear PVF visit matches
+    # both VISIT ("ghé thăm") and ASSAULT (the generic marker "đá").
+    if "bóng đá" in evidence:
+        assault_markers = EVENT_ACTION_TRIGGERS.get("ASSAULT", set()) - {"đá"}
+        if not any(
+            _contains_marker(evidence, marker) for marker in assault_markers
+        ):
+            matching_types.discard("ASSAULT")
     if len(matching_types) == 1:
         verified_type = next(iter(matching_types))
+        # VISIT is a deliberately narrow repair for the two model confusions
+        # observed in this batch. Do not turn a distinct occurrence (for
+        # example a SPORTS_EVENT mentioned in visit context) into a visit.
+        if verified_type == "VISIT" and event_type not in {
+            "VISIT", "ASSAULT", "MEETING"
+        }:
+            return event_type
         if verified_type != event_type:
             return verified_type
     # No match or multiple matches cannot verify a unique replacement. Keep the
@@ -211,20 +227,20 @@ def validate_events(
             continue
         seen_local_ids.add(local_id)
 
-        event_type = _enum_value(raw.get("type"), EVENT_TYPES)
+        extracted_type = _enum_value(raw.get("type"), EVENT_TYPES)
         title = _clean_text(raw.get("title"))
         description = _clean_text(raw.get("description"))
         evidence_text = _clean_text(raw.get("evidence_text"))
         confidence = _valid_confidence(raw.get("confidence"))
         if (
-            event_type is None
+            extracted_type is None
             or not description
             or not evidence_text
             or confidence is None
             or not _evidence_in_content(evidence_text, content)
         ):
             continue
-        event_type = resolve_event_type(event_type, evidence_text)
+        event_type = resolve_event_type(extracted_type, evidence_text)
 
         status = _enum_value(raw.get("status"), EVENT_STATUSES) or "UNKNOWN"
         participants = []
@@ -306,6 +322,7 @@ def validate_events(
         event = {
             "local_id": local_id,
             "type": event_type,
+            "extracted_type": extracted_type,
             "title": title if is_valid_event_title(title) else description,
             "title_needs_backfill": bool(
                 raw.get("title_needs_backfill")

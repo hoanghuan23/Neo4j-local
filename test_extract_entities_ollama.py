@@ -461,6 +461,13 @@ class ExtractionTests(unittest.TestCase):
 
 
 class KnowledgeValidationTests(unittest.TestCase):
+    def test_visit_is_a_supported_event_type(self):
+        self.assertIn("VISIT", subject.EVENT_TYPES)
+        self.assertIn(
+            "VISIT",
+            subject.EVENT_ITEM_SCHEMA["properties"]["type"]["enum"],
+        )
+
     def test_organization_is_not_a_participant_role(self):
         self.assertNotIn("ORGANIZATION", subject.EVENT_ROLES)
         self.assertNotIn(
@@ -829,6 +836,61 @@ class KnowledgeValidationTests(unittest.TestCase):
             knowledge["events"][0]["event_key"],
             expected["events"][0]["event_key"],
         )
+
+    def test_validation_corrects_assault_to_visit_and_keeps_extracted_type(self):
+        content = "Chủ tịch FIFA Infantino ghé thăm trung tâm bóng đá trẻ PVF"
+        raw = {
+            "entities": [],
+            "events": [self.event("ev1", "ASSAULT", content)],
+            "event_relations": [],
+        }
+
+        event = subject.validate_knowledge(content, raw)["events"][0]
+
+        self.assertEqual(event["type"], "VISIT")
+        self.assertEqual(event["extracted_type"], "ASSAULT")
+
+    def test_validation_corrects_meeting_to_visit_for_clear_visit(self):
+        content = "Gianni Infantino đến tham quan công trường sân vận động PVF"
+        raw = {
+            "entities": [],
+            "events": [self.event("ev1", "MEETING", content)],
+            "event_relations": [],
+        }
+
+        event = subject.validate_knowledge(content, raw)["events"][0]
+
+        self.assertEqual(event["type"], "VISIT")
+        self.assertEqual(event["extracted_type"], "MEETING")
+
+    def test_validation_does_not_replace_actual_assault_with_visit(self):
+        content = "Sau khi đến thăm, người đàn ông tấn công một nhân viên"
+        raw = {
+            "entities": [],
+            "events": [self.event("ev1", "ASSAULT", content)],
+            "event_relations": [],
+        }
+
+        event = subject.validate_knowledge(content, raw)["events"][0]
+
+        self.assertEqual(event["type"], "ASSAULT")
+        self.assertEqual(event["extracted_type"], "ASSAULT")
+
+    def test_validation_keeps_sports_event_mentioned_in_visit_context(self):
+        content = (
+            "Trong chuyến thăm, ông nhắc lại việc đội tuyển Việt Nam "
+            "bảo vệ chức vô địch ASEAN Cup 2026"
+        )
+        raw = {
+            "entities": [],
+            "events": [self.event("ev1", "SPORTS_EVENT", content)],
+            "event_relations": [],
+        }
+
+        event = subject.validate_knowledge(content, raw)["events"][0]
+
+        self.assertEqual(event["type"], "SPORTS_EVENT")
+        self.assertEqual(event["extracted_type"], "SPORTS_EVENT")
 
     def test_validation_keeps_matching_model_type_when_evidence_has_many_actions(self):
         content = "Alice warned Bob and attacked him."
@@ -1235,6 +1297,31 @@ class PersistenceTests(unittest.TestCase):
         )
         self.assertNotIn("start_year", event_call.kwargs)
         self.assertNotIn("end_year", event_call.kwargs)
+
+    def test_upsert_event_persists_extracted_type_on_mention(self):
+        tx = Mock()
+        tx.run.return_value.consume.return_value = None
+        event = {
+            "event_key": "event-1",
+            "type": "VISIT",
+            "extracted_type": "ASSAULT",
+            "description": "Chủ tịch FIFA ghé thăm PVF",
+            "evidence_text": "Chủ tịch FIFA ghé thăm PVF",
+            "status": "COMPLETED",
+            "time_expression": None,
+            "confidence": 1.0,
+            "participants": [],
+        }
+
+        subject.upsert_events(tx, "facebook", "post-1", [event], {})
+
+        event_call = next(
+            call
+            for call in tx.run.call_args_list
+            if "MERGE (created:Event" in call.args[0]
+        )
+        self.assertIn("mention.extracted_type = $extracted_type", event_call.args[0])
+        self.assertEqual(event_call.kwargs["extracted_type"], "ASSAULT")
 
     def test_upsert_global_role_uses_shared_scope_and_safe_cleanup(self):
         tx = Mock()

@@ -281,6 +281,7 @@ def upsert_events(
                 ELSE mention.consolidation_status
             END
             SET mention.type = $event_type,
+                mention.extracted_type = $extracted_type,
                 mention.title = $title,
                 mention.title_needs_backfill = $title_needs_backfill,
                 mention.description = $description,
@@ -338,6 +339,7 @@ def upsert_events(
             mention_key=mention_key,
             event_key=event["event_key"],
             event_type=event["type"],
+            extracted_type=event.get("extracted_type", event["type"]),
             title=event.get("title") or event["description"],
             title_needs_backfill=event.get("title_needs_backfill", False),
             description=event["description"],
