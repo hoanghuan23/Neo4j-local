@@ -172,6 +172,50 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         extract.assert_called_once_with("content")
         self.assertEqual(result["classifier_decision"], "DEEP")
 
+    def test_extract_post_enriches_after_router_and_before_returning(self):
+        base = {"entities": [], "events": [{"local_id": "ev1"}]}
+        enriched = {"entities": [], "events": [{"local_id": "ev1", "role": "ACTOR"}]}
+        routes = {"event_routes": [], "pair_routes": []}
+        router = Mock(return_value=routes)
+        enrich = Mock(return_value=enriched)
+
+        result = subject._extract_post(
+            lambda _content: {
+                "should_deep_analyze": True,
+                "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
+            },
+            lambda _content: base,
+            lambda _content, raw, _platform, _post_id: raw,
+            router,
+            "facebook",
+            "1",
+            "content",
+            enrich,
+        )
+
+        router.assert_called_once_with("content", base)
+        enrich.assert_called_once_with("content", base, routes)
+        self.assertIs(result["knowledge"], enriched)
+
+    def test_classifier_skip_does_not_call_participant_enrichment(self):
+        enrich = Mock()
+
+        subject._extract_post(
+            lambda _content: {
+                "should_deep_analyze": False,
+                "reason_code": "LOW_INFORMATION_OR_TRIVIAL",
+            },
+            Mock(),
+            lambda _content, raw, _platform, _post_id: raw,
+            Mock(),
+            "facebook",
+            "1",
+            "content",
+            enrich,
+        )
+
+        enrich.assert_not_called()
+
     @patch.object(subject, "create_knowledge_schema")
     @patch.object(subject, "validate_knowledge")
     @patch.object(subject, "_load_posts")

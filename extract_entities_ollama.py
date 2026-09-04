@@ -30,6 +30,7 @@ from knowledge_persistence import (
 from knowledge_pipeline import _load_posts
 from knowledge_pipeline import process_new_posts as _process_new_posts
 from knowledge_relation_router import classify_relation_routes
+from knowledge_relations.participant_role import enrich_participant_roles
 from knowledge_consolidation import consolidate_pending_mentions
 from knowledge_settings import *
 from knowledge_validation import (
@@ -104,6 +105,14 @@ def process_new_posts(session, call_model=None) -> dict:
             content,
             knowledge,
             call_model=call_model,
+        ),
+        enrich_participants_fn=lambda content, knowledge, routes: (
+            enrich_participant_roles(
+                content,
+                knowledge,
+                routes,
+                call_model=call_model,
+            )
         ),
         consolidate_fn=consolidate_batch,
     )

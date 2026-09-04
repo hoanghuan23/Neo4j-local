@@ -46,6 +46,7 @@ KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
 KNOWLEDGE_PROMPT_VERSION = "knowledge-v12"
 KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v2"
 RELATION_ROUTER_PROMPT_VERSION = "relation-router-v1"
+PARTICIPANT_ROLE_PROMPT_VERSION = "participant-role-v1"
 EVENT_CONSOLIDATION_VERSION = "event-consolidation-v3"
 EVENT_SUMMARY_VERSION = "event-summary-v2"
 EVENT_AUTO_MERGE_THRESHOLD = float(
@@ -133,6 +134,7 @@ RELATION_GROUPS = {
     "STANCE_PERSPECTIVE",
 }
 RELATION_ROUTER_ACTIONS = {"ENRICH", "USE_BASE_DATA"}
+CONCRETE_EVENT_ROLES = EVENT_ROLES - {"PARTICIPANT"}
 CONFIDENCE_LEVELS = {"HIGH", "MEDIUM", "LOW"}
 MAX_EVENTS_PER_POST = 5
 
@@ -188,6 +190,26 @@ PARTICIPANT_ITEM_SCHEMA = _strict_object(
         "role",
         "confidence",
     ],
+)
+
+PARTICIPANT_ROLE_ASSIGNMENT_SCHEMA = _strict_object(
+    {
+        "event_id": {"type": "string"},
+        "participant_index": {"type": "integer", "minimum": 0},
+        "role": {"type": "string", "enum": sorted(CONCRETE_EVENT_ROLES)},
+        "evidence_text": {"type": "string"},
+    },
+    ["event_id", "participant_index", "role", "evidence_text"],
+)
+
+PARTICIPANT_ROLE_SCHEMA = _strict_object(
+    {
+        "assignments": {
+            "type": "array",
+            "items": PARTICIPANT_ROLE_ASSIGNMENT_SCHEMA,
+        }
+    },
+    ["assignments"],
 )
 
 EVENT_ITEM_SCHEMA = _strict_object(

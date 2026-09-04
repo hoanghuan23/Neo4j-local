@@ -12,6 +12,7 @@ from knowledge_settings import (
 )
 from knowledge_extraction import classify_knowledge_potential, extract_knowledge
 from knowledge_relation_router import classify_relation_routes
+from knowledge_relations.participant_role import enrich_participant_roles
 from knowledge_persistence import (
     create_entity_schema,
     create_knowledge_schema,
@@ -40,6 +41,7 @@ def _extract_post(
     platform: str,
     post_id: str,
     content: str,
+    enrich_participants_fn=enrich_participant_roles,
 ) -> dict:
     if not KNOWLEDGE_PIPELINE_ENABLED:
         return {
@@ -62,6 +64,8 @@ def _extract_post(
         if needs_deep_extraction
         else {"event_routes": [], "pair_routes": []}
     )
+    if needs_deep_extraction:
+        knowledge = enrich_participants_fn(content, knowledge, relation_routes)
     return {
         "classification": classification,
         "classifier_decision": "DEEP" if needs_deep_extraction else "SKIPPED",
@@ -132,6 +136,7 @@ def process_new_posts(
     extract_knowledge_fn=extract_knowledge,
     classify_post_fn=classify_knowledge_potential,
     classify_relations_fn=classify_relation_routes,
+    enrich_participants_fn=enrich_participant_roles,
     consolidate_fn=None,
 ) -> dict:
     if KNOWLEDGE_PIPELINE_ENABLED:
@@ -156,6 +161,7 @@ def process_new_posts(
                 post["platform"],
                 post["post_id"],
                 post["content"],
+                enrich_participants_fn,
             ): (index, post)
             for index, post in enumerate(posts, start=1)
         }
