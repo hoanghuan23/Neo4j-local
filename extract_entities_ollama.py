@@ -29,6 +29,7 @@ from knowledge_persistence import (
 )
 from knowledge_pipeline import _load_posts
 from knowledge_pipeline import process_new_posts as _process_new_posts
+from knowledge_relation_router import classify_relation_routes
 from knowledge_consolidation import consolidate_pending_mentions
 from knowledge_settings import *
 from knowledge_validation import (
@@ -97,6 +98,11 @@ def process_new_posts(session, call_model=None) -> dict:
         ),
         extract_knowledge_fn=lambda content: _extraction.extract_knowledge(
             content,
+            call_model=call_model,
+        ),
+        classify_relations_fn=lambda content, knowledge: classify_relation_routes(
+            content,
+            knowledge,
             call_model=call_model,
         ),
         consolidate_fn=consolidate_batch,

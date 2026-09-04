@@ -11,6 +11,7 @@ from knowledge_settings import (
     POST_LIMIT,
 )
 from knowledge_extraction import classify_knowledge_potential, extract_knowledge
+from knowledge_relation_router import classify_relation_routes
 from knowledge_persistence import (
     create_entity_schema,
     create_knowledge_schema,
@@ -34,6 +35,8 @@ from knowledge_validation import validate_knowledge
 def _extract_post(
     classify_post_fn,
     extract_knowledge_fn,
+    validate_knowledge_fn,
+    classify_relations_fn,
     platform: str,
     post_id: str,
     content: str,
@@ -43,18 +46,27 @@ def _extract_post(
             "classification": None,
             "classifier_decision": None,
             "knowledge": extract_knowledge_fn(content),
+            "relation_routes": {"event_routes": [], "pair_routes": []},
         }
 
     classification = classify_post_fn(content)
     needs_deep_extraction = classification["should_deep_analyze"]
+    raw_knowledge = (
+        extract_knowledge_fn(content)
+        if needs_deep_extraction
+        else {"entities": [], "events": [], "event_relations": []}
+    )
+    knowledge = validate_knowledge_fn(content, raw_knowledge, platform, post_id)
+    relation_routes = (
+        classify_relations_fn(content, knowledge)
+        if needs_deep_extraction
+        else {"event_routes": [], "pair_routes": []}
+    )
     return {
         "classification": classification,
         "classifier_decision": "DEEP" if needs_deep_extraction else "SKIPPED",
-        "knowledge": (
-            extract_knowledge_fn(content)
-            if needs_deep_extraction
-            else {"entities": [], "events": [], "event_relations": []}
-        ),
+        "knowledge": knowledge,
+        "relation_routes": relation_routes,
     }
 
 
@@ -119,6 +131,7 @@ def process_new_posts(
     session,
     extract_knowledge_fn=extract_knowledge,
     classify_post_fn=classify_knowledge_potential,
+    classify_relations_fn=classify_relation_routes,
     consolidate_fn=None,
 ) -> dict:
     if KNOWLEDGE_PIPELINE_ENABLED:
@@ -138,13 +151,27 @@ def process_new_posts(
                 _extract_post,
                 classify_post_fn,
                 extract_knowledge_fn,
+                validate_knowledge,
+                classify_relations_fn,
                 post["platform"],
                 post["post_id"],
                 post["content"],
             ): (index, post)
             for index, post in enumerate(posts, start=1)
         }
-        summary = {"total": len(posts), "skipped": 0, "deep": 0, "failed": 0}
+        summary = {
+            "total": len(posts),
+            "skipped": 0,
+            "deep": 0,
+            "failed": 0,
+            "relation_routes": [],
+            "relation_router": {
+                "events": 0,
+                "pairs": 0,
+                "groups": {},
+                "actions": {"USE_BASE_DATA": 0, "ENRICH": 0},
+            },
+        }
         batch_mention_keys = []
         for completed, future in enumerate(as_completed(future_to_post), start=1):
             original_index, post = future_to_post[future]
@@ -156,6 +183,8 @@ def process_new_posts(
                 completed=completed,
                 total=len(posts),
                 mention_keys_out=batch_mention_keys,
+                relation_routes_out=summary["relation_routes"],
+                relation_router_summary=summary["relation_router"],
             )
             summary[outcome] += 1
 
@@ -204,8 +233,10 @@ def _save_extracted_post(
     completed: int,
     total: int,
     mention_keys_out: list[str] | None = None,
+    relation_routes_out: list[dict] | None = None,
+    relation_router_summary: dict | None = None,
 ) -> str:
-    """Validate and persist one completed extraction on the main thread."""
+    """Persist one validated extraction on the main thread."""
     platform = post["platform"]
     post_id = post["post_id"]
     content = post["content"]
@@ -215,18 +246,19 @@ def _save_extracted_post(
     )
     try:
         extraction_result = future.result()
-        raw_knowledge = extraction_result["knowledge"]
+        knowledge = extraction_result["knowledge"]
+        relation_routes = extraction_result["relation_routes"]
         classification = extraction_result["classification"]
         classifier_decision = extraction_result["classifier_decision"]
         if not KNOWLEDGE_PIPELINE_ENABLED:
-            entities = raw_knowledge["entities"]
+            entities = knowledge["entities"]
             print(json.dumps(entities, ensure_ascii=False, indent=2))
             saved_count = save_entities(session, platform, post_id, entities)
             print(f"Đã lưu {saved_count}/{len(entities)} entity hợp lệ.")
             return "deep"
 
-        knowledge = validate_knowledge(content, raw_knowledge, platform, post_id)
         print(json.dumps(knowledge, ensure_ascii=False, indent=2))
+        print(json.dumps(relation_routes, ensure_ascii=False, indent=2))
         counts = session.execute_write(
             save_knowledge_tx,
             platform,
@@ -239,6 +271,19 @@ def _save_extracted_post(
             mention_keys_out.extend(
                 event.get("mention_key", event["event_key"])
                 for event in knowledge["events"]
+            )
+        if classifier_decision == "DEEP" and relation_routes_out is not None:
+            relation_routes_out.append(
+                {
+                    "platform": platform,
+                    "post_id": post_id,
+                    **relation_routes,
+                }
+            )
+        if classifier_decision == "DEEP" and relation_router_summary is not None:
+            _accumulate_relation_router_summary(
+                relation_router_summary,
+                relation_routes,
             )
         print(
             "Đã lưu "
@@ -262,3 +307,16 @@ def _save_extracted_post(
                 )
         print(f"Lỗi post {post_id}: {error}")
         return "failed"
+
+
+def _accumulate_relation_router_summary(summary: dict, routes: dict) -> None:
+    event_routes = routes.get("event_routes", [])
+    pair_routes = routes.get("pair_routes", [])
+    summary["events"] += len(event_routes)
+    summary["pairs"] += len(pair_routes)
+    for route in [*event_routes, *pair_routes]:
+        for detail in route.get("route_details", []):
+            group = detail["relation_group"]
+            action = detail["action"]
+            summary["groups"][group] = summary["groups"].get(group, 0) + 1
+            summary["actions"][action] = summary["actions"].get(action, 0) + 1

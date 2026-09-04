@@ -45,6 +45,10 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
                 "should_deep_analyze": True,
                 "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
             },
+            classify_relations_fn=lambda _content, _knowledge: {
+                "event_routes": [],
+                "pair_routes": [],
+            },
             consolidate_fn=consolidate,
         )
 
@@ -155,6 +159,11 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         result = subject._extract_post(
             lambda _content: classification,
             extract,
+            lambda _content, raw, _platform, _post_id: raw,
+            lambda _content, _knowledge: {
+                "event_routes": [],
+                "pair_routes": [],
+            },
             "facebook",
             "1",
             "content",
@@ -162,6 +171,104 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
 
         extract.assert_called_once_with("content")
         self.assertEqual(result["classifier_decision"], "DEEP")
+
+    @patch.object(subject, "create_knowledge_schema")
+    @patch.object(subject, "validate_knowledge")
+    @patch.object(subject, "_load_posts")
+    def test_router_failure_retries_post_without_saving_knowledge(
+        self,
+        load_posts,
+        validate_knowledge,
+        _create_schema,
+    ):
+        load_posts.return_value = [
+            {"platform": "facebook", "post_id": "1", "content": "event"}
+        ]
+        validate_knowledge.return_value = {
+            "entities": [],
+            "events": [{"local_id": "ev1"}],
+            "event_relations": [],
+        }
+        session = Mock()
+
+        def fail_router(_content, _knowledge):
+            raise ValueError("router failed")
+
+        summary = subject.process_new_posts(
+            session,
+            extract_knowledge_fn=lambda _content: {},
+            classify_post_fn=lambda _content: {
+                "should_deep_analyze": True,
+                "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
+            },
+            classify_relations_fn=fail_router,
+        )
+
+        self.assertEqual(summary["failed"], 1)
+        self.assertEqual(session.execute_write.call_count, 1)
+        self.assertIs(session.execute_write.call_args.args[0], subject.mark_knowledge_failure)
+
+    @patch.object(subject, "create_knowledge_schema")
+    @patch.object(subject, "validate_knowledge")
+    @patch.object(subject, "_load_posts")
+    def test_returns_and_summarizes_relation_routes(
+        self,
+        load_posts,
+        validate_knowledge,
+        _create_schema,
+    ):
+        load_posts.return_value = [
+            {"platform": "facebook", "post_id": "1", "content": "event"}
+        ]
+        validate_knowledge.return_value = {
+            "entities": [],
+            "events": [
+                {"local_id": "ev1", "event_key": "e", "mention_key": "m"}
+            ],
+            "event_relations": [],
+        }
+        routes = {
+            "event_routes": [
+                {
+                    "event_id": "ev1",
+                    "relation_groups": ["PARTICIPANT_ROLE"],
+                    "route_details": [
+                        {
+                            "relation_group": "PARTICIPANT_ROLE",
+                            "action": "USE_BASE_DATA",
+                            "reason": "complete",
+                            "evidence_text": "event",
+                        }
+                    ],
+                }
+            ],
+            "pair_routes": [],
+        }
+        session = Mock()
+        session.execute_write.return_value = {
+            "entities": 0,
+            "events": 1,
+            "event_relations": 0,
+        }
+
+        summary = subject.process_new_posts(
+            session,
+            extract_knowledge_fn=lambda _content: {},
+            classify_post_fn=lambda _content: {
+                "should_deep_analyze": True,
+                "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
+            },
+            classify_relations_fn=lambda _content, _knowledge: routes,
+        )
+
+        self.assertEqual(summary["relation_routes"][0]["post_id"], "1")
+        self.assertEqual(summary["relation_router"]["events"], 1)
+        self.assertEqual(
+            summary["relation_router"]["groups"]["PARTICIPANT_ROLE"], 1
+        )
+        self.assertEqual(
+            summary["relation_router"]["actions"]["USE_BASE_DATA"], 1
+        )
 
     def test_load_posts_applies_configured_limit(self):
         session = Mock()
