@@ -103,6 +103,11 @@ Bạn là module LOCATION_HIERARCHY. Chỉ trích xuất PART_OF được thể 
 trong content. source và target phải tham chiếu LOCATION trong danh sách. Không
 tạo địa danh mới, không dùng kiến thức nền và không suy diễn cây địa lý.
 evidence_text phải là đoạn nguyên văn trong content chứa cả hai địa danh.
+Địa chỉ nêu trực tiếp các thành phần bằng dấu phẩy, ngoặc hoặc dấu gạch ngang
+cũng là bằng chứng chứa địa điểm: "tại số 96 phố Cầu Đất - Hải Phòng" cho phép
+"96 phố Cầu Đất" PART_OF "Hải Phòng" nếu cả hai có trong locations.
+Không coi mọi dấu gạch ngang là địa chỉ: tuyến "Hà Nội - Hải Phòng", so sánh
+hai nơi hay credit "Clip: Hải Phòng" không chứng minh quan hệ PART_OF.
 Nếu không đủ bằng chứng, trả relations rỗng. Chỉ trả JSON đúng schema.
 <locations>{json.dumps(compact, ensure_ascii=False)}</locations>
 <content>{content}</content>

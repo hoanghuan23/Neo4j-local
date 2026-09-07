@@ -40,7 +40,7 @@ OLLAMA_CONTEXT_TOKENS = max(
     2_048,
     int(os.getenv("OLLAMA_CONTEXT_TOKENS", "32768")),
 )
-POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
+POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "50"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
 KNOWLEDGE_PROMPT_VERSION = "knowledge-v12"

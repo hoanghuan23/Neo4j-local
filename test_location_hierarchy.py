@@ -22,6 +22,25 @@ class LocationHierarchyTests(unittest.TestCase):
         self.assertEqual(len(edges), 1)
         self.assertEqual(edges[0]["source"], "CONTENT")
 
+    def test_explicit_street_address_content_parent(self):
+        content = "Cận cảnh tại số 96 phố Cầu Đất - Hải Phòng."
+        locations = [
+            {"node_id": "1", "name": "96 phố Cầu Đất", "normalized_name": "96 phố cầu đất"},
+            {"node_id": "2", "name": "Hải Phòng", "normalized_name": "hải phòng"},
+        ]
+        knowledge = {"entities": [
+            {"local_id": "e1", "type": "LOCATION", "name": "96 phố Cầu Đất"},
+            {"local_id": "e2", "type": "LOCATION", "name": "Hải Phòng"},
+        ]}
+        model = Mock(return_value={"relations": [{
+            "source_entity_id": "e1", "target_entity_id": "e2",
+            "evidence_text": "số 96 phố Cầu Đất - Hải Phòng",
+        }]})
+        edges = subject.extract_content_edges(content, knowledge, locations, call_model=model)
+        self.assertEqual(len(edges), 1)
+        self.assertEqual((edges[0]["source_node_id"], edges[0]["target_node_id"]), ("1", "2"))
+        self.assertEqual(edges[0]["source"], "CONTENT")
+
     def test_addressdetails_builds_chain_and_ignores_poi_display_name(self):
         result = subject.administrative_chain("Nam Từ Liêm", [{
             "osm_id": 123,
