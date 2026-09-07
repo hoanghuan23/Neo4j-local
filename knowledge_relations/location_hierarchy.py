@@ -8,7 +8,7 @@ import unicodedata
 from curl_cffi import requests
 from langsmith import traceable
 
-from knowledge_extraction import call_ollama, make_search_name, normalize_name
+from knowledge_extraction import call_ollama, location_identity_names, make_search_name, normalize_name
 from knowledge_settings import (
     LOCATION_HIERARCHY_MODULE_VERSION,
     LOCATION_HIERARCHY_SCHEMA,
@@ -237,6 +237,98 @@ def geocode_with_hints(query: str, hints: list[str] | None = None, request_get=N
     return _select_candidates(query, results)
 
 
+ADMIN_NAME_PREFIXES = {
+    "tỉnh": "province", "thành phố": "city", "phường": "ward",
+    "xã": "commune", "quận": "district", "huyện": "county",
+    "thị xã": "town", "thị trấn": "township",
+}
+
+
+def _explicit_admin_types(value: str, name: str) -> set[str]:
+    text = normalize_name(value)
+    bare = normalize_name(name)
+    for prefix in ADMIN_NAME_PREFIXES:
+        if bare.startswith(prefix + " "):
+            bare = bare[len(prefix):].strip()
+            break
+    return {level for prefix, level in ADMIN_NAME_PREFIXES.items()
+            if re.search(r"(?<!\w)" + re.escape(prefix + " " + bare) + r"(?!\w)", text)}
+
+
+def _candidate_admin_types(row: dict, query: str) -> set[str]:
+    # Inspect the object's names, never a province mentioned in its address.
+    details = row.get("namedetails") or {}
+    names = [row.get("name"), *(value for key, value in details.items()
+             if key.split(":", 1)[0] in {"name", "official_name"})]
+    levels = set()
+    for name in names:
+        if not isinstance(name, str):
+            continue
+        levels.update(_explicit_admin_types(name, query))
+        for level in set(ADMIN_NAME_PREFIXES.values()):
+            if re.search(r"\s" + level + r"$", normalize_name(name)):
+                levels.add(level)
+    return levels
+
+
+def resolve_content_location(location, locations, edges, hints, geocode_fn=geocode_with_hints, *, content=""):
+    """Use explicit descendants to disambiguate an administrative parent."""
+    query = location["name"]
+    candidates = geocode_fn(query, hints=hints)
+    admin_types = _explicit_admin_types(content, query)
+    if not admin_types:
+        admin_types = _explicit_admin_types(query, query)
+    if len(admin_types) == 1:
+        candidates = [row for row in candidates
+                      if _candidate_admin_types(row, query) == admin_types]
+    elif len(admin_types) > 1:
+        # The same bare name refers to several levels in this article.
+        # Keep the ambiguity instead of choosing via descendant geography.
+        return candidates
+    descendants = {location["node_id"]}
+    while True:
+        expanded = descendants | {edge["source_node_id"] for edge in edges
+                                  if edge["target_node_id"] in descendants}
+        if expanded == descendants:
+            break
+        descendants = expanded
+    descendants.discard(location["node_id"])
+    if len(candidates) < 2 or not descendants:
+        return candidates
+
+    def region(row):
+        address = row.get("address", {})
+        value = address.get("state") or address.get("city")
+        if not isinstance(value, str) or not value.strip():
+            return None
+        country = address.get("country_code") or address.get("country")
+        if not isinstance(country, str) or not country.strip():
+            return None
+        return (make_search_name(country), make_search_name(clean_osm_admin_name(value)))
+
+    evidence = set()
+    for child in locations:
+        if child["node_id"] not in descendants:
+            continue
+        rows = geocode_fn(child["name"], hints=[query])
+        # A matching address alone must not identify an unrelated POI.
+        rows = [row for row in rows if make_search_name(child["name"]) in _candidate_name_keys(row)]
+        regions = {region(row) for row in rows}
+        if len(regions) == 1 and None not in regions:
+            evidence.update(regions)
+    if len(evidence) != 1:
+        return candidates
+    query_key = make_search_name(query)
+    matches = [row for row in candidates
+               if region(row) in evidence
+               and query_key in _candidate_name_keys(row)
+               and any(isinstance(row.get("address", {}).get(field), str)
+                       and make_search_name(clean_osm_admin_name(row["address"][field])) == query_key
+                       for field in OSM_MATCH_FIELDS if field != "country")
+               and row.get("category", row.get("class", "place")) in ("place", "boundary")]
+    return matches if len(matches) == 1 else candidates
+
+
 def _candidate_name_keys(result: dict) -> set[str]:
     """Names of the object itself, excluding brand, references and address names."""
     values = [result.get("name")]
@@ -312,7 +404,8 @@ def _search_variants(name: str) -> list[str]:
         if bare.startswith(prefix):
             bare = bare[len(prefix):].strip()
             break
-    return list(dict.fromkeys((search, bare, f"tp {bare}", f"tp. {bare}", f"thanh pho {bare}", f"city of {bare}")))
+    ward_variants = [make_search_name(value) for value in location_identity_names(name)]
+    return list(dict.fromkeys((search, bare, f"tp {bare}", f"tp. {bare}", f"thanh pho {bare}", f"city of {bare}", *ward_variants)))
 
 
 def load_post_locations(session, platform: str, post_id: str) -> list[dict]:
@@ -444,7 +537,7 @@ def enrich_location_hierarchy(session, platform: str, post_id: str, content: str
             if existing and existing.get("has_parent"):
                 continue
             hints = [item["name"] for item in hint_locations if item["node_id"] != location["node_id"]]
-            candidates = geocode_fn(location["name"], hints=hints)
+            candidates = resolve_content_location(location, locations, persisted_edges, hints, geocode_fn, content=content)
             if len(candidates) > 1:
                 session.run(
                     "MATCH (location:Entity {type: 'LOCATION'}) WHERE elementId(location) = $node_id "

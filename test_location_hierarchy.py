@@ -5,6 +5,47 @@ import knowledge_relations.location_hierarchy as subject
 
 
 class LocationHierarchyTests(unittest.TestCase):
+    def test_preview_uses_explicit_province_to_resolve_lao_cai(self):
+        import preview_location_content as preview
+
+        content = "Trường tại xã Mường Khương, tỉnh Lào Cai."
+        knowledge = {"entities": [
+            {"local_id": "e1", "type": "LOCATION", "name": "Mường Khương"},
+            {"local_id": "e2", "type": "LOCATION", "name": "Lào Cai"},
+        ]}
+        province = {"name": "Lào Cai Province", "address": {
+            "state": "Lào Cai Province", "country": "Vietnam"},
+            "namedetails": {"name:vi": "Tỉnh Lào Cai"}}
+        city = {"name": "Lao Cai", "address": {
+            "city": "Lao Cai", "state": "Lào Cai Province", "country": "Vietnam"},
+            "namedetails": {"name:vi": "Thành phố Lào Cai"}}
+        ward = {"name": "Lao Cai Ward", "address": {
+            "suburb": "Lao Cai Ward", "city": "Lao Cai",
+            "state": "Lào Cai Province", "country": "Vietnam"},
+            "namedetails": {"name:vi": "Phường Lào Cai"}}
+        rows = [province, city, ward]
+        geocode = Mock(return_value=rows)
+        with patch.object(preview, "extract_knowledge", return_value=knowledge), patch.object(
+            preview, "extract_content_edges", return_value=[{
+                "source_node_id": "preview-1", "target_node_id": "preview-2",
+                "evidence_text": "xã Mường Khương, tỉnh Lào Cai",
+            }]
+        ):
+            result = preview.preview_content(content, Mock(), geocode)
+        resolved = result["locations"][1]
+        self.assertEqual(resolved["status"], "RESOLVED")
+        self.assertEqual(resolved["part_of_chain"], ["Lào Cai", "Vietnam"])
+        self.assertFalse(resolved["needs_review"])
+        self.assertEqual(len(resolved["candidates"]), 1)
+
+        location = {"name": "Lào Cai", "node_id": "1"}
+        for text in ("Lào Cai", "tỉnh Lào Cai và phường Lào Cai"):
+            self.assertEqual(subject.resolve_content_location(
+                location, [location], [], [], geocode, content=text), rows)
+        # Parent address fields must not identify the city as a province.
+        self.assertEqual(subject.resolve_content_location(
+            location, [location], [], [], Mock(return_value=[city]), content=content), [])
+
     def test_content_edge_requires_extracted_locations_and_verbatim_evidence(self):
         locations = [
             {"entity_id": "e1", "node_id": "1", "name": "Thanh Xuân"},
@@ -235,6 +276,35 @@ class LocationHierarchyTests(unittest.TestCase):
 
 
 class ContextGeocodingTests(unittest.TestCase):
+    def test_content_descendants_resolve_dong_anh_and_exclude_station(self):
+        locations = [{"node_id": name, "name": name} for name in ("Đông Anh", "Ủy Nỗ", "Phúc Lộc")]
+        edges = [{"source_node_id": "Ủy Nỗ", "target_node_id": "Đông Anh"},
+                 {"source_node_id": "Phúc Lộc", "target_node_id": "Ủy Nỗ"}]
+        station = {"name": "Dong Anh", "namedetails": {"name:vi": "Đông Anh"},
+                   "address": {"railway": "Dong Anh", "city": "Hà Nội", "country": "Vietnam"}}
+        town = {"name": "Đông Anh", "address": {"town": "Đông Anh", "city": "Hà Nội", "country": "Vietnam"}}
+        village = {"name": "Đông Anh", "address": {"village": "Đông Anh", "state": "Lâm Đồng Province", "country": "Vietnam"}}
+        candidates = [station, town, village]
+        child = {"name": "Ủy Nỗ", "address": {"city": "Hà Nội", "country": "Vietnam"}}
+        geocode = Mock(side_effect=[candidates, [child], []])
+        result = subject.resolve_content_location(locations[0], locations, edges, ["Ủy Nỗ", "Phúc Lộc"], geocode)
+        self.assertEqual(result, [town])
+        self.assertEqual([item["name"] for item in subject.administrative_chain("Đông Anh", result)["chain"]],
+                         ["Đông Anh", "Hà Nội", "Vietnam"])
+
+        for child_rows in ([], [dict(child, name="Khách sạn Ủy Nỗ")],
+                           [child, {"name": "Ủy Nỗ", "address": {"state": "Lâm Đồng", "country": "Vietnam"}}]):
+            with self.subTest(child_rows=child_rows):
+                geocode = Mock(side_effect=[candidates, child_rows, []])
+                self.assertEqual(subject.resolve_content_location(locations[0], locations, edges, [], geocode), candidates)
+
+        conflicting = {"name": "Phúc Lộc", "address": {"state": "Lâm Đồng", "country": "Vietnam"}}
+        geocode = Mock(side_effect=[candidates, [child], [conflicting]])
+        self.assertEqual(subject.resolve_content_location(locations[0], locations, edges, [], geocode), candidates)
+        geocode = Mock(return_value=candidates)
+        self.assertEqual(subject.resolve_content_location(locations[0], locations, [], ["Ủy Nỗ"], geocode), candidates)
+        geocode.assert_called_once()
+
     def request(self, *payloads):
         responses = []
         for payload in payloads:

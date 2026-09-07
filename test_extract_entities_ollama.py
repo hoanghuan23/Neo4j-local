@@ -6,6 +6,23 @@ import extract_entities_ollama as subject
 
 
 class NormalizationTests(unittest.TestCase):
+    def test_ward_prefixes_share_identity_and_find_legacy_names(self):
+        for name in ("Tân Sơn Nhì", "Phú Định"):
+            for spelling in (name, f"phường {name}", f"P. {name}"):
+                with self.subTest(spelling=spelling):
+                    entity = subject.prepare_entity({"name": spelling, "type": "LOCATION"})
+                    self.assertEqual(entity["normalized_name"], name.lower())
+                    if spelling != name:
+                        self.assertIn(f"phường {name.lower()}", entity["identity_names"])
+                    else:
+                        self.assertEqual(entity["identity_names"], [name.lower()])
+
+    def test_ward_normalization_keeps_explicit_other_levels(self):
+        for name in ("Xã Phú Định", "Quận Phú Định", "Đường Tân Sơn Nhì"):
+            entity = subject.prepare_entity({"name": name, "type": "LOCATION"})
+            self.assertEqual(entity["normalized_name"], name.lower())
+            self.assertEqual(entity["identity_names"], [name.lower()])
+
     def test_normalize_name_preserves_accents_and_collapses_whitespace(self):
         self.assertEqual(subject.normalize_name("  ĐÀ   NẴNG  "), "đà nẵng")
 
