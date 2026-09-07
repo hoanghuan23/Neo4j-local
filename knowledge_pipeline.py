@@ -13,6 +13,7 @@ from knowledge_settings import (
 from knowledge_extraction import classify_knowledge_potential, extract_knowledge
 from knowledge_relation_router import classify_relation_routes
 from knowledge_relations.participant_role import enrich_participant_roles
+from knowledge_relations.location_hierarchy import enrich_location_hierarchy
 from knowledge_persistence import (
     create_entity_schema,
     create_knowledge_schema,
@@ -137,6 +138,7 @@ def process_new_posts(
     classify_post_fn=classify_knowledge_potential,
     classify_relations_fn=classify_relation_routes,
     enrich_participants_fn=enrich_participant_roles,
+    enrich_locations_fn=enrich_location_hierarchy,
     consolidate_fn=None,
 ) -> dict:
     if KNOWLEDGE_PIPELINE_ENABLED:
@@ -177,6 +179,11 @@ def process_new_posts(
                 "groups": {},
                 "actions": {"USE_BASE_DATA": 0, "ENRICH": 0},
             },
+            "location_hierarchy": {
+                "locations": 0, "content_edges": 0, "osm_edges": 0,
+                "parents_created": 0, "parents_reused": 0,
+                "skipped": 0, "errors": 0,
+            },
         }
         batch_mention_keys = []
         for completed, future in enumerate(as_completed(future_to_post), start=1):
@@ -191,6 +198,8 @@ def process_new_posts(
                 mention_keys_out=batch_mention_keys,
                 relation_routes_out=summary["relation_routes"],
                 relation_router_summary=summary["relation_router"],
+                enrich_locations_fn=enrich_locations_fn,
+                location_summary=summary["location_hierarchy"],
             )
             summary[outcome] += 1
 
@@ -241,6 +250,8 @@ def _save_extracted_post(
     mention_keys_out: list[str] | None = None,
     relation_routes_out: list[dict] | None = None,
     relation_router_summary: dict | None = None,
+    enrich_locations_fn=enrich_location_hierarchy,
+    location_summary: dict | None = None,
 ) -> str:
     """Persist one validated extraction on the main thread."""
     platform = post["platform"]
@@ -273,6 +284,26 @@ def _save_extracted_post(
             classification,
             classifier_decision,
         )
+        if (
+            classifier_decision == "DEEP"
+            and any(entity.get("type") == "LOCATION" for entity in knowledge["entities"])
+        ):
+            try:
+                hierarchy = enrich_locations_fn(
+                    session, platform, post_id, content, knowledge
+                )
+            except Exception:
+                # Base extraction is already committed. Hierarchy has its own
+                # retry/backfill lifecycle and must never reclassify this post
+                # as a knowledge-extraction failure.
+                LOGGER.exception(
+                    "LOCATION hierarchy thất bại sau khi đã lưu base cho %s",
+                    post_id,
+                )
+                hierarchy = {"errors": 1}
+            if location_summary is not None:
+                for key, value in hierarchy.items():
+                    location_summary[key] = location_summary.get(key, 0) + value
         if mention_keys_out is not None:
             mention_keys_out.extend(
                 event.get("mention_key", event["event_key"])

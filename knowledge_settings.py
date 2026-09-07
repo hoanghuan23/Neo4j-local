@@ -47,6 +47,11 @@ KNOWLEDGE_PROMPT_VERSION = "knowledge-v12"
 KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v2"
 RELATION_ROUTER_PROMPT_VERSION = "relation-router-v1"
 PARTICIPANT_ROLE_PROMPT_VERSION = "participant-role-v1"
+LOCATION_HIERARCHY_MODULE_VERSION = "location-hierarchy-v1"
+NOMINATIM_URL = os.getenv("NOMINATIM_URL", "https://nominatim.openstreetmap.org/search")
+NOMINATIM_USER_AGENT = os.getenv("NOMINATIM_USER_AGENT", "Neo4jKnowledgeGraph/1.0")
+NOMINATIM_TIMEOUT_SECONDS = max(1, float(os.getenv("NOMINATIM_TIMEOUT_SECONDS", "15")))
+NOMINATIM_MAX_RETRIES = max(1, int(os.getenv("NOMINATIM_MAX_RETRIES", "2")))
 EVENT_CONSOLIDATION_VERSION = "event-consolidation-v3"
 EVENT_SUMMARY_VERSION = "event-summary-v2"
 EVENT_AUTO_MERGE_THRESHOLD = float(
@@ -210,6 +215,19 @@ PARTICIPANT_ROLE_SCHEMA = _strict_object(
         }
     },
     ["assignments"],
+)
+
+LOCATION_HIERARCHY_RELATION_SCHEMA = _strict_object(
+    {
+        "source_entity_id": {"type": "string"},
+        "target_entity_id": {"type": "string"},
+        "evidence_text": {"type": "string"},
+    },
+    ["source_entity_id", "target_entity_id", "evidence_text"],
+)
+LOCATION_HIERARCHY_SCHEMA = _strict_object(
+    {"relations": {"type": "array", "items": LOCATION_HIERARCHY_RELATION_SCHEMA}},
+    ["relations"],
 )
 
 EVENT_ITEM_SCHEMA = _strict_object(

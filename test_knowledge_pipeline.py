@@ -9,6 +9,43 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
     @patch.object(subject, "create_knowledge_schema")
     @patch.object(subject, "validate_knowledge")
     @patch.object(subject, "_load_posts")
+    def test_location_hierarchy_runs_after_base_save_without_router_dependency(
+        self, load_posts, validate_knowledge, _create_schema
+    ):
+        load_posts.return_value = [
+            {"platform": "facebook", "post_id": "1", "content": "Nam Từ Liêm"}
+        ]
+        knowledge = {
+            "entities": [{"local_id": "e1", "name": "Nam Từ Liêm", "type": "LOCATION"}],
+            "events": [], "event_relations": [],
+        }
+        validate_knowledge.return_value = knowledge
+        session = Mock()
+        session.execute_write.return_value = {"entities": 1, "events": 0, "event_relations": 0}
+        order = []
+
+        def execute_write(function, *args):
+            order.append("base")
+            return {"entities": 1, "events": 0, "event_relations": 0}
+
+        session.execute_write.side_effect = execute_write
+        enrich = Mock(side_effect=lambda *_args: order.append("location") or {
+            "locations": 1, "content_edges": 0, "osm_edges": 2,
+            "parents_created": 2, "parents_reused": 0, "skipped": 0, "errors": 0,
+        })
+        summary = subject.process_new_posts(
+            session,
+            extract_knowledge_fn=lambda _content: knowledge,
+            classify_post_fn=lambda _content: {"should_deep_analyze": True, "reason_code": "DURABLE_ENTITY_INFORMATION"},
+            classify_relations_fn=lambda *_args: {"event_routes": [], "pair_routes": []},
+            enrich_locations_fn=enrich,
+        )
+        self.assertEqual(order, ["base", "location"])
+        self.assertEqual(summary["location_hierarchy"]["osm_edges"], 2)
+
+    @patch.object(subject, "create_knowledge_schema")
+    @patch.object(subject, "validate_knowledge")
+    @patch.object(subject, "_load_posts")
     def test_consolidates_only_mentions_saved_by_current_batch(
         self,
         load_posts,

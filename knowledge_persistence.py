@@ -4,6 +4,7 @@ from knowledge_settings import (
     KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
     KNOWLEDGE_PROMPT_VERSION,
     OLLAMA_LOG_PREVIEW_CHARS,
+    LOCATION_HIERARCHY_MODULE_VERSION,
 )
 from knowledge_extraction import normalize_name, prepare_entity
 from knowledge_validation import build_anonymous_participant_key
@@ -661,6 +662,20 @@ def save_knowledge_tx(
         classifier_decision=classifier_decision,
         classifier_prompt_version=KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
     ).consume()
+    if classifier_decision == "DEEP" and any(
+        entity.get("type") == "LOCATION" for entity in knowledge["entities"]
+    ):
+        tx.run(
+            """
+            MATCH (p:Post {platform: $platform, platform_id: $post_id})
+            SET p.location_hierarchy_status = 'PENDING',
+                p.location_hierarchy_version = $location_version,
+                p.location_hierarchy_error = null
+            """,
+            platform=platform,
+            post_id=post_id,
+            location_version=LOCATION_HIERARCHY_MODULE_VERSION,
+        ).consume()
     return {
         "entities": len(entity_lookup),
         "events": len(knowledge["events"]),
@@ -724,6 +739,14 @@ def create_knowledge_schema(session) -> None:
     session.run("""
         CREATE INDEX event_mention_consolidation_status IF NOT EXISTS
         FOR (mention:EventMention) ON (mention.consolidation_status)
+    """).consume()
+    session.run("""
+        CREATE INDEX entity_osm_identity IF NOT EXISTS
+        FOR (entity:Entity) ON (entity.osm_type, entity.osm_id)
+        """).consume()
+    session.run("""
+        CREATE INDEX post_location_hierarchy_status IF NOT EXISTS
+        FOR (post:Post) ON (post.location_hierarchy_status)
         """).consume()
     session.run("""
         CREATE CONSTRAINT event_match_decision_key_unique IF NOT EXISTS

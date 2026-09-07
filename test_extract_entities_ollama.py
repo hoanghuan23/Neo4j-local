@@ -1223,13 +1223,15 @@ class PersistenceTests(unittest.TestCase):
 
         subject.create_knowledge_schema(session)
 
-        self.assertEqual(session.run.call_count, 7)
+        self.assertEqual(session.run.call_count, 9)
         queries = "\n".join(call.args[0] for call in session.run.call_args_list)
         self.assertIn("entity_identity_unique", queries)
         self.assertIn("event_key_unique", queries)
         self.assertIn("anonymous_participant_key_unique", queries)
         self.assertIn("event_mention_key_unique", queries)
         self.assertIn("event_mention_consolidation_status", queries)
+        self.assertIn("entity_osm_identity", queries)
+        self.assertIn("post_location_hierarchy_status", queries)
         self.assertIn("event_match_decision_key_unique", queries)
 
     def test_save_entities_uses_canonical_key_and_alias(self):
