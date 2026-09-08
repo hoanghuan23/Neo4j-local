@@ -55,17 +55,13 @@ def make_search_name(value: str) -> str:
 
 
 def location_identity_names(value: str) -> list[str]:
-    """Resolve optional ward prefixes without conflating administrative levels."""
+    """Keep the supplied spelling and normalize an explicit ward abbreviation."""
     name = normalize_name(value)
-    bare = name
-    for prefix in ("phường ", "p. ", "p."):
+    for prefix in ("p. ", "p."):
         if name.startswith(prefix) and name[len(prefix):].strip():
             bare = name[len(prefix):].strip()
-            break
-    # A bare name alone does not prove that this location is a ward.
-    if bare == name:
-        return [name]
-    return list(dict.fromkeys((bare, name, f"phường {bare}", f"p. {bare}", f"p.{bare}")))
+            return [f"phường {bare}", name]
+    return [name]
 
 
 def normalize_null(value):
