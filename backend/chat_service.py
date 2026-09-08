@@ -9,8 +9,10 @@ from backend.models import (
     EventSearchCursor,
     EventResult,
     ParsedQuestion,
+    RelatedSearchRequest,
+    RelatedEventSearchCursor,
 )
-from backend.pagination import decode_event_cursor, encode_event_cursor
+from backend.pagination import decode_event_cursor, decode_related_cursor, encode_event_cursor
 
 
 _DETAIL_COMMAND_RE = re.compile(
@@ -40,6 +42,12 @@ class EventRepository(Protocol):
         hours: int,
         posted_date: date | None,
         limit: int,
+        after: tuple[int, str, str] | None = None,
+    ) -> list[dict]: ...
+
+    def search_related_events(
+        self, *, location: str, entity: str | None, hours: int,
+        posted_date: date | None, limit: int,
         after: tuple[int, str, str] | None = None,
     ) -> list[dict]: ...
 
@@ -129,6 +137,23 @@ class ChatService:
             start_index=1,
         )
 
+    def search_related(self, payload: RelatedSearchRequest) -> ChatResponse:
+        start_index = 1
+        after = None
+        if payload.cursor is not None:
+            try:
+                decoded = decode_related_cursor(payload.cursor)
+            except ValueError as exc:
+                raise InvalidChatCommand(str(exc)) from exc
+            if decoded.query != payload.query:
+                raise InvalidChatCommand("Cursor không khớp truy vấn")
+            start_index = decoded.returned + 1
+            after = decoded.sort_key
+        return self._search_events(
+            message="", parsed=payload.query, limit=payload.limit,
+            start_index=start_index, after=after, related=True,
+        )
+
     def _continue_search(
         self,
         message: str,
@@ -157,8 +182,11 @@ class ChatService:
         start_index: int,
         after: tuple[int, str, str] | None = None,
         continuation: bool = False,
+        related: bool = False,
     ) -> ChatResponse:
-        raw_results = self.repository.search_events(
+        search = (self.repository.search_related_events if related
+                  else self.repository.search_events)
+        raw_results = search(
             location=parsed.location,
             entity=parsed.entity,
             hours=parsed.hours,
@@ -170,21 +198,22 @@ class ChatService:
         page_rows = raw_results[:limit]
         results = [EventResult.model_validate(item) for item in page_rows]
         answer_generator = (
-            TemplateAnswerGenerator() if continuation else self.answer_generator
+            TemplateAnswerGenerator() if continuation or related else self.answer_generator
         )
         answer_kwargs = {
             "question": message,
             "parsed": parsed,
             "events": results,
         }
-        if continuation:
+        if continuation or related:
             answer_kwargs["start_index"] = start_index
 
         next_cursor = None
         if has_more and page_rows:
             last = page_rows[-1]
             next_cursor = encode_event_cursor(
-                EventSearchCursor(
+                (RelatedEventSearchCursor if related else EventSearchCursor)(
+                    **({"scope": "related_locations"} if related else {}),
                     query=parsed,
                     returned=start_index - 1 + len(page_rows),
                     matched_entity_count=last.get("matched_entity_count", 0),
@@ -192,8 +221,16 @@ class ChatService:
                     event_key=last["event_key"],
                 )
             )
+        answer = answer_generator.generate(**answer_kwargs)
+        if related:
+            heading = (
+                f"Tìm thấy {len(results)} sự kiện tại các địa điểm thuộc {parsed.location}:"
+                if results else
+                f"Không tìm thấy sự kiện bổ sung tại các địa điểm thuộc {parsed.location}."
+            )
+            answer = "\n".join([heading, *answer.splitlines()[1:]])
         return ChatResponse(
-            answer=answer_generator.generate(**answer_kwargs),
+            answer=answer,
             query=parsed,
             count=len(results),
             results=results,

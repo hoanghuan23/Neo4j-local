@@ -17,7 +17,7 @@ from backend.gemini_services import (
     GeminiAnswerGenerator,
     GeminiQuestionParser,
 )
-from backend.models import ChatRequest, ChatResponse, HealthResponse
+from backend.models import ChatRequest, ChatResponse, HealthResponse, RelatedSearchRequest
 from backend.neo4j_repository import Neo4jRepository
 from backend.question_parser import RuleBasedQuestionParser
 
@@ -150,6 +150,18 @@ def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
             payload.limit,
             payload.cursor,
         )
+
+    @app.post("/api/search/related", response_model=ChatResponse)
+    def search_related(payload: RelatedSearchRequest, request: Request) -> ChatResponse:
+        try:
+            return request.app.state.chat_service.search_related(payload)
+        except InvalidChatCommand as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Neo4jError as exc:
+            LOGGER.exception("Neo4j related search failed")
+            raise HTTPException(
+                status_code=503, detail="Không thể truy vấn Neo4j lúc này",
+            ) from exc
 
     @app.get("/api/search", response_model=ChatResponse)
     def search(

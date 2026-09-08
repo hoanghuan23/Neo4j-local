@@ -220,6 +220,31 @@ RETURN event.event_key AS event_key,
 """
 
 
+# Preserve the existing time/entity predicates and result projection.
+def _related_location_query(query: str) -> str:
+    def descendant_match(collection: str) -> str:
+        return f"""any(related_entity IN {collection} WHERE
+          related_entity.type = 'LOCATION' AND EXISTS {{
+            MATCH path = (related_entity)-[:PART_OF*1..]->(parent:Entity)
+            WHERE all(node IN nodes(path) WHERE node:Entity AND node.type = 'LOCATION')
+              AND related_entity <> parent
+              AND (coalesce(parent.normalized_name, toLower(parent.name), '') = $location_key
+                OR $location_key IN coalesce(parent.aliases, [])
+                OR coalesce(parent.search_name, '') = $location_search_key)
+          }}
+        )"""
+    predicate = ("(" + descendant_match("event_entities")
+                 + " OR (sibling_event_count = 1 AND "
+                 + descendant_match("post_entities") + "))")
+    start = query.index("(\n       $location_key IS NULL")
+    end = query.index(" AS location_matches", start)
+    return query[:start] + predicate + query[end:]
+
+
+SEARCH_RELATED_EVENTS_QUERY = _related_location_query(SEARCH_EVENTS_QUERY)
+SEARCH_RELATED_LEGACY_EVENTS_QUERY = _related_location_query(SEARCH_LEGACY_EVENTS_QUERY)
+
+
 SEARCH_RELATED_ENTITIES_QUERY = """
 MATCH (post:Post)-[:MENTIONS]->(subject:Entity)
 WHERE coalesce(subject.normalized_name, toLower(subject.name), '')
@@ -361,6 +386,16 @@ class Neo4jRepository:
         except Exception:
             return False
 
+    def search_related_events(
+        self, *, location: str, entity: str | None, hours: int,
+        limit: int, posted_date: date | None = None,
+        after: tuple[int, str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.search_events(
+            location=location, entity=entity, hours=hours, limit=limit,
+            posted_date=posted_date, after=after, _related=True,
+        )
+
     def search_events(
         self,
         *,
@@ -370,6 +405,7 @@ class Neo4jRepository:
         limit: int,
         posted_date: date | None = None,
         after: tuple[int, str, str] | None = None,
+        _related: bool = False,
     ) -> list[dict[str, Any]]:
         if self.driver is None:
             raise RuntimeError("Neo4j chưa được kết nối")
@@ -392,6 +428,25 @@ class Neo4jRepository:
             legacy_results = session.run(
                 SEARCH_LEGACY_EVENTS_QUERY, **parameters
             ).data()
+            if _related:
+                # Exclude the complete direct set across both schemas/posts.
+                direct_rows = current_results + legacy_results
+                if posted_date is not None:
+                    direct_rows = [row for row in direct_rows if _post_matches_date(
+                        row["post"], posted_date,
+                        self.settings.posted_at_utc_offset_hours,
+                    )]
+                direct_keys = {row["event_key"] for row in direct_rows}
+                current_results = session.run(
+                    SEARCH_RELATED_EVENTS_QUERY, **parameters
+                ).data()
+                legacy_results = session.run(
+                    SEARCH_RELATED_LEGACY_EVENTS_QUERY, **parameters
+                ).data()
+                current_results = [row for row in current_results
+                                   if row["event_key"] not in direct_keys]
+                legacy_results = [row for row in legacy_results
+                                  if row["event_key"] not in direct_keys]
 
         results_by_event_key: dict[str, dict[str, Any]] = {}
         posts_by_event_key: dict[

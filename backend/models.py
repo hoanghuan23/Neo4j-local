@@ -37,6 +37,28 @@ class EventSearchCursor(BaseModel):
         )
 
 
+class RelatedSearchQuery(ParsedQuestion):
+    location: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_location(self) -> "RelatedSearchQuery":
+        self.location = self.location.strip()
+        if not self.location:
+            raise ValueError("Thiếu địa điểm để tìm sự kiện liên quan")
+        return self
+
+
+class RelatedSearchRequest(BaseModel):
+    query: RelatedSearchQuery
+    limit: int = Field(default=10, ge=1, le=50)
+    cursor: str | None = Field(default=None, max_length=4_096)
+
+
+class RelatedEventSearchCursor(EventSearchCursor):
+    scope: Literal["related_locations"]
+    query: RelatedSearchQuery
+
+
 class DetailQuery(BaseModel):
     intent: Literal["detail"] = "detail"
     subject: str = Field(min_length=1)

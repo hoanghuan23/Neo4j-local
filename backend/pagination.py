@@ -3,7 +3,7 @@ import binascii
 
 from pydantic import ValidationError
 
-from backend.models import EventSearchCursor
+from backend.models import EventSearchCursor, RelatedEventSearchCursor
 
 
 MAX_CURSOR_LENGTH = 4_096
@@ -15,6 +15,14 @@ def encode_event_cursor(cursor: EventSearchCursor) -> str:
 
 
 def decode_event_cursor(value: str) -> EventSearchCursor:
+    return _decode_cursor(value, EventSearchCursor)
+
+
+def decode_related_cursor(value: str) -> RelatedEventSearchCursor:
+    return _decode_cursor(value, RelatedEventSearchCursor)
+
+
+def _decode_cursor(value: str, model):
     if not value or len(value) > MAX_CURSOR_LENGTH:
         raise ValueError("Cursor không hợp lệ")
 
@@ -26,6 +34,6 @@ def decode_event_cursor(value: str) -> EventSearchCursor:
             altchars=b"-_",
             validate=True,
         )
-        return EventSearchCursor.model_validate_json(payload)
+        return model.model_validate_json(payload)
     except (UnicodeEncodeError, binascii.Error, ValidationError, ValueError):
         raise ValueError("Cursor không hợp lệ") from None

@@ -325,3 +325,91 @@ def test_location_filter_is_event_scoped_for_current_and_legacy_schemas():
                 marker=marker,
             ).consume()
         driver.close()
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_related_location_descendants_and_exclusion(legacy):
+    settings = Settings()
+    marker = f'codex-related-{uuid4().hex}'
+    driver = GraphDatabase.driver(
+        settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password),
+    )
+    try:
+        with driver.session(database=settings.neo4j_database) as session:
+            session.run('''
+                CREATE (parent:Entity {test_marker: $marker, type: 'LOCATION',
+                    normalized_name: $marker, aliases: [$marker + '-alias'],
+                    search_name: $marker})
+                CREATE (child:Entity {test_marker: $marker, type: 'LOCATION', name: 'Quận'})
+                CREATE (leaf:Entity {test_marker: $marker, type: 'LOCATION', name: 'Phường'})
+                CREATE (wrong:Entity {test_marker: $marker, type: 'PERSON'})
+                CREATE (outside:Entity {test_marker: $marker, type: 'LOCATION', name: 'Ngoài'})
+                CREATE (child)-[:PART_OF]->(parent)
+                CREATE (leaf)-[:PART_OF]->(child)
+                CREATE (outside)-[:PART_OF]->(wrong)-[:PART_OF]->(parent)
+            ''', marker=marker).consume()
+            rows = [
+                ('child', 'Quận', 'participant', False, 1),
+                ('leaf', 'Phường', 'participant', False, 1),
+                ('post', 'Phường', 'post', False, 1),
+                ('multi', 'Phường', 'post', True, 1),
+                ('outside', 'Ngoài', 'participant', False, 1),
+                ('old', 'Phường', 'participant', False, 72),
+                ('direct', 'Phường', 'participant', False, 1),
+                ('description', 'Phường', 'participant', False, 1),
+                ('shared', 'Phường', 'participant', False, 1),
+            ]
+            for suffix, place, binding, multi, age in rows:
+                relation = ('CREATE (post)-[:DESCRIBES]->(event) WITH post, event, event AS mention, location'
+                            if legacy else '''CREATE (mention:EventMention {test_marker: $marker,
+                                mention_key: $marker + $suffix})
+                                CREATE (post)-[:HAS_EVENT_MENTION]->(mention)
+                                CREATE (mention)-[:EVIDENCE_FOR]->(event)
+                                WITH post, event, mention, location''')
+                session.run('''
+                    MATCH (location:Entity {test_marker: $marker, name: $place})
+                    CREATE (post:Post {test_marker: $marker, platform: 'codex-test',
+                        platform_id: $marker + $suffix,
+                        content: CASE WHEN $suffix = 'direct' THEN $marker ELSE 'Bài thử' END,
+                        posted_at: localdatetime() - duration({hours: $age})})
+                    CREATE (event:Event {test_marker: $marker, event_key: $marker + $suffix,
+                        description: CASE WHEN $suffix = 'description' THEN $marker ELSE 'Sự kiện' END})
+                ''' + relation + ('''
+                    CREATE (post)-[:MENTIONS]->(location)
+                ''' if binding == 'post' else '''
+                    CREATE (mention)-[:HAS_PARTICIPANT]->(location)
+                ''') + ('''
+                    CREATE (extra:Event {test_marker: $marker, event_key: $marker + '-extra'})
+                    CREATE (post)-[:DESCRIBES]->(extra)
+                ''' if multi and legacy else '''
+                    CREATE (extra:EventMention {test_marker: $marker, mention_key: $marker + '-extra'})
+                    CREATE (post)-[:HAS_EVENT_MENTION]->(extra)
+                ''' if multi else ''), marker=marker, suffix=suffix, place=place, age=age).consume()
+            # A separate direct post in the other schema excludes the shared event.
+            session.run('''
+                MATCH (event:Event {event_key: $marker + 'shared'})
+                CREATE (post:Post {test_marker: $marker, platform: 'codex-test',
+                    platform_id: $marker + '-direct-copy', content: $marker,
+                    posted_at: localdatetime()})
+                CREATE (post)-[:DESCRIBES]->(event)
+            ''', marker=marker).consume()
+        repository = Neo4jRepository(settings)
+        repository.driver = driver
+        args = dict(location=marker, entity=None, hours=48, limit=20)
+        results = repository.search_related_events(**args)
+        assert {r['event_key'] for r in results} == {
+            marker + suffix for suffix in ('child', 'leaf', 'post')
+        }
+        page = repository.search_related_events(**{**args, 'limit': 1})
+        last = page[-1]
+        rest = repository.search_related_events(**args, after=(
+            last['matched_entity_count'], last['post']['posted_at'], last['event_key'],
+        ))
+        assert [r['event_key'] for r in page + rest] == [r['event_key'] for r in results]
+        assert repository.search_related_events(**{**args, 'location': marker + '-missing'}) == []
+        assert repository.search_related_events(**{**args, 'location': marker[:-1]}) == []
+        assert repository.search_related_events(**{**args, 'entity': 'nonexistent-person'}) == []
+    finally:
+        with driver.session(database=settings.neo4j_database) as session:
+            session.run('MATCH (n {test_marker: $marker}) DETACH DELETE n', marker=marker).consume()
+        driver.close()
