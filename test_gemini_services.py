@@ -286,7 +286,7 @@ def test_gemini_question_parser_uses_default_sort_for_latest_events_query():
     assert parsed.hours == 168
 
 
-def test_parsed_question_schema_uses_original_search_fields():
+def test_parsed_question_schema_includes_optional_clarification():
     schema = ParsedQuestion.model_json_schema()
 
     assert schema["required"] == ["hours"]
@@ -296,6 +296,7 @@ def test_parsed_question_schema_uses_original_search_fields():
         "entity",
         "hours",
         "posted_date",
+        "clarification_question",
     }
 
 

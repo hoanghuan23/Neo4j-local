@@ -184,6 +184,8 @@ class ChatService:
         continuation: bool = False,
         related: bool = False,
     ) -> ChatResponse:
+        if parsed.clarification_question:
+            return ChatResponse(answer=parsed.clarification_question, query=parsed, count=0)
         search = (self.repository.search_related_events if related
                   else self.repository.search_events)
         raw_results = search(

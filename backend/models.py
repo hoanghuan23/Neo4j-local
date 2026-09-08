@@ -16,6 +16,7 @@ class ParsedQuestion(BaseModel):
     entity: str | None = None
     hours: int = Field(ge=1, le=720)
     posted_date: date | None = None
+    clarification_question: str | None = None
 
 
 class EventSearchCursor(BaseModel):

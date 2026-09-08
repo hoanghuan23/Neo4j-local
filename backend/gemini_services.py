@@ -169,6 +169,16 @@ class GeminiQuestionParser:
                 "- Nếu không có ngày lịch chính xác, trả null.\n\n"
 
                 "5. Intent luôn là 'search_events'.\n\n"
+                "6. Phân biệt tên tổ chức với nơi xảy ra sự kiện:\n"
+                "- 'sự kiện của Công an thành phố Hồ Chí Minh': entity='Công an thành phố Hồ Chí Minh', location=null.\n"
+                "- 'sự kiện về công an tại TP.HCM': entity='công an', location='Hồ Chí Minh'.\n"
+                "- 'sự kiện tại TP.HCM': entity=null, location='Hồ Chí Minh'.\n"
+                "- Không tách địa danh trong tên tổ chức thành điều kiện nơi xảy ra sự kiện.\n"
+                "7. clarification_question: mặc định null. Nếu câu thiếu từ hoặc có nhiều "
+                "cách hiểu làm thay đổi chủ thể/phạm vi, trả một câu hỏi làm rõ ngắn bằng "
+                "tiếng Việt. Không tự sửa từ hoặc âm thầm bỏ chủ thể. Ví dụ 'sự kiện công "
+                "thành phố Hồ Chí Minh' cần hỏi rõ 'công' là tổ chức hay chủ đề nào. "
+                "Chủ đề rộng nhưng rõ nghĩa như 'giao thông' không cần hỏi lại.\n\n"
                 f"Câu hỏi: {question}"
             ),
             config=self.types.GenerateContentConfig(
