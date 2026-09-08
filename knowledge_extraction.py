@@ -54,6 +54,20 @@ def make_search_name(value: str) -> str:
     return without_accents.replace("đ", "d")
 
 
+def location_identity_names(value: str) -> list[str]:
+    """Resolve optional ward prefixes without conflating administrative levels."""
+    name = normalize_name(value)
+    bare = name
+    for prefix in ("phường ", "p. ", "p."):
+        if name.startswith(prefix) and name[len(prefix):].strip():
+            bare = name[len(prefix):].strip()
+            break
+    # A bare name alone does not prove that this location is a ward.
+    if bare == name:
+        return [name]
+    return list(dict.fromkeys((bare, name, f"phường {bare}", f"p. {bare}", f"p.{bare}")))
+
+
 def normalize_null(value):
     if isinstance(value, str):
         stripped = value.strip()
@@ -615,6 +629,15 @@ def extract_knowledge(content: str, call_model=None) -> dict:
 
     Quy tắc Entity lồng nhau / substring:
 
+    - Địa chỉ có nhiều thành phần địa lý được nêu trực tiếp là ngoại lệ:
+      giữ địa điểm cụ thể và địa danh cha thành các LOCATION riêng, không gộp rồi bỏ mất địa danh cha.
+      Ví dụ "tại số 96 phố Cầu Đất - Hải Phòng" -> LOCATION "96 phố Cầu Đất"
+      và LOCATION "Hải Phòng"; "ấp Bùi Chu (xã Bình Minh)" -> hai LOCATION riêng.
+      "Thành Đô, Tứ Xuyên" -> LOCATION "Thành Đô" và LOCATION "Tứ Xuyên".
+      Chỉ tách khi văn bản thực sự nêu các thành phần địa chỉ; không suy ra tỉnh/thành từ kiến thức nền.
+      Không áp dụng ngoại lệ này cho tên tổ chức như "Đại học Quốc gia Hà Nội"
+      hoặc nguồn credit như "Clip: Hải Phòng" nếu không có lần nhắc địa lý trong nội dung.
+
     - Không tạo một Entity riêng chỉ vì tên của nó xuất hiện như một phần bên trong tên của Entity cụ thể hơn.
     Ví dụ:
     "Đội tuyển Việt Nam giành chiến thắng"
@@ -920,6 +943,13 @@ def prepare_entity(entity: dict) -> dict | None:
             if (candidate := normalize_name(value))
         )
     )
+
+    if entity_type == "LOCATION":
+        normalized_name = location_identity_names(display_name)[0]
+        identity_names = list(dict.fromkeys(
+            variant for value in identity_names
+            for variant in location_identity_names(value)
+        ))
 
     return {
         "name": name,
