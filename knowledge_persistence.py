@@ -1,3 +1,5 @@
+import json
+
 from knowledge_settings import (
     EVENT_RELATION_TYPES,
     GEMINI_MODEL,
@@ -102,10 +104,13 @@ RETURN e.normalized_name AS normalized_name, e.type AS entity_type
 """
 
 
-def _merge_entity(tx, platform: str, post_id: str, entity: dict) -> dict | None:
+def _merge_entity(tx, platform: str, post_id: str, entity: dict, entities=(), context=()) -> dict | None:
     prepared = prepare_entity(entity)
     if prepared is None:
         return None
+    if prepared["entity_type"] == "ORGANIZATION":
+        from knowledge_relations.organization_hierarchy import resolve_entity
+        return resolve_entity(tx, platform, post_id, entity, prepared, entities, context)
     result = tx.run(
         ENTITY_MERGE_QUERY,
         platform=platform,
@@ -147,10 +152,10 @@ def save_entities(session, platform: str, post_id: str, entities: list[dict]) ->
     return saved_count
 
 
-def upsert_entities(tx, platform: str, post_id: str, entities: list[dict]) -> dict:
+def upsert_entities(tx, platform: str, post_id: str, entities: list[dict], context=()) -> dict:
     entity_lookup = {}
     for entity in entities:
-        prepared = _merge_entity(tx, platform, post_id, entity)
+        prepared = _merge_entity(tx, platform, post_id, entity, entities, context)
         if prepared is not None:
             entity_lookup[entity["local_id"]] = prepared
     return entity_lookup
@@ -378,16 +383,17 @@ def upsert_events(
                 tx.run(
                     """
                     MATCH (mention:EventMention {mention_key: $mention_key})
-                    MATCH (entity:Entity {
-                        normalized_name: $normalized_name,
-                        type: $entity_type
-                    })
+                    MATCH (entity:Entity)
+                    WHERE ($node_id IS NOT NULL AND elementId(entity) = $node_id)
+                       OR ($node_id IS NULL AND entity.normalized_name = $normalized_name
+                           AND entity.type = $entity_type)
                     MERGE (mention)-[relation:HAS_PARTICIPANT {
                         role: $role
                     }]->(entity)
                     SET relation.confidence = $confidence
                     """,
                     mention_key=mention_key,
+                    node_id=entity.get("node_id"),
                     normalized_name=entity["normalized_name"],
                     entity_type=entity["entity_type"],
                     role=participant["role"],
@@ -642,7 +648,15 @@ def save_knowledge_tx(
             generic_entity_keys=generic_entity_keys,
         ).consume()
 
-    entity_lookup = upsert_entities(tx, platform, post_id, knowledge["entities"])
+    if any(e.get("type") == "ORGANIZATION" for e in knowledge["entities"]):
+        from knowledge_relations.organization_hierarchy import VERSION
+        tx.run("""MATCH (p:Post {platform:$platform, platform_id:$post_id})
+            SET p.organization_resolution_reviews=[], p.organization_hierarchy_status='PENDING',
+                p.organization_hierarchy_version=$version,
+                p.organization_hierarchy_input=$snapshot""",
+            platform=platform, post_id=post_id, version=VERSION,
+            snapshot=json.dumps(knowledge, ensure_ascii=False)).consume()
+    entity_lookup = upsert_entities(tx, platform, post_id, knowledge["entities"], knowledge.get("organization_context", []))
     upsert_events(tx, platform, post_id, knowledge["events"], entity_lookup)
     upsert_event_relations(tx, knowledge["events"], knowledge["event_relations"])
     tx.run(

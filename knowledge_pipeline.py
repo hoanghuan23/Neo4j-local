@@ -14,6 +14,7 @@ from knowledge_extraction import classify_knowledge_potential, extract_knowledge
 from knowledge_relation_router import classify_relation_routes
 from knowledge_relations.participant_role import enrich_participant_roles
 from knowledge_relations.location_hierarchy import enrich_location_hierarchy
+from knowledge_relations.organization_hierarchy import extract_context, enrich_organization_hierarchy
 from knowledge_persistence import (
     create_entity_schema,
     create_knowledge_schema,
@@ -140,6 +141,8 @@ def process_new_posts(
     enrich_participants_fn=enrich_participant_roles,
     enrich_locations_fn=enrich_location_hierarchy,
     consolidate_fn=None,
+    enrich_organizations_fn=enrich_organization_hierarchy,
+    organization_context_fn=extract_context,
 ) -> dict:
     if KNOWLEDGE_PIPELINE_ENABLED:
         create_knowledge_schema(session)
@@ -200,6 +203,8 @@ def process_new_posts(
                 relation_router_summary=summary["relation_router"],
                 enrich_locations_fn=enrich_locations_fn,
                 location_summary=summary["location_hierarchy"],
+                enrich_organizations_fn=enrich_organizations_fn,
+                organization_context_fn=organization_context_fn,
             )
             summary[outcome] += 1
 
@@ -252,6 +257,8 @@ def _save_extracted_post(
     relation_router_summary: dict | None = None,
     enrich_locations_fn=enrich_location_hierarchy,
     location_summary: dict | None = None,
+    enrich_organizations_fn=enrich_organization_hierarchy,
+    organization_context_fn=extract_context,
 ) -> str:
     """Persist one validated extraction on the main thread."""
     platform = post["platform"]
@@ -276,6 +283,11 @@ def _save_extracted_post(
 
         print(json.dumps(knowledge, ensure_ascii=False, indent=2))
         print(json.dumps(relation_routes, ensure_ascii=False, indent=2))
+        if classifier_decision == "DEEP" and any(e.get("type") == "ORGANIZATION" for e in knowledge["entities"]):
+            try:
+                knowledge["organization_context"] = organization_context_fn(content, knowledge)
+            except Exception:
+                LOGGER.exception("Organization context unavailable; retry after base persistence")
         counts = session.execute_write(
             save_knowledge_tx,
             platform,
@@ -304,6 +316,11 @@ def _save_extracted_post(
             if location_summary is not None:
                 for key, value in hierarchy.items():
                     location_summary[key] = location_summary.get(key, 0) + value
+        if classifier_decision == "DEEP" and any(e.get("type") == "ORGANIZATION" for e in knowledge["entities"]):
+            try:
+                enrich_organizations_fn(session, platform, post_id, content, knowledge)
+            except Exception:
+                LOGGER.exception("ORGANIZATION hierarchy failed after base persistence for %s", post_id)
         if mention_keys_out is not None:
             mention_keys_out.extend(
                 event.get("mention_key", event["event_key"])

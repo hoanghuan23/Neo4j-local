@@ -32,6 +32,10 @@ from knowledge_pipeline import process_new_posts as _process_new_posts
 from knowledge_relation_router import classify_relation_routes
 from knowledge_relations.participant_role import enrich_participant_roles
 from knowledge_relations.location_hierarchy import enrich_location_hierarchy
+from knowledge_relations.organization_hierarchy import (
+    extract_context,
+    enrich_organization_hierarchy,
+)
 from knowledge_consolidation import consolidate_pending_mentions
 from knowledge_settings import *
 from knowledge_validation import (
@@ -117,6 +121,15 @@ def process_new_posts(session, call_model=None) -> dict:
         ),
         enrich_locations_fn=lambda session, platform, post_id, content, knowledge: (
             enrich_location_hierarchy(
+                session, platform, post_id, content, knowledge,
+                call_model=call_model,
+            )
+        ),
+        organization_context_fn=lambda content, knowledge: extract_context(
+            content, knowledge, call_model=call_model,
+        ),
+        enrich_organizations_fn=lambda session, platform, post_id, content, knowledge: (
+            enrich_organization_hierarchy(
                 session, platform, post_id, content, knowledge,
                 call_model=call_model,
             )
