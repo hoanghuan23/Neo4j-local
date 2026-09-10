@@ -16,14 +16,18 @@ MATCH (p:Post {
     platform_id: $post_id
 })
 
-// Prefer the canonical key, but also resolve an incoming spelling through an
-// already-known alias. The toLower/trim fallback supports aliases written by
-// older versions before aliases were normalized on write.
+// LOCATION imports may store an accent-free normalized_name and no aliases.
+// Resolve those through the display name or the incoming accent-free key.
 OPTIONAL MATCH (candidate:Entity {type: $entity_type})
 WHERE candidate.normalized_name IN $identity_names
    OR any(alias IN coalesce(candidate.aliases, [])
           WHERE alias IN $identity_names
              OR toLower(trim(alias)) IN $identity_names)
+   OR ($entity_type = 'LOCATION' AND (
+       toLower(trim(candidate.name)) IN $identity_names
+       OR candidate.normalized_name = $search_name
+       OR candidate.search_name = $search_name
+   ))
 WITH p, candidate,
      CASE
          WHEN candidate.normalized_name = $normalized_name THEN 0
@@ -31,7 +35,19 @@ WITH p, candidate,
          ELSE 2
      END AS match_priority
 ORDER BY match_priority
-WITH p, head(collect(candidate)) AS existing
+WITH p, collect(candidate) AS candidates
+WITH p, candidates,
+     [candidate IN candidates WHERE candidate.level IS NOT NULL] AS administrative
+// Ambiguous locations need context; do not create or link an arbitrary node.
+WHERE $entity_type <> 'LOCATION'
+   OR size(candidates) <= 1
+   OR size(administrative) = 1
+WITH p, CASE
+    WHEN $entity_type <> 'LOCATION' THEN head(candidates)
+    WHEN size(administrative) = 1 THEN administrative[0]
+    WHEN size(candidates) = 1 THEN candidates[0]
+    ELSE null
+END AS existing
 
 CALL (p, existing) {
     WITH p, existing
@@ -97,6 +113,8 @@ def _merge_entity(tx, platform: str, post_id: str, entity: dict) -> dict | None:
         **prepared,
     )
     record = result.single()
+    if record is None:
+        return None
     if record is not None:
         resolved_name = record.get("normalized_name")
         resolved_type = record.get("entity_type")
@@ -708,10 +726,19 @@ def mark_knowledge_failure(tx, platform: str, post_id: str, error: str) -> None:
 
 
 def create_entity_schema(session) -> None:
+    # session.run("""
+    #     CREATE CONSTRAINT entity_identity_unique IF NOT EXISTS
+    #     FOR (e:Entity)
+    #     REQUIRE (e.normalized_name, e.type) IS UNIQUE
+    #     """).consume()
+    # session.run("""
+    #     CREATE TEXT INDEX entity_search_name IF NOT EXISTS
+    #     FOR (e:Entity) ON (e.search_name)
+    #     """).consume()
     session.run("""
         CREATE CONSTRAINT entity_identity_unique IF NOT EXISTS
         FOR (e:Entity)
-        REQUIRE (e.normalized_name, e.type) IS UNIQUE
+        REQUIRE (e.code, e.type) IS UNIQUE
         """).consume()
     session.run("""
         CREATE TEXT INDEX entity_search_name IF NOT EXISTS

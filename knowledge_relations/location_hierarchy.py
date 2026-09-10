@@ -436,8 +436,10 @@ def _persist_edges_tx(tx, edges: list[dict]) -> dict:
             ON CREATE SET relation.created_at = datetime(), relation._location_created = true
             WITH relation, coalesce(relation._location_created, false) AS created,
                  relation.source AS old_source
-            SET relation.source = CASE WHEN old_source = 'CONTENT' OR $source = 'CONTENT'
-                                       THEN 'CONTENT' ELSE 'OPENSTREETMAP' END,
+            SET relation.source = CASE
+                    WHEN old_source = 'ADMIN_DATA' THEN 'ADMIN_DATA'
+                    WHEN old_source = 'CONTENT' OR $source = 'CONTENT' THEN 'CONTENT'
+                    ELSE 'PHOTON' END,
                 relation.evidence_text = CASE WHEN $source = 'CONTENT' THEN $evidence_text ELSE relation.evidence_text END,
                 relation.osm_id = coalesce(relation.osm_id, $osm_id),
                 relation.osm_type = coalesce(relation.osm_type, $osm_type),
@@ -488,7 +490,7 @@ def _upsert_osm_chain_tx(tx, child_node_id: str, hierarchy: dict) -> dict:
             parent_id = record["node_id"]
             counts["parents_created"] += 1
         edge_counts = _persist_edges_tx(tx, [{
-            "source_node_id": current_id, "target_node_id": parent_id, "source": "OPENSTREETMAP",
+            "source_node_id": current_id, "target_node_id": parent_id, "source": "PHOTON",
             "evidence_text": None, "parent_level": parent["level"], "osm_id": hierarchy.get("osm_id"),
             "osm_type": hierarchy.get("osm_type"),
         }])
@@ -531,7 +533,7 @@ def enrich_location_hierarchy(session, platform: str, post_id: str, content: str
     try:
         for location in locations:
             existing = session.run(
-                "MATCH (child:Entity)-[:PART_OF]->(:Entity {type: 'LOCATION'}) "
+                "MATCH (child:Entity)-[:PART_OF]->(parent:Entity {type: 'LOCATION'}) "
                 "WHERE elementId(child) = $node_id RETURN count(*) > 0 AS has_parent",
                 node_id=location["node_id"]).single()
             if existing and existing.get("has_parent"):
