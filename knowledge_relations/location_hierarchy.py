@@ -472,6 +472,13 @@ def _upsert_osm_chain_tx(tx, child_node_id: str, hierarchy: dict) -> dict:
             WHERE candidate.normalized_name = $normalized_name
                OR $normalized_name IN coalesce(candidate.aliases, [])
                OR candidate.search_name IN $search_names
+               OR toLower(trim(candidate.name)) = $normalized_name
+               OR candidate.normalized_name IN $search_names
+            WITH collect(candidate) AS candidates
+            WITH candidates,
+                 [candidate IN candidates WHERE candidate.level IS NOT NULL] AS administrative
+            UNWIND CASE WHEN size(administrative) = 1
+                        THEN administrative ELSE candidates END AS candidate
             RETURN elementId(candidate) AS node_id LIMIT 2
             """, normalized_name=normalized, search_names=search_names))
         if len(records) == 1:

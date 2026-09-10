@@ -222,20 +222,20 @@ RETURN event.event_key AS event_key,
 
 # Preserve the existing time/entity predicates and result projection.
 def _related_location_query(query: str) -> str:
-    def descendant_match(collection: str) -> str:
+    def child_match(collection: str) -> str:
         return f"""any(related_entity IN {collection} WHERE
           related_entity.type = 'LOCATION' AND EXISTS {{
-            MATCH path = (related_entity)-[:PART_OF*1..]->(parent:Entity)
-            WHERE all(node IN nodes(path) WHERE node:Entity AND node.type = 'LOCATION')
+            MATCH (related_entity)-[:PART_OF|IN_REGION]->(parent:Entity)
+            WHERE parent.type = 'LOCATION'
               AND related_entity <> parent
               AND (coalesce(parent.normalized_name, toLower(parent.name), '') = $location_key
                 OR $location_key IN coalesce(parent.aliases, [])
                 OR coalesce(parent.search_name, '') = $location_search_key)
           }}
         )"""
-    predicate = ("(" + descendant_match("event_entities")
+    predicate = ("(" + child_match("event_entities")
                  + " OR (sibling_event_count = 1 AND "
-                 + descendant_match("post_entities") + "))")
+                 + child_match("post_entities") + "))")
     start = query.index("(\n       $location_key IS NULL")
     end = query.index(" AS location_matches", start)
     return query[:start] + predicate + query[end:]

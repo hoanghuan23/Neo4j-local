@@ -328,7 +328,8 @@ def test_location_filter_is_event_scoped_for_current_and_legacy_schemas():
 
 
 @pytest.mark.parametrize('legacy', [False, True])
-def test_related_location_descendants_and_exclusion(legacy):
+@pytest.mark.parametrize('hierarchy_relation', ['PART_OF', 'IN_REGION'])
+def test_related_location_direct_children_and_exclusion(legacy, hierarchy_relation):
     settings = Settings()
     marker = f'codex-related-{uuid4().hex}'
     driver = GraphDatabase.driver(
@@ -344,20 +345,20 @@ def test_related_location_descendants_and_exclusion(legacy):
                 CREATE (leaf:Entity {test_marker: $marker, type: 'LOCATION', name: 'Phường'})
                 CREATE (wrong:Entity {test_marker: $marker, type: 'PERSON'})
                 CREATE (outside:Entity {test_marker: $marker, type: 'LOCATION', name: 'Ngoài'})
-                CREATE (child)-[:PART_OF]->(parent)
+                CREATE (child)-[:HIERARCHY_RELATION]->(parent)
                 CREATE (leaf)-[:PART_OF]->(child)
                 CREATE (outside)-[:PART_OF]->(wrong)-[:PART_OF]->(parent)
-            ''', marker=marker).consume()
+            '''.replace('HIERARCHY_RELATION', hierarchy_relation), marker=marker).consume()
             rows = [
                 ('child', 'Quận', 'participant', False, 1),
                 ('leaf', 'Phường', 'participant', False, 1),
-                ('post', 'Phường', 'post', False, 1),
-                ('multi', 'Phường', 'post', True, 1),
+                ('post', 'Quận', 'post', False, 1),
+                ('multi', 'Quận', 'post', True, 1),
                 ('outside', 'Ngoài', 'participant', False, 1),
-                ('old', 'Phường', 'participant', False, 72),
-                ('direct', 'Phường', 'participant', False, 1),
-                ('description', 'Phường', 'participant', False, 1),
-                ('shared', 'Phường', 'participant', False, 1),
+                ('old', 'Quận', 'participant', False, 72),
+                ('direct', 'Quận', 'participant', False, 1),
+                ('description', 'Quận', 'participant', False, 1),
+                ('shared', 'Quận', 'participant', False, 1),
             ]
             for suffix, place, binding, multi, age in rows:
                 relation = ('CREATE (post)-[:DESCRIBES]->(event) WITH post, event, event AS mention, location'
@@ -398,7 +399,7 @@ def test_related_location_descendants_and_exclusion(legacy):
         args = dict(location=marker, entity=None, hours=48, limit=20)
         results = repository.search_related_events(**args)
         assert {r['event_key'] for r in results} == {
-            marker + suffix for suffix in ('child', 'leaf', 'post')
+            marker + suffix for suffix in ('child', 'post')
         }
         page = repository.search_related_events(**{**args, 'limit': 1})
         last = page[-1]

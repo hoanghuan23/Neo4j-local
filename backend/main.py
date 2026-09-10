@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from neo4j.exceptions import Neo4jError
+from neo4j.exceptions import Neo4jError, ServiceUnavailable
 
 from backend.chat_service import (
     ChatService,
@@ -157,7 +157,7 @@ def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
             return request.app.state.chat_service.search_related(payload)
         except InvalidChatCommand as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except Neo4jError as exc:
+        except (Neo4jError, ServiceUnavailable) as exc:
             LOGGER.exception("Neo4j related search failed")
             raise HTTPException(
                 status_code=503, detail="Không thể truy vấn Neo4j lúc này",
