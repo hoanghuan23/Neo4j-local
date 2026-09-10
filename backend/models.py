@@ -97,7 +97,7 @@ class RelationPost(BaseModel):
 
 
 class RelationReason(BaseModel):
-    kind: Literal["entity_name_match", "text_match", "location_hierarchy"]
+    kind: Literal["entity_name_match", "text_match", "location_hierarchy", "organization_hierarchy"]
     query_field: Literal["location", "entity"]
     query_term: str
     via_entity: RelationEntity | None = None
@@ -107,7 +107,7 @@ class RelationReason(BaseModel):
     ]
     excerpt: str | None = None
     post: RelationPost
-    relationship: Literal["PART_OF", "IN_REGION"] | None = None
+    relationship: Literal["PART_OF", "IN_REGION", "SUBORDINATE_TO"] | None = None
     label: str
 
 

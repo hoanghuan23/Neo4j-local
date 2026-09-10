@@ -333,8 +333,11 @@ def test_location_filter_is_event_scoped_for_current_and_legacy_schemas():
 
 
 @pytest.mark.parametrize('legacy', [False, True])
-@pytest.mark.parametrize('hierarchy_relation', ['PART_OF', 'IN_REGION'])
-def test_related_location_direct_children_and_exclusion(legacy, hierarchy_relation):
+@pytest.mark.parametrize('hierarchy_relation', ['PART_OF', 'IN_REGION', 'SUBORDINATE_TO'])
+def test_related_hierarchy_direct_children_and_exclusion(legacy, hierarchy_relation):
+    organization = hierarchy_relation == 'SUBORDINATE_TO'
+    entity_type = 'ORGANIZATION' if organization else 'LOCATION'
+    reason_kind = 'organization_hierarchy' if organization else 'location_hierarchy'
     settings = Settings()
     marker = f'codex-related-{uuid4().hex}'
     driver = GraphDatabase.driver(
@@ -343,20 +346,26 @@ def test_related_location_direct_children_and_exclusion(legacy, hierarchy_relati
     try:
         with driver.session(database=settings.neo4j_database) as session:
             session.run('''
-                CREATE (parent:Entity {test_marker: $marker, type: 'LOCATION',
+                CREATE (parent:Entity {test_marker: $marker, type: $entity_type,
                     normalized_name: $marker, aliases: [$marker + '-alias'],
                     search_name: $marker})
-                CREATE (child:Entity {test_marker: $marker, type: 'LOCATION', name: 'Quận'})
-                CREATE (leaf:Entity {test_marker: $marker, type: 'LOCATION', name: 'Phường'})
+                CREATE (child:Entity {test_marker: $marker, type: $entity_type, name: 'Quận'})
+                CREATE (leaf:Entity {test_marker: $marker, type: $entity_type, name: 'Phường'})
                 CREATE (wrong:Entity {test_marker: $marker, type: 'PERSON'})
-                CREATE (outside:Entity {test_marker: $marker, type: 'LOCATION', name: 'Ngoài'})
+                CREATE (outside:Entity {test_marker: $marker, type: $entity_type, name: 'Ngoài'})
                 CREATE (child)-[:HIERARCHY_RELATION]->(parent)
-                CREATE (leaf)-[:PART_OF]->(child)
-                CREATE (outside)-[:PART_OF]->(wrong)-[:PART_OF]->(parent)
-            '''.replace('HIERARCHY_RELATION', hierarchy_relation), marker=marker).consume()
+                CREATE (leaf)-[:HIERARCHY_RELATION]->(child)
+                CREATE (reverse:Entity {test_marker: $marker, type: $entity_type, name: 'Ngược'})
+                CREATE (parent)-[:HIERARCHY_RELATION]->(reverse)
+                CREATE (invalid:Entity {test_marker: $marker, type: 'PERSON', name: 'Sai loại'})
+                CREATE (invalid)-[:HIERARCHY_RELATION]->(parent)
+                CREATE (outside)-[:HIERARCHY_RELATION]->(wrong)-[:HIERARCHY_RELATION]->(parent)
+            '''.replace('HIERARCHY_RELATION', hierarchy_relation), marker=marker, entity_type=entity_type).consume()
             rows = [
                 ('child', 'Quận', 'participant', False, 1),
                 ('leaf', 'Phường', 'participant', False, 1),
+                ('reverse', 'Ngược', 'participant', False, 1),
+                ('invalid', 'Sai loại', 'participant', False, 1),
                 ('post', 'Quận', 'post', False, 1),
                 ('multi', 'Quận', 'post', True, 1),
                 ('outside', 'Ngoài', 'participant', False, 1),
@@ -403,17 +412,23 @@ def test_related_location_direct_children_and_exclusion(legacy, hierarchy_relati
             ''', marker=marker).consume()
         repository = Neo4jRepository(settings)
         repository.driver = driver
-        args = dict(location=marker, entity=None, hours=48, limit=20)
+        args = dict(location=None if organization else marker,
+                    entity=marker if organization else None, hours=48, limit=20)
         results = repository.search_related_events(**args)
         assert {r['event_key'] for r in results} == {
             marker + suffix for suffix in ('child', 'post', 'direct', 'description')
         }
         for result in results:
-            hierarchy = [r for r in result['relation_reasons'] if r['kind'] == 'location_hierarchy']
+            hierarchy = [r for r in result['relation_reasons'] if r['kind'] == reason_kind]
             assert hierarchy
             assert all(r['relationship'] == hierarchy_relation for r in hierarchy)
             assert all(r['via_entity']['name'] == 'Quận' for r in hierarchy)
             assert all(r['label'] == 'Liên quan qua: Quận' for r in hierarchy)
+        if organization:
+            alias_results = repository.search_related_events(**{**args, 'entity': marker + '-alias'})
+            assert marker + 'child' in {r['event_key'] for r in alias_results}
+            assert repository.search_related_events(**{**args, 'entity': None, 'location': marker + '-alias'}) == []
+            assert marker + 'child' not in {r['event_key'] for r in repository.search_events(**args)}
         page = repository.search_related_events(**{**args, 'limit': 1})
         last = page[-1]
         rest = repository.search_related_events(**args, after=(

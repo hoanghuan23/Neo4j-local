@@ -87,12 +87,16 @@ def test_repository_excludes_full_direct_set_before_merging_and_paging():
         assert {'field': 'entity', 'key': 'lan', 'search_key': 'lan'} in call.kwargs['terms']
 
 
-def test_related_accepts_entity_only_and_preserves_reason_metadata():
+@pytest.mark.parametrize('kind, relationship', [
+    ('entity_name_match', None),
+    ('organization_hierarchy', 'SUBORDINATE_TO'),
+])
+def test_related_accepts_entity_only_and_preserves_reason_metadata(kind, relationship):
     event = pagination_event(1)
     reason = {
-        'kind': 'entity_name_match', 'query_field': 'entity', 'query_term': 'hà nội',
+        'kind': kind, 'query_field': 'entity', 'query_term': 'hà nội',
         'via_entity': {'id': 'university', 'name': 'Đại học Y Hà Nội', 'type': 'ORGANIZATION'},
-        'evidence_field': 'entity.name', 'excerpt': None, 'relationship': None,
+        'evidence_field': 'entity.name', 'excerpt': None, 'relationship': relationship,
         'post': {'platform': 'facebook', 'platform_id': 'post-1'},
         'label': 'Liên quan qua: Đại học Y Hà Nội',
     }

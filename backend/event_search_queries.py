@@ -73,6 +73,10 @@ def build_event_query(*, legacy: bool, related: bool) -> str:
         "[{field: 'post.content', value: post.content}] ELSE [] END"
     )
     exact = "any(name IN candidate.names WHERE name.value = term.search_key)"
+    parent_match = (
+        "(parent.relationship <> 'SUBORDINATE_TO' OR term.field = 'entity') AND "
+        "any(name IN parent.names WHERE name.value = term.search_key)"
+    )
     direct = (
         "any(candidate IN candidates WHERE "
         "(term.field <> 'location' OR candidate.entity.type = 'LOCATION') "
@@ -88,8 +92,10 @@ def build_event_query(*, legacy: bool, related: bool) -> str:
             via_entity: candidate.entity, evidence_field: name.field
           }}] +
           [parent IN candidate.parents WHERE
-             any(name IN parent.names WHERE name.value = term.search_key) | {{
-            kind: 'location_hierarchy', query_field: term.field, query_term: term.key,
+             {parent_match} | {{
+            kind: CASE WHEN parent.relationship = 'SUBORDINATE_TO'
+                       THEN 'organization_hierarchy' ELSE 'location_hierarchy' END,
+            query_field: term.field, query_term: term.key,
             via_entity: candidate.entity, evidence_field: 'entity.name',
             relationship: parent.relationship
           }}]) +
@@ -107,7 +113,7 @@ def build_event_query(*, legacy: bool, related: bool) -> str:
             "any(candidate IN candidates WHERE candidate.at_event AND ("
             "any(name IN candidate.names WHERE name.value CONTAINS term.search_key) OR "
             "any(parent IN candidate.parents WHERE "
-            "any(name IN parent.names WHERE name.value = term.search_key)))) OR "
+            f"{parent_match}))) OR "
             "any(evidence IN texts WHERE evidence.field <> 'post.content' AND "
             + _fold('evidence.value') + " CONTAINS term.search_key)"
         )
@@ -142,8 +148,13 @@ CALL {{
   UNWIND event_entities + CASE WHEN sibling_event_count = 1
                               THEN post_entities ELSE [] END AS candidate
   WITH DISTINCT candidate, event_entities
-  OPTIONAL MATCH (candidate)-[hierarchy:PART_OF|IN_REGION]->(parent:Entity)
-  WHERE candidate.type = 'LOCATION' AND parent.type = 'LOCATION' AND candidate <> parent
+  OPTIONAL MATCH (candidate)-[hierarchy:PART_OF|IN_REGION|SUBORDINATE_TO]->(parent:Entity)
+  WHERE candidate <> parent AND (
+    (type(hierarchy) IN ['PART_OF', 'IN_REGION']
+      AND candidate.type = 'LOCATION' AND parent.type = 'LOCATION') OR
+    (type(hierarchy) = 'SUBORDINATE_TO'
+      AND candidate.type = 'ORGANIZATION' AND parent.type = 'ORGANIZATION')
+  )
   WITH candidate, event_entities, collect(CASE WHEN parent IS NULL THEN NULL ELSE {{
        names: {_names('parent')}, relationship: type(hierarchy)
      }} END) AS parents
