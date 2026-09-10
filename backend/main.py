@@ -24,6 +24,12 @@ from backend.question_parser import RuleBasedQuestionParser
 
 LOGGER = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+# Neo4j notifications include the full Cypher query; keep routine chat logs
+# focused on Gemini usage while still reporting operational errors.
+logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("google.genai").setLevel(logging.WARNING)
 
 def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
     settings = settings or Settings()
