@@ -46,7 +46,7 @@ class EventRepository(Protocol):
     ) -> list[dict]: ...
 
     def search_related_events(
-        self, *, location: str, entity: str | None, hours: int,
+        self, *, location: str | None, entity: str | None, hours: int,
         posted_date: date | None, limit: int,
         after: tuple[int, str, str] | None = None,
     ) -> list[dict]: ...
@@ -215,7 +215,7 @@ class ChatService:
             last = page_rows[-1]
             next_cursor = encode_event_cursor(
                 (RelatedEventSearchCursor if related else EventSearchCursor)(
-                    **({"scope": "related_locations"} if related else {}),
+                    **({"scope": "related_events"} if related else {}),
                     query=parsed,
                     returned=start_index - 1 + len(page_rows),
                     matched_entity_count=last.get("matched_entity_count", 0),
@@ -226,9 +226,9 @@ class ChatService:
         answer = answer_generator.generate(**answer_kwargs)
         if related:
             heading = (
-                f"Tìm thấy {len(results)} sự kiện tại các địa điểm thuộc {parsed.location}:"
+                f"Sự kiện liên quan: tìm thấy {len(results)} sự kiện."
                 if results else
-                f"Không tìm thấy sự kiện bổ sung tại các địa điểm thuộc {parsed.location}."
+                "Không tìm thấy sự kiện liên quan bổ sung."
             )
             answer = "\n".join([heading, *answer.splitlines()[1:]])
         return ChatResponse(

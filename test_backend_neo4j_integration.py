@@ -312,12 +312,17 @@ def test_location_filter_is_event_scoped_for_current_and_legacy_schemas():
 
         assert {item["event_key"] for item in results} == {
             f"{marker}-current-event-linked",
-            f"{marker}-current-event-text",
             f"{marker}-current-single-event",
             f"{marker}-legacy-event-linked",
-            f"{marker}-legacy-event-text",
             f"{marker}-legacy-single-event",
         }
+        related = repository.search_related_events(
+            location=marker, entity=None, hours=24, limit=20,
+        )
+        assert {item["event_key"] for item in related} == {
+            f"{marker}-current-event-text", f"{marker}-legacy-event-text",
+        }
+        assert all(item["relation_reasons"] for item in related)
     finally:
         with driver.session(database=settings.neo4j_database) as session:
             session.run(
@@ -389,18 +394,26 @@ def test_related_location_direct_children_and_exclusion(legacy, hierarchy_relati
             # A separate direct post in the other schema excludes the shared event.
             session.run('''
                 MATCH (event:Event {event_key: $marker + 'shared'})
+                MATCH (parent:Entity {test_marker: $marker, normalized_name: $marker})
                 CREATE (post:Post {test_marker: $marker, platform: 'codex-test',
                     platform_id: $marker + '-direct-copy', content: $marker,
                     posted_at: localdatetime()})
                 CREATE (post)-[:DESCRIBES]->(event)
+                CREATE (post)-[:MENTIONS]->(parent)
             ''', marker=marker).consume()
         repository = Neo4jRepository(settings)
         repository.driver = driver
         args = dict(location=marker, entity=None, hours=48, limit=20)
         results = repository.search_related_events(**args)
         assert {r['event_key'] for r in results} == {
-            marker + suffix for suffix in ('child', 'post')
+            marker + suffix for suffix in ('child', 'post', 'direct', 'description')
         }
+        for result in results:
+            hierarchy = [r for r in result['relation_reasons'] if r['kind'] == 'location_hierarchy']
+            assert hierarchy
+            assert all(r['relationship'] == hierarchy_relation for r in hierarchy)
+            assert all(r['via_entity']['name'] == 'Quận' for r in hierarchy)
+            assert all(r['label'] == 'Liên quan qua: Quận' for r in hierarchy)
         page = repository.search_related_events(**{**args, 'limit': 1})
         last = page[-1]
         rest = repository.search_related_events(**args, after=(
@@ -408,9 +421,162 @@ def test_related_location_direct_children_and_exclusion(legacy, hierarchy_relati
         ))
         assert [r['event_key'] for r in page + rest] == [r['event_key'] for r in results]
         assert repository.search_related_events(**{**args, 'location': marker + '-missing'}) == []
-        assert repository.search_related_events(**{**args, 'location': marker[:-1]}) == []
         assert repository.search_related_events(**{**args, 'entity': 'nonexistent-person'}) == []
     finally:
         with driver.session(database=settings.neo4j_database) as session:
             session.run('MATCH (n {test_marker: $marker}) DETACH DELETE n', marker=marker).consume()
         driver.close()
+
+
+@pytest.fixture
+def precision_graph():
+    """Use a distinct future date so literal Hanoi queries don't read user data."""
+    from datetime import date
+
+    settings = Settings()
+    marker = f'codex-precision-{uuid4().hex}'
+    driver = GraphDatabase.driver(
+        settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password),
+    )
+    repository = Neo4jRepository(settings)
+    repository.driver = driver
+
+    def run(query, **params):
+        with driver.session(database=settings.neo4j_database) as session:
+            return session.run(query, marker=marker, **params).data()
+
+    def entity(key, name, entity_type='ORGANIZATION', **properties):
+        run('''CREATE (e:Entity {test_marker: $marker, entity_id: $marker + $key})
+               SET e += $properties''', key=key,
+            properties={'name': name, 'type': entity_type, **properties})
+
+    def event(key, *, legacy=False, content='Bài thử', description='Sự kiện thử',
+              participants=(), mentions=(), post_key=None, age=0):
+        post_key = post_key or key
+        run('''MERGE (p:Post {test_marker: $marker, platform_id: $marker + $post_key})
+               SET p.platform = 'codex-test', p.content = $content,
+                   p.posted_at = localdatetime('2099-01-02T08:00:00') - duration({hours: $age})
+               MERGE (e:Event {test_marker: $marker, event_key: $marker + $key})
+               SET e.description = $description
+            ''' + ('''MERGE (p)-[:DESCRIBES]->(e) WITH p, e AS binding
+            ''' if legacy else '''
+               MERGE (m:EventMention {test_marker: $marker, mention_key: $marker + $post_key + $key})
+               SET m.description = $description
+               MERGE (p)-[:HAS_EVENT_MENTION]->(m)
+               MERGE (m)-[:EVIDENCE_FOR]->(e)
+               WITH p, m AS binding
+            ''') + '''
+               CALL {
+                 WITH binding
+                 UNWIND $participants AS id
+                 MATCH (entity:Entity {entity_id: $marker + id})
+                 MERGE (binding)-[:HAS_PARTICIPANT]->(entity)
+               }
+               WITH p
+               UNWIND $mentions AS id
+               MATCH (entity:Entity {entity_id: $marker + id})
+               MERGE (p)-[:MENTIONS]->(entity)
+            ''', key=key, post_key=post_key, content=content, description=description,
+            participants=list(participants), mentions=list(mentions), age=age)
+        return marker + key
+
+    def search(*, related=False, **params):
+        return (repository.search_related_events if related else repository.search_events)(
+            **{'location': None, 'entity': None, 'hours': 24,
+               'posted_date': date(2099, 1, 2), 'limit': 100, **params},
+        )
+
+    try:
+        yield entity, event, search, run, marker
+    finally:
+        run('MATCH (n {test_marker: $marker}) DETACH DELETE n')
+        driver.close()
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_hanoi_university_is_related_with_real_entity_evidence(precision_graph, legacy):
+    from backend.models import EventResult
+
+    entity, event, search, run, marker = precision_graph
+    entity('hanoi', 'Hà Nội', 'LOCATION')
+    entity('university', 'Đại học Y Hà Nội', aliases=['ĐHYHN'])
+    content = ('Một nửa trong top 20 người dẫn đầu kỳ thi bác sĩ nội trú chọn '
+               'Sản phụ khoa ở Đại học Y Hà Nội, khiến chuyên ngành này ở trường chốt sổ sớm')
+    key = event('university-event', legacy=legacy, content=content,
+                description=content, mentions=['university'])
+    assert search(location='Hà Nội') == []
+    assert search(entity='Hà Nội') == []
+    for query in ({'location': 'Hà Nội'}, {'entity': 'Ha Noi'}):
+        rows = search(related=True, **query)
+        assert [row['event_key'] for row in rows] == [key]
+        result = EventResult.model_validate(rows[0])
+        reason = next(r for r in result.relation_reasons if r.kind == 'entity_name_match')
+        assert reason.label == 'Liên quan qua: Đại học Y Hà Nội'
+        assert reason.via_entity.id == marker + 'university'
+        assert reason.via_entity.type == 'ORGANIZATION'
+        assert reason.post.platform_id == marker + 'university-event'
+        assert any(r.kind == 'text_match' for r in result.relation_reasons)
+    assert [r['event_key'] for r in search(entity='Đại học Y Hà Nội')] == [key]
+    assert search(related=True, entity='ĐHYHN') == []
+    assert all(r['relation_reasons'] == [] for r in search(entity='ĐHYHN'))
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+@pytest.mark.parametrize('entity_type', ['PERSON', 'ORGANIZATION', 'LOCATION'])
+def test_direct_normalized_names_aliases_and_partial_names(precision_graph, legacy, entity_type):
+    entity, event, search, run, marker = precision_graph
+    # Missing search_name, mixed whitespace, decomposed accents and array names.
+    entity('target', ['Tên khác', '  Nguyễn\tVăn  An  '], entity_type,
+           aliases=[' Bí danh  Đặc Biệt '])
+    key = event('target-event', legacy=legacy, participants=['target'])
+    for term in ('nguyen van an', 'Nguyễn Văn An', 'BI DANH DAC BIET'):
+        assert [r['event_key'] for r in search(entity=term)] == [key]
+        assert search(related=True, entity=term) == []
+    assert search(entity='Văn An') == []
+    assert [r['event_key'] for r in search(related=True, entity='Văn An')] == [key]
+    if entity_type == 'LOCATION':
+        assert [r['event_key'] for r in search(location='nguyen van an')] == [key]
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_related_text_only_and_combined_filters(precision_graph, legacy):
+    entity, event, search, run, marker = precision_graph
+    entity('hanoi', 'Hà Nội', 'LOCATION')
+    entity('person', 'Nguyễn An', 'PERSON')
+    entity('school', 'Đại học Y Hà Nội')
+    text_key = event('text', legacy=legacy, content='Tin tại Hà Nội về Nguyễn An')
+    mixed_key = event('mixed', legacy=legacy, participants=['person', 'school'])
+    direct_key = event('direct', legacy=legacy, participants=['person', 'hanoi'])
+    event('missing-person', legacy=legacy, participants=['school'])
+    event('old', legacy=legacy, participants=['school', 'person'], age=48)
+    query = dict(location='Hà Nội', entity='Nguyễn An')
+    assert {r['event_key'] for r in search(**query)} == {direct_key}
+    rows = search(related=True, **query)
+    assert {r['event_key'] for r in rows} == {text_key, mixed_key}
+    text = next(r for r in rows if r['event_key'] == text_key)
+    assert {r['query_field'] for r in text['relation_reasons']} == {'location', 'entity'}
+    assert all(r['kind'] == 'text_match' and r['via_entity'] is None
+               for r in text['relation_reasons'])
+    assert search(related=True, location='Hà Nội', entity='Không có') == []
+    assert direct_key in {r['event_key'] for r in search(entity='Không có hoặc Nguyễn An')}
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_mixed_schema_post_scoping_and_event_participants(precision_graph, legacy):
+    entity, event, search, run, marker = precision_graph
+    entity('hanoi', 'Hà Nội', 'LOCATION')
+    entity('school', 'Đại học Y Hà Nội')
+    # One event represented in both schemas must still count as one event.
+    single = event('single', legacy=legacy, mentions=['hanoi'])
+    event('single', legacy=not legacy, mentions=['hanoi'])
+    # Different events in the same post across schemas must count as multiple.
+    event('multi-one', legacy=legacy, post_key='multi', mentions=['hanoi', 'school'],
+          content='Đại học Y Hà Nội')
+    event('multi-two', legacy=not legacy, post_key='multi', mentions=['hanoi', 'school'],
+          content='Đại học Y Hà Nội')
+    linked = event('linked', legacy=legacy)
+    run('''MATCH (e:Event {event_key: $marker + 'linked'}),
+                 (n:Entity {entity_id: $marker + 'hanoi'})
+           CREATE (e)-[:HAS_PARTICIPANT]->(n)''')
+    assert {r['event_key'] for r in search(location='Hà Nội')} == {single, linked}
+    assert search(related=True, location='Hà Nội') == []

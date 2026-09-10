@@ -1,3 +1,4 @@
+import json
 import re
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
@@ -6,243 +7,13 @@ from typing import Any
 from neo4j import GraphDatabase
 
 from backend.config import Settings
+from backend.event_search_queries import (
+    SEARCH_EVENTS_QUERY,
+    SEARCH_LEGACY_EVENTS_QUERY,
+    SEARCH_RELATED_EVENTS_QUERY,
+    SEARCH_RELATED_LEGACY_EVENTS_QUERY,
+)
 from backend.question_parser import normalize_entity_for_search
-
-
-SEARCH_EVENTS_QUERY = """
-MATCH (post:Post)-[:HAS_EVENT_MENTION]->(mention:EventMention)
-      -[:EVIDENCE_FOR]->(event:Event)
-WHERE post.posted_at IS NOT NULL
-  AND (
-    ($posted_date IS NULL
-      AND post.posted_at >= localdatetime() - duration({hours: $hours}))
-    OR ($posted_date IS NOT NULL
-      AND date(post.posted_at + duration({
-        hours: $posted_at_utc_offset_hours
-      })) = date($posted_date))
-  )
-OPTIONAL MATCH (mention)-[:HAS_PARTICIPANT]->(mention_entity:Entity)
-OPTIONAL MATCH (event)-[:HAS_PARTICIPANT]->(event_entity:Entity)
-OPTIONAL MATCH (post)-[:MENTIONS]->(post_entity:Entity)
-OPTIONAL MATCH (post)-[:HAS_EVENT_MENTION]->(sibling_mention:EventMention)
-WITH post, mention, event,
-     collect(DISTINCT mention_entity)
-       + collect(DISTINCT event_entity) AS event_entities,
-     collect(DISTINCT post_entity) AS post_entities,
-     count(DISTINCT sibling_mention) AS sibling_event_count
-WITH post, mention, event,
-     (
-       $location_key IS NULL
-       OR any(related_entity IN event_entities WHERE
-         related_entity.type = 'LOCATION' AND (
-           coalesce(related_entity.normalized_name, '') CONTAINS $location_key
-           OR $location_key IN coalesce(related_entity.aliases, [])
-           OR coalesce(related_entity.search_name, '')
-                CONTAINS $location_search_key
-         )
-       )
-       OR toLower(coalesce(mention.description, '')) CONTAINS $location_key
-       OR toLower(coalesce(event.description, '')) CONTAINS $location_key
-       OR (sibling_event_count = 1 AND (
-         any(related_entity IN post_entities WHERE
-           related_entity.type = 'LOCATION' AND (
-             coalesce(related_entity.normalized_name, '')
-                  CONTAINS $location_key
-             OR $location_key IN coalesce(related_entity.aliases, [])
-             OR coalesce(related_entity.search_name, '')
-                  CONTAINS $location_search_key
-           )
-         )
-         OR toLower(coalesce(post.content, '')) CONTAINS $location_key
-       ))
-     ) AS location_matches,
-     [term IN $entity_terms WHERE
-      any(related_entity IN event_entities WHERE
-        coalesce(related_entity.normalized_name, '') CONTAINS term.key
-        OR term.key IN coalesce(related_entity.aliases, [])
-        OR (size(split(term.key, ' ')) > 1 AND
-            coalesce(related_entity.search_name, '') CONTAINS term.search_key)
-      )
-      OR (size(split(term.key, ' ')) > 1 AND (
-        toLower(coalesce(mention.description, '')) CONTAINS term.key
-        OR toLower(coalesce(event.description, '')) CONTAINS term.key
-      ))
-     ] AS event_matched_terms,
-     [term IN $entity_terms WHERE
-      any(related_entity IN post_entities WHERE
-        coalesce(related_entity.normalized_name, '') CONTAINS term.key
-        OR term.key IN coalesce(related_entity.aliases, [])
-        OR (size(split(term.key, ' ')) > 1 AND
-            coalesce(related_entity.search_name, '') CONTAINS term.search_key)
-      )
-      OR (size(split(term.key, ' ')) > 1
-          AND toLower(coalesce(post.content, '')) CONTAINS term.key)
-     ] AS post_matched_terms,
-     sibling_event_count
-WITH post, mention, event,
-     location_matches,
-     CASE
-       WHEN size(event_matched_terms) > 0 THEN size(event_matched_terms)
-       WHEN size(post_matched_terms) > 0 AND sibling_event_count = 1 THEN 1
-       ELSE 0
-     END AS matched_entity_count
-WHERE location_matches
-  AND (size($entity_terms) = 0 OR matched_entity_count > 0)
-OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
-OPTIONAL MATCH (mention)-[participation:HAS_PARTICIPANT]->(entity:Entity)
-WITH post, mention, event, source,
-     matched_entity_count,
-     collect(DISTINCT CASE WHEN entity IS NULL THEN NULL ELSE {
-       name: coalesce(entity.name, entity.normalized_name),
-       type: entity.type,
-       role: participation.role
-     } END) AS entities
-ORDER BY matched_entity_count DESC, post.posted_at DESC
-RETURN event.event_key AS event_key,
-       coalesce(event.type, mention.type, 'OTHER') AS type,
-       coalesce(event.title, mention.title, event.description,
-                mention.description, post.content) AS title,
-       coalesce(event.description, mention.description, post.content) AS description,
-       coalesce(mention.status, event.status) AS status,
-       mention.time_expression AS time_expression,
-       matched_entity_count,
-       entities,
-       {
-         platform: post.platform,
-         platform_id: post.platform_id,
-         content: post.content,
-         url: post.url,
-         posted_at: toString(post.posted_at),
-         source_name: source.name
-       } AS post
-"""
-
-
-SEARCH_LEGACY_EVENTS_QUERY = """
-MATCH (post:Post)-[:DESCRIBES]->(event:Event)
-WHERE post.posted_at IS NOT NULL
-  AND (
-    ($posted_date IS NULL
-      AND post.posted_at >= localdatetime() - duration({hours: $hours}))
-    OR ($posted_date IS NOT NULL
-      AND date(post.posted_at + duration({
-        hours: $posted_at_utc_offset_hours
-      })) = date($posted_date))
-  )
-OPTIONAL MATCH (event)-[:HAS_PARTICIPANT]->(event_entity:Entity)
-OPTIONAL MATCH (post)-[:MENTIONS]->(post_entity:Entity)
-OPTIONAL MATCH (post)-[:DESCRIBES]->(sibling_event:Event)
-WITH post, event,
-     collect(DISTINCT event_entity) AS event_entities,
-     collect(DISTINCT post_entity) AS post_entities,
-     count(DISTINCT sibling_event) AS sibling_event_count
-WITH post, event,
-     (
-       $location_key IS NULL
-       OR any(related_entity IN event_entities WHERE
-         related_entity.type = 'LOCATION' AND (
-           coalesce(related_entity.normalized_name, '') CONTAINS $location_key
-           OR $location_key IN coalesce(related_entity.aliases, [])
-           OR coalesce(related_entity.search_name, '')
-                CONTAINS $location_search_key
-         )
-       )
-       OR toLower(coalesce(event.description, '')) CONTAINS $location_key
-       OR (sibling_event_count = 1 AND (
-         any(related_entity IN post_entities WHERE
-           related_entity.type = 'LOCATION' AND (
-             coalesce(related_entity.normalized_name, '')
-                  CONTAINS $location_key
-             OR $location_key IN coalesce(related_entity.aliases, [])
-             OR coalesce(related_entity.search_name, '')
-                  CONTAINS $location_search_key
-           )
-         )
-         OR toLower(coalesce(post.content, '')) CONTAINS $location_key
-       ))
-     ) AS location_matches,
-     [term IN $entity_terms WHERE
-      any(related_entity IN event_entities WHERE
-        coalesce(related_entity.normalized_name, '') CONTAINS term.key
-        OR term.key IN coalesce(related_entity.aliases, [])
-        OR (size(split(term.key, ' ')) > 1 AND
-            coalesce(related_entity.search_name, '') CONTAINS term.search_key)
-      )
-      OR (size(split(term.key, ' ')) > 1
-          AND toLower(coalesce(event.description, '')) CONTAINS term.key)
-     ] AS event_matched_terms,
-     [term IN $entity_terms WHERE
-      any(related_entity IN post_entities WHERE
-        coalesce(related_entity.normalized_name, '') CONTAINS term.key
-        OR term.key IN coalesce(related_entity.aliases, [])
-        OR (size(split(term.key, ' ')) > 1 AND
-            coalesce(related_entity.search_name, '') CONTAINS term.search_key)
-      )
-      OR (size(split(term.key, ' ')) > 1
-          AND toLower(coalesce(post.content, '')) CONTAINS term.key)
-     ] AS post_matched_terms,
-     sibling_event_count
-WITH post, event,
-     location_matches,
-     CASE
-       WHEN size(event_matched_terms) > 0 THEN size(event_matched_terms)
-       WHEN size(post_matched_terms) > 0 AND sibling_event_count = 1 THEN 1
-       ELSE 0
-     END AS matched_entity_count
-WHERE location_matches
-  AND (size($entity_terms) = 0 OR matched_entity_count > 0)
-OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
-OPTIONAL MATCH (event)-[participation:HAS_PARTICIPANT]->(entity:Entity)
-WITH post, event, source,
-     matched_entity_count,
-     collect(DISTINCT CASE WHEN entity IS NULL THEN NULL ELSE {
-       name: coalesce(entity.name, entity.normalized_name),
-       type: entity.type,
-       role: participation.role
-     } END) AS entities
-ORDER BY matched_entity_count DESC, post.posted_at DESC
-RETURN event.event_key AS event_key,
-       coalesce(event.type, 'OTHER') AS type,
-       coalesce(event.title, event.description, post.content) AS title,
-       coalesce(event.description, post.content) AS description,
-       event.status AS status,
-       event.time_expression AS time_expression,
-       matched_entity_count,
-       entities,
-       {
-         platform: post.platform,
-         platform_id: post.platform_id,
-         content: post.content,
-         url: post.url,
-         posted_at: toString(post.posted_at),
-         source_name: source.name
-       } AS post
-"""
-
-
-# Preserve the existing time/entity predicates and result projection.
-def _related_location_query(query: str) -> str:
-    def child_match(collection: str) -> str:
-        return f"""any(related_entity IN {collection} WHERE
-          related_entity.type = 'LOCATION' AND EXISTS {{
-            MATCH (related_entity)-[:PART_OF|IN_REGION]->(parent:Entity)
-            WHERE parent.type = 'LOCATION'
-              AND related_entity <> parent
-              AND (coalesce(parent.normalized_name, toLower(parent.name), '') = $location_key
-                OR $location_key IN coalesce(parent.aliases, [])
-                OR coalesce(parent.search_name, '') = $location_search_key)
-          }}
-        )"""
-    predicate = ("(" + child_match("event_entities")
-                 + " OR (sibling_event_count = 1 AND "
-                 + child_match("post_entities") + "))")
-    start = query.index("(\n       $location_key IS NULL")
-    end = query.index(" AS location_matches", start)
-    return query[:start] + predicate + query[end:]
-
-
-SEARCH_RELATED_EVENTS_QUERY = _related_location_query(SEARCH_EVENTS_QUERY)
-SEARCH_RELATED_LEGACY_EVENTS_QUERY = _related_location_query(SEARCH_LEGACY_EVENTS_QUERY)
 
 
 SEARCH_RELATED_ENTITIES_QUERY = """
@@ -317,6 +88,42 @@ def make_entity_terms(value: str | None) -> list[dict[str, str]]:
     ]
 
 
+def _matching_excerpt(value: str, term: str, context: int = 80) -> str:
+    """Find a folded keyword while keeping offsets into the original text."""
+    folded, offsets = [], []
+    for index, character in enumerate(value):
+        for part in unicodedata.normalize("NFD", character.casefold()):
+            if unicodedata.category(part) != "Mn":
+                folded.append(part.replace("đ", "d"))
+                offsets.append(index)
+    key = make_search_name(term)
+    start = "".join(folded).find(key)
+    if start < 0:
+        return value[:2 * context]
+    left = max(0, offsets[start] - context)
+    right = min(len(value), offsets[start + len(key) - 1] + context + 1)
+    return ("…" if left else "") + value[left:right] + ("…" if right < len(value) else "")
+
+
+def _format_relation_reason(raw: dict[str, Any], post: dict[str, Any]) -> dict[str, Any]:
+    reason = dict(raw)
+    text = reason.pop("text", reason.get("excerpt") or "")
+    reason["post"] = {
+        "platform": post.get("platform"),
+        "platform_id": post.get("platform_id"),
+    }
+    reason.setdefault("via_entity", None)
+    reason.setdefault("relationship", None)
+    reason["excerpt"] = None
+    if reason["kind"] == "text_match":
+        reason["excerpt"] = _matching_excerpt(text, reason["query_term"])
+        field = "nội dung" if reason["evidence_field"] == "post.content" else "mô tả"
+        reason["label"] = f"Khớp từ khóa trong {field}: {reason['query_term']}"
+    else:
+        reason["label"] = f"Liên quan qua: {reason['via_entity']['name']}"
+    return reason
+
+
 def _post_identity(post: dict[str, Any]) -> tuple[Any, ...]:
     platform = post.get("platform")
     platform_id = post.get("platform_id")
@@ -387,7 +194,7 @@ class Neo4jRepository:
             return False
 
     def search_related_events(
-        self, *, location: str, entity: str | None, hours: int,
+        self, *, location: str | None, entity: str | None, hours: int,
         limit: int, posted_date: date | None = None,
         after: tuple[int, str, str] | None = None,
     ) -> list[dict[str, Any]]:
@@ -411,10 +218,14 @@ class Neo4jRepository:
             raise RuntimeError("Neo4j chưa được kết nối")
         location_key = normalize_name(location) if location else None
         location_search_key = make_search_name(location) if location else None
+        terms = [{"field": "entity", **term} for term in make_entity_terms(entity)]
+        if location_key:
+            terms.insert(0, {"field": "location", "key": location_key,
+                             "search_key": location_search_key})
         parameters = {
-            "location_key": location_key,
-            "location_search_key": location_search_key,
-            "entity_terms": make_entity_terms(entity),
+            "terms": terms,
+            "fold_characters": [chr(code) for code in range(0x300, 0x370)
+                                if unicodedata.category(chr(code)) == "Mn"],
             "hours": hours,
             "posted_date": posted_date.isoformat() if posted_date else None,
             "posted_at_utc_offset_hours": (
@@ -464,9 +275,14 @@ class Neo4jRepository:
                 )
             ]
 
+        reasons_by_event_key: dict[str, dict[str, dict[str, Any]]] = {}
         for result in combined_results:
             event_key = result["event_key"]
             post = result["post"]
+            event_reasons = reasons_by_event_key.setdefault(event_key, {})
+            for raw_reason in result.get("relation_reasons", []):
+                reason = _format_relation_reason(raw_reason, post)
+                event_reasons[json.dumps(reason, sort_keys=True, ensure_ascii=False)] = reason
             posts_by_event_key.setdefault(event_key, {})[
                 _post_identity(post)
             ] = post
@@ -483,6 +299,10 @@ class Neo4jRepository:
                 results_by_event_key[event_key] = result
 
         for event_key, result in results_by_event_key.items():
+            result["relation_reasons"] = [
+                reasons_by_event_key[event_key][key]
+                for key in sorted(reasons_by_event_key[event_key])
+            ]
             primary_post = result["post"]
             primary_identity = _post_identity(primary_post)
             other_posts = [

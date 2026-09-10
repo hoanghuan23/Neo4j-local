@@ -22,7 +22,7 @@ class ParsedQuestion(BaseModel):
 class EventSearchCursor(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    version: Literal[1] = 1
+    version: Literal[2] = 2
     query: ParsedQuestion
     returned: int = Field(ge=0)
     matched_entity_count: int = Field(ge=0)
@@ -39,13 +39,12 @@ class EventSearchCursor(BaseModel):
 
 
 class RelatedSearchQuery(ParsedQuestion):
-    location: str = Field(min_length=1)
-
     @model_validator(mode="after")
-    def validate_location(self) -> "RelatedSearchQuery":
-        self.location = self.location.strip()
-        if not self.location:
-            raise ValueError("Thiếu địa điểm để tìm sự kiện liên quan")
+    def validate_subject(self) -> "RelatedSearchQuery":
+        self.location = (self.location or "").strip() or None
+        self.entity = (self.entity or "").strip() or None
+        if not self.location and not self.entity:
+            raise ValueError("Thiếu địa điểm hoặc entity để tìm sự kiện liên quan")
         return self
 
 
@@ -56,7 +55,7 @@ class RelatedSearchRequest(BaseModel):
 
 
 class RelatedEventSearchCursor(EventSearchCursor):
-    scope: Literal["related_locations"]
+    scope: Literal["related_events"]
     query: RelatedSearchQuery
 
 
@@ -86,6 +85,32 @@ class SourceResult(BaseModel):
     url: str | None = None
 
 
+class RelationEntity(BaseModel):
+    id: str
+    name: str
+    type: str
+
+
+class RelationPost(BaseModel):
+    platform: str
+    platform_id: str
+
+
+class RelationReason(BaseModel):
+    kind: Literal["entity_name_match", "text_match", "location_hierarchy"]
+    query_field: Literal["location", "entity"]
+    query_term: str
+    via_entity: RelationEntity | None = None
+    evidence_field: Literal[
+        "entity.name", "entity.normalized_name", "entity.search_name", "entity.aliases",
+        "mention.description", "event.description", "post.content",
+    ]
+    excerpt: str | None = None
+    post: RelationPost
+    relationship: Literal["PART_OF", "IN_REGION"] | None = None
+    label: str
+
+
 class EventResult(BaseModel):
     event_key: str
     type: str
@@ -96,6 +121,7 @@ class EventResult(BaseModel):
     entities: list[EntityResult] = Field(default_factory=list)
     post: PostResult
     sources: list[SourceResult] = Field(default_factory=list)
+    relation_reasons: list[RelationReason] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod

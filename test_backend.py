@@ -219,29 +219,13 @@ def test_entity_alternatives_become_or_entity_terms():
     ]
 
 
-def test_event_query_filters_by_time_and_can_match_post_content():
-    assert "post.posted_at IS NOT NULL" in SEARCH_EVENTS_QUERY
-    assert "localdatetime() - duration({hours: $hours})" in SEARCH_EVENTS_QUERY
-    assert "post.posted_at + duration({" in SEARCH_EVENTS_QUERY
-    assert "hours: $posted_at_utc_offset_hours" in SEARCH_EVENTS_QUERY
-    assert "post.posted_at + duration({" in (
-        SEARCH_LEGACY_EVENTS_QUERY
-    )
-    assert "sibling_event_count = 1 AND" in SEARCH_EVENTS_QUERY
-    assert "toLower(coalesce(post.content, '')) CONTAINS $location_key" in (
-        SEARCH_EVENTS_QUERY
-    )
-    assert "[term IN $entity_terms WHERE" in (
-        SEARCH_EVENTS_QUERY
-    )
-    assert "ORDER BY matched_entity_count DESC" in SEARCH_EVENTS_QUERY
-    assert "MATCH (post:Post)-[:DESCRIBES]->(event:Event)" in (
-        SEARCH_LEGACY_EVENTS_QUERY
-    )
-    assert "MATCH (event)-[:HAS_PARTICIPANT]->(event_entity:Entity)" in (
-        SEARCH_LEGACY_EVENTS_QUERY
-    )
-    assert "sibling_event_count = 1 AND" in SEARCH_LEGACY_EVENTS_QUERY
+def test_event_queries_keep_time_filters_in_both_schemas():
+    for query in (SEARCH_EVENTS_QUERY, SEARCH_LEGACY_EVENTS_QUERY):
+        assert "post.posted_at IS NOT NULL" in query
+        assert "localdatetime() - duration({hours: $hours})" in query
+        assert "hours: $posted_at_utc_offset_hours" in query
+        assert "ORDER BY matched_entity_count DESC" in query
+
 
 
 def test_repository_merges_current_and_legacy_results_by_event_key():
@@ -797,4 +781,4 @@ def test_chat_rejects_invalid_or_missing_continuation_cursor():
     assert missing.status_code == 400
     assert "Không có truy vấn trước" in missing.json()["detail"]
     assert invalid.status_code == 400
-    assert invalid.json()["detail"] == "Cursor không hợp lệ"
+    assert invalid.json()["detail"] == "Cursor không hợp lệ hoặc đã cũ. Hãy tìm kiếm lại."

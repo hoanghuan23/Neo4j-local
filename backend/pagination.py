@@ -24,7 +24,7 @@ def decode_related_cursor(value: str) -> RelatedEventSearchCursor:
 
 def _decode_cursor(value: str, model):
     if not value or len(value) > MAX_CURSOR_LENGTH:
-        raise ValueError("Cursor không hợp lệ")
+        raise ValueError("Cursor không hợp lệ hoặc đã cũ. Hãy tìm kiếm lại.")
 
     try:
         encoded = value.encode("ascii")
@@ -34,6 +34,9 @@ def _decode_cursor(value: str, model):
             altchars=b"-_",
             validate=True,
         )
-        return model.model_validate_json(payload)
+        decoded = model.model_validate_json(payload)
+        if "version" not in decoded.model_fields_set:
+            raise ValueError("Thiếu phiên bản cursor")
+        return decoded
     except (UnicodeEncodeError, binascii.Error, ValidationError, ValueError):
-        raise ValueError("Cursor không hợp lệ") from None
+        raise ValueError("Cursor không hợp lệ hoặc đã cũ. Hãy tìm kiếm lại.") from None
