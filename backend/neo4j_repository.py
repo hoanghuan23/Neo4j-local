@@ -35,6 +35,11 @@ WITH CASE
            = $subject_key
          OR coalesce(candidate.search_name, '') = $subject_search_key
          OR $subject_key IN coalesce(candidate.aliases, [])
+         OR (candidate.type = 'ORGANIZATION' AND (
+           coalesce(candidate.normalized_name, toLower(candidate.name), '')
+             ENDS WITH ', ' + $subject_key
+           OR coalesce(candidate.search_name, '') ENDS WITH ', ' + $subject_search_key
+         ))
        ]
        ELSE candidates
      END AS selected_subjects

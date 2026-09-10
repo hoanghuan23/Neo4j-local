@@ -580,3 +580,31 @@ def test_mixed_schema_post_scoping_and_event_participants(precision_graph, legac
            CREATE (e)-[:HAS_PARTICIPANT]->(n)''')
     assert {r['event_key'] for r in search(location='Hà Nội')} == {single, linked}
     assert search(related=True, location='Hà Nội') == []
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_organization_search_includes_subunits_with_exact_parent_present(precision_graph, legacy):
+    from backend.neo4j_repository import SEARCH_RELATED_ENTITIES_QUERY
+
+    entity, event, search, run, marker = precision_graph
+    parent = 'Công an thành phố Hà Nội'
+    names = [parent, 'Phòng Cảnh sát Kinh tế, ' + parent,
+             'Đội 3, Phòng Cảnh sát Kinh tế, ' + parent]
+    expected = set()
+    for index, name in enumerate(names):
+        subject = f'unit-{index}'
+        entity(subject, name)
+        entity(f'other-{index}', marker + f' witness {index}', 'PERSON')
+        expected.add(event(f'unit-event-{index}', legacy=legacy,
+                           participants=[subject], mentions=[subject, f'other-{index}']))
+    entity('different', 'Công an thành phố Hà Nội mới')
+    event('different-event', legacy=legacy, participants=['different'])
+    for term in (parent, 'cong an thanh pho ha noi'):
+        rows = search(entity=term)
+        assert {row['event_key'] for row in rows} == expected
+        assert all(row['matched_entity_count'] == 1 for row in rows)
+    details = run(SEARCH_RELATED_ENTITIES_QUERY, subject_key=parent.lower(),
+                  subject_search_key='cong an thanh pho ha noi', limit=100)
+    assert {row['entity_name'] for row in details if row['entity_name'].startswith(marker)} == {
+        marker + f' witness {index}' for index in range(3)
+    }

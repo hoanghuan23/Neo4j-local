@@ -43,6 +43,17 @@ def _names(node: str) -> str:
     )
 
 
+def _subject_match() -> str:
+    # A comma-delimited organization suffix identifies its parent organization.
+    # Do not interpret arbitrary substrings (e.g. Hanoi in a university name)
+    # as the same subject, or expand partial person names.
+    return (
+        "any(name IN candidate.names WHERE name.value = term.search_key OR "
+        "(term.field = 'entity' AND candidate.entity.type = 'ORGANIZATION' AND "
+        "name.value ENDS WITH ', ' + term.search_key))"
+    )
+
+
 def _entity(node: str) -> str:
     return (
         f"{{id: coalesce({node}.entity_id, elementId({node})), "
@@ -76,7 +87,7 @@ def build_event_query(*, legacy: bool, related: bool) -> str:
     direct = (
         "any(candidate IN candidates WHERE "
         "(term.field <> 'location' OR candidate.entity.type = 'LOCATION') "
-        f"AND {exact})"
+        f"AND {_subject_match()})"
     )
     # Reasons contain only graph/text evidence. Labels and bounded excerpts are
     # assembled in Python, so presentation does not complicate the predicates.
@@ -100,7 +111,7 @@ def build_event_query(*, legacy: bool, related: bool) -> str:
     """ if related else "[]"
     event_match = (
         "any(candidate IN candidates WHERE candidate.at_event AND "
-        "any(name IN candidate.names WHERE name.value = term.search_key))"
+        f"{_subject_match()})"
     )
     if related:
         event_match = (
