@@ -205,49 +205,6 @@ class LocationHierarchyTests(unittest.TestCase):
         self.assertIn("ha noi", variants)
         self.assertIn("tp ha noi", variants)
 
-    @patch.object(subject.time, "sleep")
-    def test_geocoder_wraps_http_and_json_failures(self, _sleep):
-        response = Mock()
-        response.raise_for_status.side_effect = RuntimeError("timeout")
-        with self.assertRaises(subject.OSMEnrichmentError):
-            subject.geocode_location("Nam Từ Liêm", request_get=Mock(return_value=response))
-
-    def test_geocoder_matches_full_name_without_accents(self):
-        exact = {"name": "Thái Bình", "address": {"city": "Thái Bình"}}
-        response = Mock()
-        response.json.return_value = [
-            {"name": "Thái Bình Commune", "address": {"town": "Thái Bình Commune"}},
-            {"name": "Thái Bình Ward", "address": {"city": "Thái Bình"}},
-            exact,
-            {"address": {"city": "Thái Bình"}},
-        ]
-        self.assertEqual(
-            subject.geocode_location("  THAI BINH  ", request_get=Mock(return_value=response)),
-            [exact],
-        )
-
-    def test_geocoder_returns_empty_when_no_full_name_matches(self):
-        response = Mock()
-        response.json.return_value = [
-            {"name": "Bình Minh Commune", "address": {"town": "Xã Bình Minh"}},
-        ]
-        self.assertEqual(
-            subject.geocode_location("xa binh minh", request_get=Mock(return_value=response)),
-            [],
-        )
-
-    def test_geocoder_empty_query_does_not_request_api(self):
-        request_get = Mock()
-        self.assertEqual(subject.geocode_location("   ", request_get=request_get), [])
-        request_get.assert_not_called()
-
-    @patch.object(subject.time, "sleep")
-    def test_geocoder_rejects_payload_without_addressdetails(self, _sleep):
-        response = Mock()
-        response.json.return_value = [{"display_name": "POI only"}]
-        with self.assertRaises(subject.OSMEnrichmentError):
-            subject.geocode_location("Nam Từ Liêm", request_get=Mock(return_value=response))
-
     def test_osm_failure_marks_only_hierarchy_failed(self):
         session = Mock()
         locations_result = [{
@@ -267,7 +224,7 @@ class LocationHierarchyTests(unittest.TestCase):
         result = subject.enrich_location_hierarchy(
             session, "facebook", "1", "Nam Từ Liêm", knowledge,
             call_model=Mock(),
-            geocode_fn=Mock(side_effect=subject.OSMEnrichmentError("timeout")),
+            geocode_fn=Mock(side_effect=RuntimeError("timeout")),
         )
 
         self.assertEqual(result["errors"], 1)
@@ -305,14 +262,6 @@ class ContextGeocodingTests(unittest.TestCase):
         self.assertEqual(subject.resolve_content_location(locations[0], locations, [], ["Ủy Nỗ"], geocode), candidates)
         geocode.assert_called_once()
 
-    def request(self, *payloads):
-        responses = []
-        for payload in payloads:
-            response = Mock()
-            response.json.return_value = payload
-            responses.append(response)
-        return Mock(side_effect=responses)
-
     def test_scoring_and_unicode(self):
         for name, expected in [("Hải Phòng", 1.0), ("Hải Phong", 0.8),
                                ("Cảng Hải Phòng", 0.6), ("Cang Hai Phong", 0.4), ("Other", 0.0)]:
@@ -324,110 +273,6 @@ class ContextGeocodingTests(unittest.TestCase):
         self.assertEqual(subject.match_score("Hà Nội", {"address": {"city": "Hà Nội"},
                                                           "namedetails": {"bad": None}}), 1)
 
-    def test_hai_phong_beats_haifeng(self):
-        vn = {"name": "Hải Phòng", "address": {"city": "Hải Phòng", "country": "Vietnam"}}
-        cn = {"name": "Haifeng County", "address": {"country": "China"},
-              "namedetails": {"name:vi": "Hải Phong"}}
-        self.assertEqual(subject.match_score("hải phòng", cn), 0.8)
-        self.assertEqual(subject.geocode_with_hints("hải phòng", request_get=self.request([cn, vn])), [vn])
-
-    def test_structured_town_real_response_fixture(self):
-        # Observed Nominatim town response; this does not establish commune boundary support.
-        town = {"osm_type": "node", "osm_id": 13778682314, "type": "town", "name": "Hoà Lạc",
-                "address": {"town": "Hoà Lạc", "city": "Hà Nội", "country": "Vietnam"},
-                "namedetails": {"name": "Hoà Lạc"}}
-        park = {"osm_type": "relation", "osm_id": 19849694, "type": "industrial",
-                "name": "Hoa Lac Hi-Tech Park",
-                "address": {"industrial": "Hoa Lac Hi-Tech Park", "city_district": "Hoa Lac Commune",
-                            "city": "Hà Nội", "country": "Vietnam"},
-                "namedetails": {"name": "Khu Công nghệ cao Hòa Lạc", "name:vi": "Khu Công nghệ cao Hòa Lạc"}}
-        request = self.request([park, town])
-        self.assertEqual(subject.match_score("hòa lạc", town), 0.8)
-        self.assertEqual(subject.match_score("hòa lạc", park), 0.6)
-        self.assertEqual(subject.geocode_with_hints("hòa lạc", ["hà nội"], request), [town])
-        params = request.call_args.kwargs["params"]
-        self.assertEqual(params["city"], "hòa lạc")
-        self.assertEqual(params["state"], "hà nội")
-        self.assertNotIn("q", params)
-        self.assertEqual(params["namedetails"], 1)
-
-    def test_ties_preserve_positive_candidates_and_order(self):
-        rows = [{"name": "Hòa Lạc", "address": {"state": state}} for state in ("A", "B")]
-        rows.append({"name": "Khu Hòa Lạc", "address": {"state": "C"}})
-        result = subject.geocode_with_hints("hòa lạc", request_get=self.request(rows))
-        self.assertEqual(result, rows)
-        self.assertIsNone(subject.administrative_chain("hòa lạc", result))
-
-    def test_unaccented_name_builds_chain(self):
-        row = {"name": "Hà Nội", "address": {"city": "Hà Nội", "country": "Vietnam"}}
-        result = subject.geocode_with_hints("ha noi", request_get=self.request([row]))
-        self.assertEqual(subject.match_score("ha noi", row), 0.8)
-        self.assertEqual(subject.administrative_chain("ha noi", result)["chain"][-1]["name"], "Vietnam")
-
-    def test_structured_tie_then_city_and_raw_fallback(self):
-        rows = [{"name": "Hòa Lạc", "address": {"city": "Hà Nội"}, "osm_id": i} for i in (1, 2)]
-        request = self.request(rows, rows, rows)
-        self.assertEqual(subject.geocode_with_hints("hòa lạc", ["hà nội"], request), rows)
-        params = [call.kwargs["params"] for call in request.call_args_list]
-        self.assertEqual(params[1]["street"], "hòa lạc")
-        self.assertEqual(params[1]["city"], "hà nội")
-        self.assertEqual(params[2]["q"], "hòa lạc")
-
-    def test_wrong_hint_is_rejected_before_ranking(self):
-        wrong = {"name": "Hòa Lạc", "address": {"state": "Hà Nội mở rộng"}}
-        right = {"name": "Hoà Lạc", "address": {"city": "Ha Noi Province"}}
-        request = self.request([wrong], [wrong, right])
-        self.assertEqual(subject.geocode_with_hints("hòa lạc", ["hà nội"], request), [right])
-        self.assertEqual(request.call_count, 2)
-
-    def test_empty_and_duplicate_hints(self):
-        request = self.request([], [], [])
-        self.assertEqual(subject.geocode_with_hints("hòa lạc", ["", "hòa lạc", "hà nội", "HA NOI"], request), [])
-        self.assertEqual(request.call_count, 3)
-        empty_request = Mock()
-        self.assertEqual(subject.geocode_with_hints(" ", ["Hà Nội"], empty_request), [])
-        empty_request.assert_not_called()
-
-    def test_raw_preserves_address_and_namedetails_matches(self):
-        rows = [{"name": "Other", "address": {"city": "Hà Nội"}},
-                {"address": {"country": "Vietnam"}, "namedetails": {"name:vi": "Hà Nội"}}]
-        self.assertEqual(subject.geocode_location("Hà Nội", self.request(rows)), [])
-        self.assertEqual(subject.geocode_location("Hà Nội", self.request(rows), raw=True), rows)
-
-    def test_raw_fallback_resolves_binh_minh_using_dong_nai_hint(self):
-        rows = [
-            {"name": "Xã Bình Minh", "osm_id": osm_id,
-             "address": {"county": "Xã Bình Minh", "state": state, "country": "Vietnam"}}
-            for osm_id, state in [(13474383, "Đồng Nai"), (19369667, "Quảng Ngãi Province")]
-        ]
-        request = self.request([], [], [], [], rows)
-        result = subject.geocode_with_hints("xã Bình Minh", ["ấp Bùi Chu", "dong nai"], request)
-        self.assertEqual(result, [rows[0]])
-        self.assertEqual(request.call_count, 5)
-        self.assertEqual(request.call_args.kwargs["params"]["q"], "xã Bình Minh")
-        self.assertEqual(
-            [item["name"] for item in subject.administrative_chain("xã Bình Minh", result)["chain"]],
-            ["xã Bình Minh", "Đồng Nai", "Vietnam"],
-        )
-
-    def test_raw_hint_matches_city_and_respects_hint_order(self):
-        rows = [{"name": "Bình Minh", "address": {"city": city}}
-                for city in ["Hà Nội", "Đồng Nai"]]
-        request = self.request([], [], [], [], rows)
-        self.assertEqual(subject.geocode_with_hints("Bình Minh", ["dong nai", "Hà Nội"], request), [rows[1]])
-
-    def test_raw_hint_tie_does_not_guess(self):
-        rows = [{"name": "Bình Minh", "osm_id": i, "address": {"state": "Đồng Nai Province"}}
-                for i in (1, 2)]
-        request = self.request([], [], rows)
-        self.assertEqual(subject.geocode_with_hints("Bình Minh", ["Đồng Nai"], request), rows)
-
-    def test_raw_hint_requires_full_address_match(self):
-        rows = [{"name": "Bình Minh", "address": {"state": state}}
-                for state in ["Đồng Nai mở rộng", "Quảng Ngãi"]]
-        request = self.request([], [], rows)
-        self.assertEqual(subject.geocode_with_hints("Bình Minh", ["Đồng Nai"], request), rows)
-
     @patch.object(subject, "extract_content_edges", return_value=[])
     @patch.object(subject, "load_post_locations")
     def test_ambiguity_marks_entity_review(self, load, extract):
@@ -435,9 +280,7 @@ class ContextGeocodingTests(unittest.TestCase):
         session = Mock()
         session.run.return_value.single.return_value = {"has_parent": False}
         rows = [{"name": "Hòa Lạc", "address": {"state": state}} for state in ("A", "B")]
-        request = self.request(rows)
-        def geocode(query, hints=None):
-            return subject.geocode_with_hints(query, hints, request)
+        geocode = Mock(return_value=rows)
         result = subject.enrich_location_hierarchy(session, "facebook", "1", "Hòa Lạc",
             {"entities": [{"type": "LOCATION", "name": "Hòa Lạc"}]}, geocode_fn=geocode)
         self.assertEqual(result["skipped"], 1)

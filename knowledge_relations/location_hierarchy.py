@@ -2,10 +2,8 @@
 
 import json
 import re
-import time
 import unicodedata
 
-from curl_cffi import requests
 from langsmith import traceable
 
 from knowledge_extraction import call_ollama, location_identity_names, make_search_name, normalize_name
@@ -13,10 +11,6 @@ from knowledge_settings import (
     LOCATION_HIERARCHY_MODULE_VERSION,
     LOCATION_HIERARCHY_SCHEMA,
     LOGGER,
-    NOMINATIM_MAX_RETRIES,
-    NOMINATIM_TIMEOUT_SECONDS,
-    NOMINATIM_URL,
-    NOMINATIM_USER_AGENT,
 )
 
 ADMIN_FIELDS = (
@@ -31,10 +25,6 @@ OSM_ADMIN_SUFFIX_PATTERN = re.compile(
     r"\s+(?:province|country)\s*$",
     flags=re.IGNORECASE,
 )
-
-
-class OSMEnrichmentError(RuntimeError):
-    pass
 
 
 def clean_osm_admin_name(value: str) -> str:
@@ -150,93 +140,6 @@ def match_score(query: str, result: dict) -> float:
     return score
 
 
-def _request_geocode(params: dict, request_get=None) -> list[dict]:
-    """Fetch validated address candidates without filtering their names."""
-    request_get = request_get or requests.get
-    last_error = None
-    for attempt in range(NOMINATIM_MAX_RETRIES):
-        try:
-            response = request_get(
-                NOMINATIM_URL,
-                params={**params, "format": "jsonv2", "addressdetails": 1, "namedetails": 1, "limit": 8},
-                headers={"User-Agent": NOMINATIM_USER_AGENT}, timeout=NOMINATIM_TIMEOUT_SECONDS,
-                impersonate="chrome",
-            )
-            response.raise_for_status()
-            payload = response.json()
-            if not isinstance(payload, list) or any(not isinstance(row, dict) for row in payload):
-                raise ValueError("Nominatim payload không hợp lệ")
-            if payload and not any(isinstance(row.get("address"), dict) for row in payload):
-                raise ValueError("Nominatim payload thiếu addressdetails")
-            return [
-                row for row in payload
-                if isinstance(row.get("address"), dict)
-            ]
-        except Exception as error:
-            last_error = error
-            if attempt + 1 < NOMINATIM_MAX_RETRIES:
-                time.sleep(0.2 * (attempt + 1))
-    raise OSMEnrichmentError(str(last_error)) from last_error
-
-
-def geocode_location(query: str, request_get=None, *, raw: bool = False) -> list[dict]:
-    """Keep legacy full-name matching unless raw address candidates are requested."""
-    query_key = make_search_name(query)
-    if not query_key:
-        return []
-    results = _request_geocode({"q": query}, request_get)
-    if raw:
-        return results
-    return [row for row in results if isinstance(row.get("name"), str)
-            and make_search_name(row["name"]) == query_key]
-
-
-def _select_candidates(query: str, results: list[dict]) -> list[dict]:
-    scored = [(match_score(query, row), row) for row in results]
-    scored = [(score, row) for score, row in scored if score > 0]
-    if not scored:
-        return []
-    best = max(score for score, _ in scored)
-    winners = [row for score, row in scored if score == best]
-    return winners if len(winners) == 1 else [row for _, row in scored]
-
-
-def _filter_address_hint(results: list[dict], hint_key: str) -> list[dict]:
-    """Verify a parent hint by full address-field equality, never substring."""
-    return [row for row in results if any(
-        isinstance(row["address"].get(field), str)
-        and normalize_vi(clean_osm_admin_name(row["address"][field]), strip_accents=True) == hint_key
-        for field in ("state", "city")
-    )]
-
-
-def geocode_with_hints(query: str, hints: list[str] | None = None, request_get=None) -> list[dict]:
-    """Resolve using verified address hints and a unique highest text score."""
-    query_key = normalize_vi(query, strip_accents=True)
-    if not query_key:
-        return []
-    seen = {query_key}
-    hint_keys = []
-    for hint in hints or []:
-        hint_key = normalize_vi(clean_osm_admin_name(hint), strip_accents=True)
-        if not hint_key or hint_key in seen:
-            continue
-        seen.add(hint_key)
-        hint_keys.append(hint_key)
-        for params in ({"city": query, "state": hint}, {"street": query, "city": hint}):
-            results = _request_geocode(params, request_get)
-            verified = _filter_address_hint(results, hint_key)
-            selected = _select_candidates(query, verified)
-            if len(selected) == 1:
-                return selected
-    results = geocode_location(query, request_get, raw=True)
-    for hint_key in hint_keys:
-        selected = _select_candidates(query, _filter_address_hint(results, hint_key))
-        if len(selected) == 1:
-            return selected
-    return _select_candidates(query, results)
-
-
 ADMIN_NAME_PREFIXES = {
     "tỉnh": "province", "thành phố": "city", "phường": "ward",
     "xã": "commune", "quận": "district", "huyện": "county",
@@ -271,8 +174,10 @@ def _candidate_admin_types(row: dict, query: str) -> set[str]:
     return levels
 
 
-def resolve_content_location(location, locations, edges, hints, geocode_fn=geocode_with_hints, *, content=""):
+def resolve_content_location(location, locations, edges, hints, geocode_fn=None, *, content=""):
     """Use explicit descendants to disambiguate an administrative parent."""
+    if geocode_fn is None:
+        from photon_api import geocode_with_hints as geocode_fn
     query = location["name"]
     candidates = geocode_fn(query, hints=hints)
     admin_types = _explicit_admin_types(content, query)
@@ -369,6 +274,17 @@ def administrative_chain(query: str, results: object) -> dict | None:
 
         chain = [{"name": clean_osm_admin_name(query), "level": None}]
         seen = {query_key, *own_names}
+        # Photon exposes the local administrative parent as district. Do not
+        # attach an administrative object to a district below its own level.
+        district = address.get("district")
+        if (isinstance(district, str) and district.strip()
+                and not any(field in ADMIN_FIELDS and ADMIN_FIELDS.index(field) >= ADMIN_FIELDS.index("district")
+                            for field in matched_fields)):
+            district = clean_osm_admin_name(district)
+            district_key = make_search_name(district)
+            if district and district_key not in seen:
+                seen.add(district_key)
+                chain.append({"name": district, "level": ADMIN_FIELDS.index("district")})
         for field in ("city", *OSM_INTERMEDIATE_PARENT_FIELDS):
             value = address.get(field)
             if not isinstance(value, str) or not value.strip():
@@ -517,7 +433,10 @@ def _set_status(session, platform: str, post_id: str, status: str, error=None) -
         version=LOCATION_HIERARCHY_MODULE_VERSION, error=error).consume()
 
 
-def enrich_location_hierarchy(session, platform: str, post_id: str, content: str, knowledge: dict, *, call_model=None, geocode_fn=geocode_with_hints) -> dict:
+def enrich_location_hierarchy(session, platform: str, post_id: str, content: str, knowledge: dict, *, call_model=None, geocode_fn=None) -> dict:
+    if geocode_fn is None:
+        # Import lazily because Photon reuses this module's matching helpers.
+        from photon_api import geocode_with_hints as geocode_fn
     summary = {"locations": 0, "content_edges": 0, "osm_edges": 0, "parents_created": 0, "parents_reused": 0, "skipped": 0, "errors": 0}
     resolved = load_post_locations(session, platform, post_id)
     locations = _location_inputs(knowledge, resolved)
