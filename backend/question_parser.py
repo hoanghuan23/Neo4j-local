@@ -5,6 +5,19 @@ from backend.models import ParsedQuestion
 
 
 _SPACE_RE = re.compile(r"\s+")
+_LOCATE_EVENT_RE = re.compile(
+    r'^\s*sự\s+kiện\s+(.+?)\s+(?:diễn\s+ra|xảy\s+ra)\s+(?:ở|tại)\s+đâu\s*[?!.]*\s*$',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def parse_event_location_question(question: str) -> str | None:
+    match = _LOCATE_EVENT_RE.fullmatch(question)
+    if not match:
+        return None
+    return _SPACE_RE.sub(' ', match.group(1)).strip(' \"\'“”‘’') or None
+
+
 _HOURS_RE = re.compile(r"\b(\d{1,3})\s*(?:h|giờ|tiếng)\b", re.IGNORECASE)
 _DAYS_RE = re.compile(r"\b(\d{1,2})\s*ngày\b", re.IGNORECASE)
 _WEEKS_RE = re.compile(r"\b(\d{1,2})\s*tuần\b", re.IGNORECASE)

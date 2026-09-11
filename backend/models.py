@@ -64,6 +64,53 @@ class DetailQuery(BaseModel):
     subject: str = Field(min_length=1)
 
 
+class EventLocationQuery(BaseModel):
+    intent: Literal["locate_event"] = "locate_event"
+    description: str = Field(min_length=1)
+
+
+class EventLocationCandidate(BaseModel):
+    event_key: str
+    source_name: str | None = None
+    posted_at: str | None = None
+    candidate_score: float | None = None
+    match_coverage: float | None = None
+    matched_terms: list[str] = Field(default_factory=list)
+    event_description: str | None = None
+    post_platform: str | None = None
+    post_id: str | None = None
+    post_url: str | None = None
+    post_content: str | None = None
+    mentioned_location: str | None = None
+    location_chain: list[str] | None = None
+    relations: list[str] | None = None
+    depth: int | None = None
+
+
+class EventLocationSource(BaseModel):
+    source_id: str
+    source_name: str | None = None
+    posted_at: str | None = None
+    post_platform: str | None = None
+    post_id: str | None = None
+    post_url: str | None = None
+    post_content: str | None = None
+
+
+class EventLocationEvidence(BaseModel):
+    mentioned_location: str
+    location_chain: list[str]
+    source_ids: list[str] = Field(default_factory=list)
+
+
+class EventLocationGroup(BaseModel):
+    event_key: str
+    event_description: str | None = None
+    location_status: Literal["mentioned", "unknown"]
+    locations: list[EventLocationEvidence] = Field(default_factory=list)
+    sources: list[EventLocationSource] = Field(default_factory=list)
+
+
 class EntityResult(BaseModel):
     name: str
     type: str
@@ -152,10 +199,12 @@ class DetailResult(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
-    query: ParsedQuestion | DetailQuery
+    query: ParsedQuestion | DetailQuery | EventLocationQuery
     count: int
     results: list[EventResult] = Field(default_factory=list)
     details: list[DetailResult] = Field(default_factory=list)
+    location_candidates: list[EventLocationCandidate] = Field(default_factory=list)
+    location_events: list[EventLocationGroup] = Field(default_factory=list)
     has_more: bool = False
     next_cursor: str | None = None
     start_index: int = Field(default=1, ge=1)

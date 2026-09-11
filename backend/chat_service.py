@@ -8,11 +8,15 @@ from backend.models import (
     DetailResult,
     EventSearchCursor,
     EventResult,
+    EventLocationQuery,
+    EventLocationCandidate,
     ParsedQuestion,
     RelatedSearchRequest,
     RelatedEventSearchCursor,
 )
 from backend.pagination import decode_event_cursor, decode_related_cursor, encode_event_cursor
+from backend.question_parser import parse_event_location_question
+from backend.event_location_results import group_event_locations
 
 
 _DETAIL_COMMAND_RE = re.compile(
@@ -34,6 +38,8 @@ class QuestionParser(Protocol):
 
 
 class EventRepository(Protocol):
+    def locate_event(self, *, description: str, limit: int) -> list[dict]: ...
+
     def search_events(
         self,
         *,
@@ -112,6 +118,11 @@ class ChatService:
         limit: int,
         cursor: str | None = None,
     ) -> ChatResponse:
+        description = parse_event_location_question(message)
+        if description:
+            if cursor is not None:
+                raise InvalidChatCommand("Truy vấn địa điểm sự kiện không dùng cursor.")
+            return self._locate_event(description, limit)
         if cursor is not None:
             return self._continue_search(message, limit, cursor)
 
@@ -136,6 +147,27 @@ class ChatService:
             limit=limit,
             start_index=1,
         )
+
+    def _locate_event(self, description: str, limit: int) -> ChatResponse:
+        candidates = [EventLocationCandidate.model_validate(row) for row in
+                      self.repository.locate_event(description=description, limit=limit)]
+        location_events = group_event_locations(candidates)
+        if not candidates:
+            answer = "Không tìm thấy sự kiện có mô tả khớp và bài viết nguồn. Hãy thử mô tả ngắn hơn."
+        else:
+            lines = ["Địa điểm ứng viên từ các bài viết liên quan (chưa xác nhận nơi sự kiện xảy ra):"]
+            for event in location_events:
+                lines.append(f"Sự kiện: {event.event_description or event.event_key}")
+                chains = [location.location_chain for location in event.locations]
+                lines.extend("- " + " → ".join(chain) for chain in chains)
+                if not chains:
+                    lines.append("Chưa có địa điểm được nhắc trong bài viết nguồn.")
+                for url in dict.fromkeys(source.post_url for source in event.sources if source.post_url):
+                    lines.append(f"Nguồn: {url}")
+            answer = "\n".join(lines)
+        return ChatResponse(answer=answer, query=EventLocationQuery(description=description),
+                            count=len(location_events), location_candidates=candidates,
+                            location_events=location_events)
 
     def search_related(self, payload: RelatedSearchRequest) -> ChatResponse:
         start_index = 1

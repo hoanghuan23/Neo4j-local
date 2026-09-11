@@ -6,6 +6,7 @@ from typing import Any
 
 from neo4j import GraphDatabase
 
+from backend.event_candidate_search import EVENT_CANDIDATES_QUERY, candidate_search_parameters
 from backend.config import Settings
 from backend.event_search_queries import (
     SEARCH_EVENTS_QUERY,
@@ -165,7 +166,58 @@ def _post_matches_date(
     return local_posted_at.date() == posted_date
 
 
+LOCATE_EVENT_QUERY = EVENT_CANDIDATES_QUERY + """
+WITH event, matched_terms, match_coverage, candidate_score
+ORDER BY candidate_score DESC, event.event_key
+LIMIT $limit
+CALL {
+  WITH event
+  MATCH (post:Post)-[:HAS_EVENT_MENTION]->
+        (:EventMention)-[:EVIDENCE_FOR]->(event)
+  RETURN post
+  UNION
+  WITH event
+  MATCH (post:Post)-[:DESCRIBES]->(event)
+  RETURN post
+}
+WITH DISTINCT event, post, matched_terms, match_coverage, candidate_score
+OPTIONAL MATCH (source:Source)-[:PUBLISHED]->(post)
+OPTIONAL MATCH (post)-[:MENTIONS]->
+               (location:Entity {type: 'LOCATION'})
+OPTIONAL MATCH path =
+  (location)-[:PART_OF|IN_REGION*0..10]->
+  (ancestor:Entity {type: 'LOCATION'})
+WHERE all(node IN nodes(path) WHERE node.type = 'LOCATION')
+  AND all(node IN nodes(path)
+          WHERE single(other IN nodes(path) WHERE other = node))
+RETURN DISTINCT
+       event.event_key AS event_key,
+       candidate_score, match_coverage, matched_terms,
+       event.description AS event_description,
+       post.platform AS post_platform,
+       post.platform_id AS post_id,
+       post.url AS post_url,
+       post.content AS post_content,
+       source.name AS source_name,
+       toString(post.posted_at) AS posted_at,
+       location.name AS mentioned_location,
+       [node IN nodes(path) | node.name] AS location_chain,
+       [edge IN relationships(path) | type(edge)] AS relations,
+       length(path) AS depth
+ORDER BY candidate_score DESC, event_key, depth DESC, post_platform, post_id;
+"""
+
+
 class Neo4jRepository:
+    def locate_event(self, *, description: str, limit: int) -> list[dict[str, Any]]:
+        if self.driver is None:
+            raise RuntimeError("Neo4j chưa kết nối")
+        parameters = candidate_search_parameters(description)
+        if not parameters["candidate_terms"]:
+            return []
+        with self.driver.session(database=self.settings.neo4j_database, default_access_mode="READ") as session:
+            return session.run(LOCATE_EVENT_QUERY, **parameters, limit=limit).data()
+
     def __init__(self, settings: Settings):
         self.settings = settings
         self.driver = None
