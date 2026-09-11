@@ -595,3 +595,53 @@ def test_mixed_schema_post_scoping_and_event_participants(precision_graph, legac
            CREATE (e)-[:HAS_PARTICIPANT]->(n)''')
     assert {r['event_key'] for r in search(location='Hà Nội')} == {single, linked}
     assert search(related=True, location='Hà Nội') == []
+
+
+def test_location_enrichment_preserves_existing_administrative_hierarchy():
+    from knowledge_relations.location_hierarchy import _persist_edges_tx, _upsert_osm_chain_tx
+
+    settings = Settings()
+    marker = f"codex-location-hierarchy-{uuid4().hex}"
+    driver = GraphDatabase.driver(settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password))
+    try:
+        with driver.session(database=settings.neo4j_database) as session:
+            nodes = session.run(
+                """
+                CREATE (country:Entity {type: 'LOCATION', name: $marker + '-country', level: 0, test_marker: $marker})
+                CREATE (region:Entity {type: 'LOCATION', name: $marker + '-region', test_marker: $marker})
+                CREATE (province:Entity {type: 'LOCATION', name: $marker + '-province', test_marker: $marker})
+                CREATE (place:Entity {type: 'LOCATION', name: $marker + '-place', test_marker: $marker})
+                CREATE (province)-[:IN_REGION {source: 'ADMIN_DATA'}]->(region)
+                CREATE (region)-[:PART_OF {source: 'ADMIN_DATA'}]->(country)
+                RETURN elementId(country) AS country, elementId(region) AS region,
+                       elementId(province) AS province, elementId(place) AS place
+                """, marker=marker,
+            ).single()
+            edge = dict(source_node_id=nodes['province'], target_node_id=nodes['country'],
+                        source='CONTENT', evidence_text='province, country', parent_level=None,
+                        osm_id=None, osm_type=None)
+            assert session.execute_write(_persist_edges_tx, [edge])['skipped'] == 1
+            chain = {'chain': [{'name': marker + '-place', 'level': None},
+                               {'name': marker + '-province', 'level': 11},
+                               {'name': marker + '-country', 'level': 13}]}
+            result = session.execute_write(_upsert_osm_chain_tx, nodes['place'], chain)
+            assert result['osm_edges'] == 1
+            assert result['parents_reused'] == 1
+            assert session.execute_write(_upsert_osm_chain_tx, nodes['province'], chain)['osm_edges'] == 0
+            # A root in the canonical dataset must not gain a parent either.
+            assert session.execute_write(_persist_edges_tx, [dict(edge, source_node_id=nodes['country'],
+                                                                 target_node_id=nodes['place'])])['skipped'] == 1
+            rows = session.run(
+                "MATCH (a:Entity {test_marker: $marker})-[r]->(b:Entity {test_marker: $marker}) "
+                "RETURN a.name AS child, type(r) AS kind, b.name AS parent, r.source AS source",
+                marker=marker,
+            ).data()
+            assert {(r['child'], r['kind'], r['parent'], r['source']) for r in rows} == {
+                (marker + '-place', 'PART_OF', marker + '-province', 'PHOTON'),
+                (marker + '-province', 'IN_REGION', marker + '-region', 'ADMIN_DATA'),
+                (marker + '-region', 'PART_OF', marker + '-country', 'ADMIN_DATA'),
+            }
+    finally:
+        with driver.session(database=settings.neo4j_database) as session:
+            session.run('MATCH (n:Entity {test_marker: $marker}) DETACH DELETE n', marker=marker).consume()
+        driver.close()

@@ -343,11 +343,9 @@ def _persist_edges_tx(tx, edges: list[dict]) -> dict:
             MATCH (child:Entity), (parent:Entity)
             WHERE elementId(child) = $source_node_id AND elementId(parent) = $target_node_id
               AND child.type = 'LOCATION' AND parent.type = 'LOCATION' AND child <> parent
-              AND NOT EXISTS { MATCH (parent)-[:PART_OF*1..]->(child) }
-              AND NOT EXISTS {
-                MATCH (child)-[other:PART_OF]->(other_parent:Entity)
-                WHERE $parent_level IS NOT NULL AND other.parent_level = $parent_level
-                  AND other_parent <> parent }
+              AND child.level IS NULL
+              AND NOT EXISTS { MATCH (child)-[:PART_OF|IN_REGION]->(:Entity {type: 'LOCATION'}) }
+              AND NOT EXISTS { MATCH (parent)-[:PART_OF|IN_REGION*1..]->(child) }
             MERGE (child)-[relation:PART_OF]->(parent)
             ON CREATE SET relation.created_at = datetime(), relation._location_created = true
             WITH relation, coalesce(relation._location_created, false) AS created,
@@ -372,9 +370,21 @@ def _persist_edges_tx(tx, edges: list[dict]) -> dict:
     return counts
 
 
+def _has_existing_hierarchy(tx, node_id: str) -> bool:
+    record = tx.run(
+        "MATCH (child:Entity {type: 'LOCATION'}) WHERE elementId(child) = $node_id "
+        "RETURN child.level IS NOT NULL OR EXISTS { "
+        "MATCH (child)-[:PART_OF|IN_REGION]->(:Entity {type: 'LOCATION'}) "
+        "} AS has_parent", node_id=node_id,
+    ).single()
+    return bool(record and record.get("has_parent"))
+
+
 def _upsert_osm_chain_tx(tx, child_node_id: str, hierarchy: dict) -> dict:
     current_id = child_node_id
     counts = {"parents_created": 0, "parents_reused": 0, "osm_edges": 0, "skipped": 0}
+    if _has_existing_hierarchy(tx, child_node_id):
+        return counts
     tx.run(
         "MATCH (location:Entity) WHERE elementId(location) = $node_id "
         "SET location.osm_id = coalesce(location.osm_id, $osm_id), location.osm_type = coalesce(location.osm_type, $osm_type)",
@@ -419,6 +429,9 @@ def _upsert_osm_chain_tx(tx, child_node_id: str, hierarchy: dict) -> dict:
         }])
         counts["osm_edges"] += edge_counts["created"]
         counts["skipped"] += edge_counts["skipped"]
+        # Once attached to an existing location, its ancestry belongs to the DB.
+        if len(records) == 1 or edge_counts["skipped"]:
+            break
         current_id = parent_id
     return counts
 
@@ -458,11 +471,7 @@ def enrich_location_hierarchy(session, platform: str, post_id: str, content: str
     ))
     try:
         for location in locations:
-            existing = session.run(
-                "MATCH (child:Entity)-[:PART_OF]->(parent:Entity {type: 'LOCATION'}) "
-                "WHERE elementId(child) = $node_id RETURN count(*) > 0 AS has_parent",
-                node_id=location["node_id"]).single()
-            if existing and existing.get("has_parent"):
+            if _has_existing_hierarchy(session, location["node_id"]):
                 continue
             hints = [item["name"] for item in hint_locations if item["node_id"] != location["node_id"]]
             candidates = resolve_content_location(location, locations, persisted_edges, hints, geocode_fn, content=content)
