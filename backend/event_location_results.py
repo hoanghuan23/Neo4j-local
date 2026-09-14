@@ -54,6 +54,18 @@ def group_event_locations(candidates: list[EventLocationCandidate]) -> list[Even
                           if not any(other_mentioned == mentioned and len(other) > len(chain)
                                      and other[:len(chain)] == chain
                                      for other_mentioned, other in locations)]
+        # Hide ancestor-only rows already included in a more specific chain.
+        # Do not attach their sources to the child: mentioning an ancestor does
+        # not establish that the source also mentioned that child.
+        full_locations = [
+            evidence for evidence in full_locations
+            if not any(
+                len(other.location_chain) > len(evidence.location_chain)
+                and other.location_chain[-len(evidence.location_chain):]
+                == evidence.location_chain
+                for other in full_locations
+            )
+        ]
         groups.append(EventLocationGroup(
             event_key=event_key,
             event_description=next((row.event_description for row in rows if row.event_description), None),

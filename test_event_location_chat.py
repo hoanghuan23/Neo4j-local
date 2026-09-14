@@ -19,6 +19,16 @@ def test_normal_location_search_is_unchanged():
     assert parse_event_location_question('Sự kiện ở Hà Nội') is None
 
 
+def test_accident_location_question_without_event_prefix():
+    description = 'vụ tai nạn khiến một người phụ nữ cùng hai trẻ nhỏ tử vong tại chỗ'
+    parser, repository = Mock(), Mock()
+    repository.locate_event.return_value = []
+    result = ChatService(parser, repository).chat(description + ' diễn ra ở đâu ?', 10)
+    assert result.query.intent == 'locate_event'
+    repository.locate_event.assert_called_once_with(description=description, limit=10)
+    parser.parse.assert_not_called()
+
+
 def test_chat_returns_chains_and_sources_without_using_general_parser():
     parser, repository = Mock(), Mock()
     base = dict(event_key='e1', event_description='Bà cụ nhặt vàng',
@@ -80,6 +90,29 @@ def test_groups_posts_and_preserves_location_provenance():
     assert 'Chưa có địa điểm' not in result.answer
     assert len(result.location_candidates) == 5
     assert ChatResponse.model_validate(result.model_dump()).location_events == result.location_events
+
+
+def test_hides_ancestor_rows_without_losing_sources_or_distinct_locations():
+    repository = Mock()
+    chains = [
+        ['Cầu Bo', 'Trà Lý', 'Hưng Yên', 'miền Bắc', 'Việt Nam'],
+        ['Trà Lý', 'Hưng Yên', 'miền Bắc', 'Việt Nam'],
+        ['Vũ Thư', 'Hưng Yên', 'miền Bắc', 'Việt Nam'],
+        ['sông Trà Lý'],
+        ['Việt Nam'],
+    ]
+    repository.locate_event.return_value = [
+        dict(event_key='e1', post_id=str(index), mentioned_location=chain[0],
+             location_chain=chain)
+        for index, chain in enumerate(chains)
+    ] + [dict(event_key='e2', post_id='other', mentioned_location='Việt Nam',
+              location_chain=['Việt Nam'])]
+    result = ChatService(Mock(), repository).chat('Sự kiện cứu người diễn ra ở đâu', 10)
+    first, second = result.location_events
+    assert [loc.location_chain for loc in first.locations] == [chains[0], chains[2], chains[3]]
+    assert len(first.sources) == 5
+    assert [loc.source_ids for loc in first.locations] == [['source-1'], ['source-3'], ['source-4']]
+    assert second.locations[0].location_chain == ['Việt Nam']
 
 
 def test_distinct_events_unknown_locations_and_multiple_branches():
