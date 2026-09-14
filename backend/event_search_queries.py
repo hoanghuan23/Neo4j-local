@@ -193,7 +193,8 @@ RETURN event.event_key AS event_key,
        {mention}.time_expression AS time_expression,
        matched_entity_count, entities, relation_reasons,
        {{platform: post.platform, platform_id: post.platform_id, content: post.content,
-         url: post.url, posted_at: toString(post.posted_at), source_name: source.name}} AS post
+         url: post.url, posted_at: toString(post.posted_at), source_name: source.name,
+         metric_tier: post.metric_tier}} AS post
 """
 
 

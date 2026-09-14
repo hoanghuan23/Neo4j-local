@@ -29,12 +29,15 @@ def group_event_locations(candidates: list[EventLocationCandidate]) -> list[Even
                     post_platform=row.post_platform, post_id=row.post_id,
                     post_url=row.post_url, post_content=row.post_content,
                     source_name=row.source_name, posted_at=row.posted_at,
+                    metric_tier=row.metric_tier,
                 )
             elif has_source:
                 if not sources[key].source_name:
                     sources[key].source_name = row.source_name
                 if not sources[key].posted_at:
                     sources[key].posted_at = row.posted_at
+                if not sources[key].metric_tier:
+                    sources[key].metric_tier = row.metric_tier
             chain = tuple(row.location_chain or ([row.mentioned_location] if row.mentioned_location else []))
             if not chain:
                 continue

@@ -383,6 +383,7 @@ def test_repository_returns_distinct_sources_for_each_event():
                 "content": f"Nội dung {post_id}",
                 "posted_at": posted_at,
                 "source_name": f"Nguồn {post_id}",
+                "metric_tier": "hot" if post_id == "post-5" else "warm",
             },
         }
 
@@ -415,6 +416,7 @@ def test_repository_returns_distinct_sources_for_each_event():
     assert results[0]["sources"] == [
         {
             "source": f"Nguồn post-{index}",
+            "metric_tier": "hot" if index == 5 else "warm",
             "posted_at": f"2026-08-{19 + index:02d}T08:00:00",
             "url": None,
         }
@@ -472,6 +474,7 @@ def test_chat_returns_structured_graph_results():
     assert body["results"][0]["sources"] == [
         {
             "source": "Nguồn thử nghiệm",
+            "metric_tier": None,
             "posted_at": "2026-08-22T08:00:00+07:00",
             "url": "https://example.test/post-1",
         }

@@ -107,7 +107,7 @@ def test_location_sources_include_name_and_posted_at_after_deduplication():
                 mentioned_location='Thanh Hóa')
     repository.locate_event.return_value = [
         dict(base, location_chain=['Thanh Hóa']),
-        dict(base, location_chain=['Thanh Hóa', 'Việt Nam']),
+        dict(base, metric_tier='hot', location_chain=['Thanh Hóa', 'Việt Nam']),
         dict(event_key='e1', post_id='2'),
     ]
     result = ChatService(Mock(), repository).chat('Sự kiện cưa cây diễn ra ở đâu', 10)
@@ -119,3 +119,7 @@ def test_location_sources_include_name_and_posted_at_after_deduplication():
     payload = ChatResponse.model_validate(result.model_dump()).model_dump()
     assert payload['location_events'][0]['sources'][0]['posted_at'] == base['posted_at']
     assert payload['location_candidates'][0]['source_name'] == base['source_name']
+
+    assert payload['location_events'][0]['sources'][0]['metric_tier'] == 'hot'
+    assert payload['location_events'][0]['sources'][1]['metric_tier'] is None
+    assert payload['location_candidates'][1]['metric_tier'] == 'hot'

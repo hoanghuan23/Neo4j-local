@@ -73,6 +73,7 @@ class EventLocationCandidate(BaseModel):
     event_key: str
     source_name: str | None = None
     posted_at: str | None = None
+    metric_tier: str | None = None
     candidate_score: float | None = None
     match_coverage: float | None = None
     matched_terms: list[str] = Field(default_factory=list)
@@ -91,6 +92,7 @@ class EventLocationSource(BaseModel):
     source_id: str
     source_name: str | None = None
     posted_at: str | None = None
+    metric_tier: str | None = None
     post_platform: str | None = None
     post_id: str | None = None
     post_url: str | None = None
@@ -123,12 +125,14 @@ class PostResult(BaseModel):
     content: str
     url: str | None = None
     posted_at: str | None = None
+    metric_tier: str | None = None
     source_name: str | None = None
 
 
 class SourceResult(BaseModel):
     source: str
     posted_at: str | None = None
+    metric_tier: str | None = None
     url: str | None = None
 
 
@@ -185,6 +189,7 @@ class EventResult(BaseModel):
                 SourceResult(
                     source=self.post.source_name or self.post.platform,
                     posted_at=self.post.posted_at,
+                    metric_tier=self.post.metric_tier,
                     url=self.post.url,
                 )
             ]

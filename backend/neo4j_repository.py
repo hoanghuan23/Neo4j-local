@@ -200,6 +200,7 @@ RETURN DISTINCT
        post.content AS post_content,
        source.name AS source_name,
        toString(post.posted_at) AS posted_at,
+       post.metric_tier AS metric_tier,
        location.name AS mentioned_location,
        [node IN nodes(path) | node.name] AS location_chain,
        [edge IN relationships(path) | type(edge)] AS relations,
@@ -371,6 +372,7 @@ class Neo4jRepository:
                 {
                     "source": post.get("source_name") or post.get("platform"),
                     "posted_at": post.get("posted_at"),
+                    "metric_tier": post.get("metric_tier"),
                     "url": post.get("url"),
                 }
                 for post in posts
