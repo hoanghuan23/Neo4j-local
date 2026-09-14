@@ -586,7 +586,9 @@ def extract_knowledge(content: str, call_model=None) -> dict:
 
     1. NGUYÊN TẮC CHUNG
     - Ưu tiên precision hơn recall
-    - Không bắt buộc phải tạo Entity hoặc Event
+    - Không bắt buộc phải tạo Entity hoặc Event nếu văn bản không có đối tượng hoặc occurrence đáp ứng điều kiện.
+    Tuy nhiên, khi một địa danh có tên riêng được nhắc trực tiếp, rõ ràng và thực sự mang ý nghĩa địa lý trong ngữ cảnh, phải tạo Entity LOCATION,
+    kể cả khi địa danh đó không phải địa điểm của Event.
     - entities = [], events = [], event_relations = [] là kết quả hợp lệ.
     - Nếu không chắc -> BỎ QUA
     - Chỉ dùng thông tin được văn bản trực tiếp hỗ trợ
