@@ -85,7 +85,7 @@ _ENTITY_TIME_SUFFIX_RE = re.compile(
 _LATEST_EVENTS_QUERY_RE = re.compile(
     r"^(?:(?:cho\s+(?:tôi|mình)\s+biết|tìm)\s+)?"
     r"(?:các\s+|những\s+)?sự\s+kiện\s+"
-    r"(?:mới\s+nhất|mới\s+đây|gần\s+đây)$",
+    r"(?:mới\s+nhất|mới\s+đây|gần\s+đây|hôm\s+nay)$",
     re.IGNORECASE,
 )
 
@@ -159,6 +159,8 @@ class RuleBasedQuestionParser:
     def _parse_posted_date(self, text: str) -> date | None:
         match = _CALENDAR_DATE_RE.search(text)
         if not match:
+            if re.search(r"\bhôm\s+nay\b", text, re.IGNORECASE):
+                return self.today_provider()
             return None
         day, month, year = match.groups()
         try:

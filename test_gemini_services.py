@@ -236,7 +236,6 @@ def test_gemini_question_parser_uses_configured_default_hours_in_prompt():
     assert "Nếu không nêu khoảng thời gian, dùng hours=168" in prompt
     assert parsed.hours == 168
 
-
 def test_gemini_question_parser_keeps_broad_topic_as_search_condition():
     client = Mock()
     client.models.generate_content.return_value = SimpleNamespace(
@@ -262,13 +261,14 @@ def test_gemini_question_parser_keeps_broad_topic_as_search_condition():
     assert "phải được giữ trong entity, không trả null" in prompt
 
 
-def test_gemini_question_parser_uses_default_sort_for_latest_events_query():
+@pytest.mark.parametrize("question", ["các sự kiện mới nhất", "sự kiện hôm nay"])
+def test_gemini_question_parser_uses_default_sort_for_latest_events_query(question):
     client = Mock()
     client.models.generate_content.return_value = SimpleNamespace(
         parsed={
             "intent": "search_events",
             "location": "mới nhất",
-            "entity": "các sự kiện mới nhất",
+            "entity": question,
             "hours": 168,
         },
     )
@@ -279,11 +279,15 @@ def test_gemini_question_parser_uses_default_sort_for_latest_events_query():
         default_hours=168,
     )
 
-    parsed = parser.parse("các sự kiện mới nhất")
+    parsed = parser.parse(question)
 
     assert parsed.location is None
     assert parsed.entity is None
     assert parsed.hours == 168
+    if question == "sự kiện hôm nay":
+        assert parsed.posted_date == date.today()
+    else:
+        assert parsed.posted_date is None
 
 
 def test_parsed_question_schema_includes_optional_clarification():

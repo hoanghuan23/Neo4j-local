@@ -129,6 +129,23 @@ def test_parser_treats_latest_events_as_default_unfiltered_query():
     assert parsed.hours == 168
 
 
+def test_parser_treats_today_events_as_default_unfiltered_query():
+    parser = RuleBasedQuestionParser(today_provider=lambda: date(2026, 9, 15))
+    for question in ("sự kiện hôm nay", "Các sự kiện hôm nay?", "Tìm sự kiện hôm nay"):
+        parsed = parser.parse(question)
+        assert parsed.location is None
+        assert parsed.entity is None
+        assert parsed.hours == 24
+        assert parsed.posted_date == date(2026, 9, 15)
+
+
+def test_parser_resolves_today_again_for_each_question():
+    today_provider = Mock(side_effect=[date(2026, 9, 15), date(2026, 9, 16)])
+    parser = RuleBasedQuestionParser(today_provider=today_provider)
+    assert parser.parse("sự kiện hôm nay").posted_date == date(2026, 9, 15)
+    assert parser.parse("sự kiện hôm nay").posted_date == date(2026, 9, 16)
+
+
 def test_parser_extracts_exact_posted_date_without_polluting_location():
     parser = RuleBasedQuestionParser(
         today_provider=lambda: date(2026, 8, 25)
