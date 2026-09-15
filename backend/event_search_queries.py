@@ -121,6 +121,7 @@ def build_event_query(*, legacy: bool, related: bool) -> str:
     return f"""
 {binding}
 WHERE post.posted_at IS NOT NULL
+  AND (NOT $hot_only OR post.metric_tier = 'hot')
   AND (($posted_date IS NULL
         AND post.posted_at >= localdatetime() - duration({{hours: $hours}}))
     OR ($posted_date IS NOT NULL
@@ -194,7 +195,8 @@ RETURN event.event_key AS event_key,
        matched_entity_count, entities, relation_reasons,
        {{platform: post.platform, platform_id: post.platform_id, content: post.content,
          url: post.url, posted_at: toString(post.posted_at), source_name: source.name,
-         metric_tier: post.metric_tier}} AS post
+         metric_tier: post.metric_tier,
+         last_engagement_velocity: post.last_engagement_velocity}} AS post
 """
 
 

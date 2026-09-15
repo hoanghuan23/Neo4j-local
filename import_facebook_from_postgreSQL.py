@@ -31,6 +31,7 @@ def get_posts():
                     p.has_images,
                     p.has_videos,
                     p.metric_tier,
+                    p.last_engagement_velocity,
                     (
                         p.posted_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
                         AND p.posted_at <= CURRENT_TIMESTAMP
@@ -89,7 +90,8 @@ def import_post(tx, row):
             p.posted_at = $posted_at,
             p.has_images = $has_images,
             p.has_videos = $has_videos,
-            p.metric_tier = $metric_tier
+            p.metric_tier = $metric_tier,
+            p.last_engagement_velocity = $last_engagement_velocity
 
         MERGE (s)-[:PUBLISHED]->(p)
     """,
@@ -104,6 +106,11 @@ def import_post(tx, row):
         has_images=row["has_images"],
         has_videos=row["has_videos"],
         metric_tier=row["metric_tier"],
+        last_engagement_velocity=(
+            float(row["last_engagement_velocity"])
+            if row["last_engagement_velocity"] is not None
+            else None
+        ),
     )
 
 
@@ -114,10 +121,16 @@ def update_post_metric_tier(tx, row):
             platform: 'facebook',
             platform_id: $post_platform_id
         })
-        SET p.metric_tier = $metric_tier
+        SET p.metric_tier = $metric_tier,
+            p.last_engagement_velocity = $last_engagement_velocity
         """,
         post_platform_id=str(row["facebook_post_id"]),
         metric_tier=row["metric_tier"],
+        last_engagement_velocity=(
+            float(row["last_engagement_velocity"])
+            if row["last_engagement_velocity"] is not None
+            else None
+        ),
     )
 
 
@@ -171,7 +184,8 @@ def main():
 
         print(
             f"Đã import {stats['new_posts']} post mới vào Neo4j; "
-            f"cập nhật metric_tier cho {stats['updated_metric_tiers']} post "
+            f"cập nhật metric_tier và last_engagement_velocity cho "
+            f"{stats['updated_metric_tiers']} post "
             f"trong 24 giờ gần nhất; "
             f"tìm thấy {stats['existing_posts']} post đã có"
             + (

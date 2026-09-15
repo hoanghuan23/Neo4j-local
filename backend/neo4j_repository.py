@@ -249,11 +249,12 @@ class Neo4jRepository:
     def search_related_events(
         self, *, location: str | None, entity: str | None, hours: int,
         limit: int, posted_date: date | None = None,
-        after: tuple[int, str, str] | None = None,
+        after: tuple[float, str, str] | None = None,
+        hot_only: bool = False,
     ) -> list[dict[str, Any]]:
         return self.search_events(
             location=location, entity=entity, hours=hours, limit=limit,
-            posted_date=posted_date, after=after, _related=True,
+            posted_date=posted_date, after=after, hot_only=hot_only, _related=True,
         )
 
     def search_events(
@@ -264,7 +265,8 @@ class Neo4jRepository:
         hours: int,
         limit: int,
         posted_date: date | None = None,
-        after: tuple[int, str, str] | None = None,
+        after: tuple[float, str, str] | None = None,
+        hot_only: bool = False,
         _related: bool = False,
     ) -> list[dict[str, Any]]:
         if self.driver is None:
@@ -280,6 +282,7 @@ class Neo4jRepository:
             "fold_characters": [chr(code) for code in range(0x300, 0x370)
                                 if unicodedata.category(chr(code)) == "Mn"],
             "hours": hours,
+            "hot_only": hot_only,
             "posted_date": posted_date.isoformat() if posted_date else None,
             "posted_at_utc_offset_hours": (
                 self.settings.posted_at_utc_offset_hours
@@ -328,6 +331,19 @@ class Neo4jRepository:
                 )
             ]
 
+        if hot_only:
+            combined_results = [row for row in combined_results
+                                if row["post"].get("metric_tier") == "hot"]
+
+        def rank(result):
+            score = result["post"].get("last_engagement_velocity")
+            return (
+                (float(score) if score is not None else float("-inf"))
+                if hot_only else result.get("matched_entity_count", 0),
+                result["post"].get("posted_at") or "",
+                result["event_key"],
+            )
+
         reasons_by_event_key: dict[str, dict[str, dict[str, Any]]] = {}
         for result in combined_results:
             event_key = result["event_key"]
@@ -340,14 +356,8 @@ class Neo4jRepository:
                 _post_identity(post)
             ] = post
             existing = results_by_event_key.get(event_key)
-            result_rank = (
-                result.get("matched_entity_count", 0),
-                result["post"].get("posted_at") or "",
-            )
-            existing_rank = (
-                existing.get("matched_entity_count", 0),
-                existing["post"].get("posted_at") or "",
-            ) if existing is not None else None
+            result_rank = rank(result)
+            existing_rank = rank(existing) if existing is not None else None
             if existing_rank is None or result_rank > existing_rank:
                 results_by_event_key[event_key] = result
 
@@ -380,23 +390,14 @@ class Neo4jRepository:
 
         sorted_results = sorted(
             results_by_event_key.values(),
-            key=lambda result: (
-                result.get("matched_entity_count", 0),
-                result["post"].get("posted_at") or "",
-                result["event_key"],
-            ),
+            key=rank,
             reverse=True,
         )
         if after is not None:
             sorted_results = [
                 result
                 for result in sorted_results
-                if (
-                    result.get("matched_entity_count", 0),
-                    result["post"].get("posted_at") or "",
-                    result["event_key"],
-                )
-                < after
+                if rank(result) < after
             ]
         return sorted_results[:limit]
 

@@ -10,6 +10,7 @@ from backend.question_parser import (
     RuleBasedQuestionParser,
     has_explicit_duration,
     is_latest_events_query,
+    is_hot_events_query,
     normalize_entity_for_search,
     normalize_location_for_search,
 )
@@ -208,12 +209,12 @@ class GeminiQuestionParser:
         posted_date = rule_parsed.posted_date
         hours = (
             rule_parsed.hours
-            if has_explicit_duration(question)
+            if has_explicit_duration(question) or rule_parsed.hot_only
             else parsed.hours
         )
         if posted_date is not None and rule_parsed.location is not None:
             location = rule_parsed.location
-        if is_latest_events_query(question):
+        if is_latest_events_query(question) or is_hot_events_query(question):
             location = None
             entity = None
         elif location is None and entity is None:
@@ -227,6 +228,10 @@ class GeminiQuestionParser:
                 "entity": entity,
                 "hours": hours,
                 "posted_date": posted_date,
+                "hot_only": rule_parsed.hot_only,
+                "clarification_question": (
+                    None if rule_parsed.hot_only else parsed.clarification_question
+                ),
             }
         )
 

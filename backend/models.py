@@ -16,6 +16,7 @@ class ParsedQuestion(BaseModel):
     entity: str | None = None
     hours: int = Field(ge=1, le=720)
     posted_date: date | None = None
+    hot_only: bool = False
     clarification_question: str | None = None
 
 
@@ -29,8 +30,16 @@ class EventSearchCursor(BaseModel):
     posted_at: str
     event_key: str = Field(min_length=1)
 
+    last_engagement_velocity: float | None = Field(default=None, allow_inf_nan=False)
+
     @property
-    def sort_key(self) -> tuple[int, str, str]:
+    def sort_key(self) -> tuple[float, str, str]:
+        if self.query.hot_only:
+            return (
+                self.last_engagement_velocity if self.last_engagement_velocity is not None else float("-inf"),
+                self.posted_at,
+                self.event_key,
+            )
         return (
             self.matched_entity_count,
             self.posted_at,
@@ -126,6 +135,7 @@ class PostResult(BaseModel):
     url: str | None = None
     posted_at: str | None = None
     metric_tier: str | None = None
+    last_engagement_velocity: float | None = None
     source_name: str | None = None
 
 

@@ -90,6 +90,19 @@ _LATEST_EVENTS_QUERY_RE = re.compile(
 )
 
 
+_HOT_EVENTS_QUERY_RE = re.compile(
+    r"^(?:(?:cho\s+(?:tôi|mình)\s+biết|tìm)\s+)?"
+    r"(?:các\s+|những\s+)?sự\s+kiện\s+hot\s+"
+    r"(?:hôm\s+nay|trong\s+ngày(?:\s+hôm\s+nay)?|trong\s+tuần|tuần\s+này)$",
+    re.IGNORECASE,
+)
+
+
+def is_hot_events_query(question: str) -> bool:
+    normalized = _SPACE_RE.sub(" ", question.strip()).strip(" \t,?.!")
+    return _HOT_EVENTS_QUERY_RE.fullmatch(normalized) is not None
+
+
 def is_latest_events_query(question: str) -> bool:
     """Return whether the question requests the default latest-event feed."""
     normalized = _SPACE_RE.sub(" ", question.strip()).strip(" \t,?.!")
@@ -143,7 +156,7 @@ class RuleBasedQuestionParser:
 
     def parse(self, question: str) -> ParsedQuestion:
         text = _SPACE_RE.sub(" ", question.strip())
-        if is_latest_events_query(text):
+        if is_latest_events_query(text) or is_hot_events_query(text):
             entity = None
             location = None
         else:
@@ -154,9 +167,14 @@ class RuleBasedQuestionParser:
             entity=entity,
             hours=self._parse_hours(text),
             posted_date=self._parse_posted_date(text),
+            hot_only=is_hot_events_query(text),
         )
 
     def _parse_posted_date(self, text: str) -> date | None:
+        if is_hot_events_query(text):
+            if re.search(r"\btuần\b", text, re.IGNORECASE):
+                return None
+            return self.today_provider()
         match = _CALENDAR_DATE_RE.search(text)
         if not match:
             if re.search(r"\bhôm\s+nay\b", text, re.IGNORECASE):
@@ -173,6 +191,8 @@ class RuleBasedQuestionParser:
             return None
 
     def _parse_hours(self, text: str) -> int:
+        if is_hot_events_query(text) and re.search(r"\btuần\b", text, re.IGNORECASE):
+            return min(7 * 24, self.max_hours)
         if _PREVIOUS_WEEK_RE.search(text):
             return min(7 * 24, self.max_hours)
 

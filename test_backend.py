@@ -486,6 +486,7 @@ def test_chat_returns_structured_graph_results():
         "hours": 24,
         "posted_date": None,
         "clarification_question": None,
+        "hot_only": False,
     }
     assert body["results"][0]["post"]["platform_id"] == "post-1"
     assert body["results"][0]["sources"] == [
@@ -686,6 +687,7 @@ def test_chat_endpoint_uses_gemini_parser_and_answer_generator():
         "hours": 48,
         "posted_date": None,
         "clarification_question": None,
+        "hot_only": False,
     }
     assert body["count"] == 1
     assert repository.search_args == {

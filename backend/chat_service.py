@@ -48,13 +48,15 @@ class EventRepository(Protocol):
         hours: int,
         posted_date: date | None,
         limit: int,
-        after: tuple[int, str, str] | None = None,
+        after: tuple[float, str, str] | None = None,
+        hot_only: bool = False,
     ) -> list[dict]: ...
 
     def search_related_events(
         self, *, location: str | None, entity: str | None, hours: int,
         posted_date: date | None, limit: int,
-        after: tuple[int, str, str] | None = None,
+        after: tuple[float, str, str] | None = None,
+        hot_only: bool = False,
     ) -> list[dict]: ...
 
     def search_related_entities(
@@ -212,7 +214,7 @@ class ChatService:
         parsed: ParsedQuestion,
         limit: int,
         start_index: int,
-        after: tuple[int, str, str] | None = None,
+        after: tuple[float, str, str] | None = None,
         continuation: bool = False,
         related: bool = False,
     ) -> ChatResponse:
@@ -227,6 +229,7 @@ class ChatService:
             posted_date=parsed.posted_date,
             limit=limit + 1,
             after=after,
+            **({"hot_only": True} if parsed.hot_only else {}),
         )
         has_more = len(raw_results) > limit
         page_rows = raw_results[:limit]
@@ -253,6 +256,7 @@ class ChatService:
                     matched_entity_count=last.get("matched_entity_count", 0),
                     posted_at=last["post"].get("posted_at") or "",
                     event_key=last["event_key"],
+                    last_engagement_velocity=last["post"].get("last_engagement_velocity"),
                 )
             )
         answer = answer_generator.generate(**answer_kwargs)

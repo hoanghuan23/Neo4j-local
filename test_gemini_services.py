@@ -261,7 +261,7 @@ def test_gemini_question_parser_keeps_broad_topic_as_search_condition():
     assert "phải được giữ trong entity, không trả null" in prompt
 
 
-@pytest.mark.parametrize("question", ["các sự kiện mới nhất", "sự kiện hôm nay"])
+@pytest.mark.parametrize("question", ["các sự kiện mới nhất", "sự kiện hôm nay", "các sự kiện hot trong ngày"])
 def test_gemini_question_parser_uses_default_sort_for_latest_events_query(question):
     client = Mock()
     client.models.generate_content.return_value = SimpleNamespace(
@@ -284,7 +284,8 @@ def test_gemini_question_parser_uses_default_sort_for_latest_events_query(questi
     assert parsed.location is None
     assert parsed.entity is None
     assert parsed.hours == 168
-    if question == "sự kiện hôm nay":
+    assert parsed.hot_only == (question == "các sự kiện hot trong ngày")
+    if question in ("sự kiện hôm nay", "các sự kiện hot trong ngày"):
         assert parsed.posted_date == date.today()
     else:
         assert parsed.posted_date is None
@@ -301,6 +302,7 @@ def test_parsed_question_schema_includes_optional_clarification():
         "hours",
         "posted_date",
         "clarification_question",
+        "hot_only",
     }
 
 
@@ -550,3 +552,18 @@ def test_logs_tokens_and_cost_for_parser_and_answer(caplog):
     assert "output_tokens=200" in logs
     assert "thinking_tokens=100" in logs
     assert "total_cost_usd=0.00095000" in logs
+
+
+def test_gemini_weekly_hot_query_overrides_incorrect_model_time():
+    client = Mock()
+    client.models.generate_content.return_value = SimpleNamespace(parsed={
+        'hours': 24, 'posted_date': '2026-09-15',
+        'entity': 'sự kiện hot trong tuần',
+    })
+    parser = GeminiQuestionParser(client=client, types_module=FakeTypes, model='test-model')
+    parsed = parser.parse('sự kiện hot trong tuần')
+    assert parsed.hot_only
+    assert parsed.hours == 168
+    assert parsed.posted_date is None
+    assert parsed.entity is None
+    assert parsed.location is None
