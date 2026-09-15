@@ -6,7 +6,7 @@ from backend.models import ParsedQuestion
 
 _SPACE_RE = re.compile(r"\s+")
 _LOCATE_EVENT_RE = re.compile(
-    r'^\s*sự\s+kiện\s+(.+?)\s+(?:diễn\s+ra|xảy\s+ra)\s+(?:ở|tại)\s+đâu\s*[?!.]*\s*$',
+    r'^\s*(?:sự\s+kiện\s+)?(.+?)\s+(?:diễn\s+ra|xảy\s+ra)\s+(?:ở|tại)\s+đâu\s*[?!.]*\s*$',
     re.IGNORECASE | re.DOTALL,
 )
 

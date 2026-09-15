@@ -60,6 +60,84 @@ class EventConsolidationTests(unittest.TestCase):
         self.assertEqual([item["event_key"] for item in selected], ["stop"])
         self.assertGreater(candidate_score(mention, event), 0.5)
 
+    def test_funeral_group_and_separate_actors_can_merge(self):
+        mention = self.mention(
+            "Đồng đội và người dân đến viếng Trung tá Trần Văn Tùng trong trời mưa."
+        )
+        mention.update(type="VISIT", participants=[
+            self.participant("đồng đội và người dân", identified=False),
+            self.participant("Trần Văn Tùng", "TARGET"),
+        ])
+        event = self.event("funeral", "Đồng đội và người dân tổ chức lễ tiễn biệt Trung tá Trần Văn Tùng trong trời mưa.")
+        event.update(type="DEATH", participants=[
+            self.participant("đồng đội", identified=False),
+            self.participant("người dân", identified=False),
+            self.participant("Trần Văn Tùng", "TARGET"),
+        ])
+        for left, right in [(mention, event), (event, mention)]:
+            with self.subTest(direction=left["type"]):
+                self.assertEqual(candidate_score_components(left, right)["actor"], 0.25)
+                self.assertEqual(evaluate_merge_guard(left, right)["status"], "PASS")
+                decision = effective_match_decision({
+                    "candidate_event_key": "funeral", "decision": "SAME_EVENT",
+                    "confidence": 0.9, "reason": "Cùng lễ tiễn biệt",
+                }, left, right, threshold=0.9)
+                self.assertEqual(decision["decision"], "SAME_EVENT")
+        self.assertEqual(len(select_candidates(mention, [event])), 1)
+        event["participants"][-1] = self.participant("Nguyễn Văn Bình", "TARGET")
+        self.assertIn("TARGET_CONFLICT", evaluate_merge_guard(mention, event)["reason_codes"])
+
+    def test_anonymous_actor_group_does_not_match_unrelated_actors(self):
+        mention = self.mention("Người dân đến viếng")
+        event = self.event("other", "Đoàn đại biểu đến viếng")
+        mention["participants"] = [self.participant("đồng đội và người dân", identified=False)]
+        event["participants"] = [self.participant("đoàn đại biểu", identified=False)]
+        self.assertEqual(evaluate_merge_guard(mention, event)["status"], "REVIEW")
+
+    def test_named_entities_and_targets_are_not_split(self):
+        mention = self.mention("Tham gia sự kiện")
+        mention["participants"] = [
+            self.participant("Bộ Văn hóa và Thể thao"),
+            self.participant("người dân và đồng đội", "TARGET", identified=False),
+        ]
+        profile = comparison_profile(mention)
+        self.assertEqual(len(profile["actors"]), 1)
+        self.assertEqual(profile["actors"][0]["identity"], "bo van hoa va the thao")
+        self.assertEqual(len(profile["targets"]), 1)
+
+    def test_car_spelling_and_classifier_do_not_override_same_event(self):
+        for source in ["chiếc ôtô", "ôtô", "ô tô", "Một chiếc ô tô", "một ôtô"]:
+            for target in ["ôtô", "ô tô"]:
+                for role in ["ACTOR", "SUBJECT"]:
+                    with self.subTest(source=source, target=target, role=role):
+                        mention = self.mention("Ôtô tông biển cảnh báo rồi lao xuống hố đang thi công trên cao tốc Biên Hòa - Vũng Tàu")
+                        event = self.event("accident", "Ô tô lọt hố công trình trên cao tốc Biên Hòa - Vũng Tàu")
+                        mention.update(type="ACCIDENT", participants=[self.participant(source, identified=False)])
+                        event.update(type="ACCIDENT", participants=[self.participant(target, role, identified=False)])
+                        self.assertEqual(candidate_score_components(mention, event)["actor"], 0.25)
+                        self.assertEqual(len(select_candidates(mention, [event])), 1)
+                        effective = effective_match_decision({
+                            "candidate_event_key": "accident", "decision": "SAME_EVENT",
+                            "confidence": 0.95, "reason": "Cùng vụ ô tô lọt hố công trình",
+                        }, mention, event, threshold=0.9)
+                        self.assertEqual(effective["decision"], "SAME_EVENT")
+
+    def test_car_normalization_preserves_distinguishing_details(self):
+        for left, right in [
+            ("chiếc ôtô 51A-12345", "ô tô 51A-67890"),
+            ("ôtô tải", "ô tô con"),
+            ("hai ô tô", "ô tô"),
+            ("xe máy", "ô tô"),
+        ]:
+            with self.subTest(left=left, right=right):
+                mention = self.mention("Xe gặp nạn")
+                event = self.event("other", "Xe gặp nạn")
+                mention["participants"] = [self.participant(left, identified=False)]
+                event["participants"] = [self.participant(right, identified=False)]
+                self.assertEqual(evaluate_merge_guard(mention, event)["status"], "REVIEW")
+        mention["participants"] = [self.participant("Chiếc Ôtô")]
+        self.assertEqual(comparison_profile(mention)["actors"][0]["identity"], "chiec oto")
+
     def test_start_and_stop_are_rejected_before_model(self):
         mention = self.mention("VETC tạm dừng thu phí ví điện tử")
         event = self.event("start", "VETC bắt đầu áp dụng phí ví điện tử")
