@@ -190,3 +190,12 @@ def _usage_from_response(response: Any) -> GeminiUsage:
             getattr(metadata, "thoughts_token_count", None) or 0
         ),
     )
+
+
+def call_gemini(prompt: str, output_schema: dict) -> dict:
+    """Call the configured Gemini model and release the client afterward."""
+    caller = GeminiKnowledgeCaller()
+    try:
+        return caller(prompt, output_schema)
+    finally:
+        caller.close()

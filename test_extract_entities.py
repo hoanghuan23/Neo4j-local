@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
-import extract_entities_ollama as subject
+import extract_entities as subject
 
 
 class NormalizationTests(unittest.TestCase):
@@ -54,63 +54,7 @@ class NormalizationTests(unittest.TestCase):
         )
 
 
-class OllamaClientTests(unittest.TestCase):
-    @patch.object(subject.requests, "post")
-    def test_request_uses_configured_larger_context_window(self, post):
-        response = post.return_value
-        response.status_code = 200
-        response.content = b'{"response":"{}"}'
-        response.json.return_value = {
-            "response": "{}",
-            "done": True,
-            "done_reason": "stop",
-        }
-
-        subject.call_ollama("long prompt", {})
-
-        request_body = post.call_args.kwargs["json"]
-        self.assertEqual(request_body["keep_alive"], 0)
-        self.assertEqual(
-            request_body["options"]["num_ctx"],
-            subject.OLLAMA_CONTEXT_TOKENS,
-        )
-        self.assertGreaterEqual(subject.OLLAMA_CONTEXT_TOKENS, 32_768)
-
-    @patch.object(subject.requests, "post")
-    def test_empty_model_response_logs_metadata_and_raises_clear_error(self, post):
-        response = post.return_value
-        response.status_code = 200
-        response.content = b'{"response":""}'
-        response.json.return_value = {
-            "model": subject.OLLAMA_MODEL,
-            "response": "",
-            "done": True,
-            "done_reason": "stop",
-        }
-
-        with self.assertLogs(subject.LOGGER, level="ERROR") as logs:
-            with self.assertRaisesRegex(ValueError, "response rỗng"):
-                subject.call_ollama("prompt", {})
-
-        output = "\n".join(logs.output)
-        self.assertIn("reason=stop", output)
-        self.assertNotIn("context", output)
-
-    @patch.object(subject.requests, "post")
-    def test_invalid_model_json_logs_raw_response(self, post):
-        response = post.return_value
-        response.status_code = 200
-        response.content = b'{"response":"not-json"}'
-        response.json.return_value = {"response": "not-json", "done": True}
-
-        with self.assertLogs(subject.LOGGER, level="ERROR") as logs:
-            with self.assertRaisesRegex(ValueError, "không phải JSON hợp lệ"):
-                subject.call_ollama("prompt", {})
-
-        self.assertIn("raw_response_preview='not-json'", "\n".join(logs.output))
-        self.assertFalse(post.call_args.kwargs["json"]["think"])
-        self.assertEqual(post.call_count, subject.OLLAMA_MAX_ATTEMPTS)
-
+class GeminiPipelineTests(unittest.TestCase):
     @patch.object(subject, "_process_new_posts")
     @patch.object(subject, "classify_relation_routes")
     @patch.object(subject, "consolidate_pending_mentions")

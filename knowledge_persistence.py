@@ -5,7 +5,7 @@ from knowledge_settings import (
     GEMINI_MODEL,
     KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
     KNOWLEDGE_PROMPT_VERSION,
-    OLLAMA_LOG_PREVIEW_CHARS,
+    KNOWLEDGE_ERROR_MAX_CHARS,
     LOCATION_HIERARCHY_MODULE_VERSION,
 )
 from knowledge_extraction import normalize_name, prepare_entity
@@ -21,7 +21,8 @@ MATCH (p:Post {
 // LOCATION imports may store an accent-free normalized_name and no aliases.
 // Resolve those through the display name or the incoming accent-free key.
 OPTIONAL MATCH (candidate:Entity {type: $entity_type})
-WHERE candidate.normalized_name IN $identity_names
+WHERE candidate.location_mention_key IS NULL AND (
+   candidate.normalized_name IN $identity_names
    OR any(alias IN coalesce(candidate.aliases, [])
           WHERE alias IN $identity_names
              OR toLower(trim(alias)) IN $identity_names)
@@ -29,7 +30,7 @@ WHERE candidate.normalized_name IN $identity_names
        toLower(trim(candidate.name)) IN $identity_names
        OR candidate.normalized_name = $search_name
        OR candidate.search_name = $search_name
-   ))
+   )))
 WITH p, candidate,
      CASE
          WHEN candidate.normalized_name = $normalized_name THEN 0
@@ -100,7 +101,7 @@ SET e.aliases = reduce(
     END
 
 MERGE (p)-[:MENTIONS]->(e)
-RETURN e.normalized_name AS normalized_name, e.type AS entity_type
+RETURN e.normalized_name AS normalized_name, e.type AS entity_type, elementId(e) AS node_id
 """
 
 
@@ -118,6 +119,22 @@ def _merge_entity(tx, platform: str, post_id: str, entity: dict, entities=(), co
         **prepared,
     )
     record = result.single()
+    if record is None and prepared['entity_type'] == 'LOCATION':
+        # Preserve an ambiguous name as source-local evidence, without choosing
+        # an administrative identity or assigning an unsupported parent.
+        import hashlib
+        mention_key = hashlib.sha256(json.dumps(
+            [platform, post_id, prepared['normalized_name']], ensure_ascii=False
+        ).encode('utf-8')).hexdigest()
+        record = tx.run('''MATCH (p:Post {platform:$platform, platform_id:$post_id})
+            MERGE (e:Entity {location_mention_key:$mention_key})
+            SET e.type='LOCATION', e.name=$display_name,
+                e.normalized_name=$normalized_name, e.search_name=$search_name,
+                e.aliases=$identity_names, e.resolution_status='NEEDS_REVIEW'
+            MERGE (p)-[:MENTIONS]->(e)
+            RETURN e.normalized_name AS normalized_name, e.type AS entity_type,
+                   elementId(e) AS node_id''', platform=platform, post_id=post_id,
+            mention_key=mention_key, **prepared).single()
     if record is None:
         return None
     if record is not None:
@@ -127,6 +144,9 @@ def _merge_entity(tx, platform: str, post_id: str, entity: dict, entities=(), co
             prepared["normalized_name"] = resolved_name
         if isinstance(resolved_type, str):
             prepared["entity_type"] = resolved_type
+        node_id = record.get('node_id')
+        if isinstance(node_id, str):
+            prepared['node_id'] = node_id
     return prepared
 
 
@@ -735,7 +755,7 @@ def mark_knowledge_failure(tx, platform: str, post_id: str, error: str) -> None:
         post_id=post_id,
         knowledge_model=GEMINI_MODEL,
         knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
-        knowledge_error=error[:OLLAMA_LOG_PREVIEW_CHARS],
+        knowledge_error=error[:KNOWLEDGE_ERROR_MAX_CHARS],
     ).consume()
 
 

@@ -1,19 +1,14 @@
 import logging
 
-# Ollama imports are retained only as a disabled compatibility fallback for
-# older tools/tests. The runtime pipeline below uses Gemini exclusively.
-import requests
 from neo4j import GraphDatabase
 
 import knowledge_extraction as _extraction
 from knowledge_extraction import (
-    call_ollama,
     classify_entity_type,
     is_generic_entity,
     make_search_name,
     normalize_name,
     normalize_null,
-    parse_ollama_payload,
     prepare_entity,
 )
 from knowledge_gemini import GeminiKnowledgeCaller
@@ -62,10 +57,6 @@ def get_gemini_caller() -> GeminiKnowledgeCaller:
 
 def call_gemini(prompt: str, output_schema: dict) -> dict:
     return get_gemini_caller()(prompt, output_schema)
-
-
-# Disabled Ollama runtime path (kept above only as a compatibility fallback):
-# call_groq = call_ollama
 
 
 def call_groq(prompt: str, output_schema: dict) -> dict:

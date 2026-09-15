@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 POST_TARGET = {
     "platform": "facebook",
     "post_ids": [
-        "1556703823150438",
+        "1427129416300473"
     ],
 }
 
@@ -48,7 +48,7 @@ MODEL_PRICING = {
     "gemini-3.1-flash-lite": ModelPricing(Decimal("0.25"), Decimal("1.50")),
     "gemini-3.5-flash-lite": ModelPricing(Decimal("0.30"), Decimal("2.50")),
 }
-DEFAULT_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 TOKENS_PER_MILLION = Decimal("1000000")
 
 

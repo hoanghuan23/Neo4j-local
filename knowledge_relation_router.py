@@ -2,7 +2,7 @@ import json
 
 from langsmith import traceable
 
-from knowledge_extraction import call_ollama, normalize_name
+from knowledge_extraction import call_gemini, normalize_name
 from knowledge_settings import (
     RELATION_GROUPS,
     RELATION_ROUTER_PROMPT_VERSION,
@@ -281,6 +281,6 @@ QUY TẮC OUTPUT
 </content>
 """.strip()
     if call_model is None:
-        call_model = call_ollama
+        call_model = call_gemini
     raw = call_model(prompt, RELATION_ROUTER_SCHEMA)
     return normalize_relation_routes(content, knowledge, raw)

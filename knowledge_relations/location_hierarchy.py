@@ -6,7 +6,7 @@ import unicodedata
 
 from langsmith import traceable
 
-from knowledge_extraction import call_ollama, location_identity_names, make_search_name, normalize_name
+from knowledge_extraction import call_gemini, location_identity_names, make_search_name, normalize_name
 from knowledge_settings import (
     LOCATION_HIERARCHY_MODULE_VERSION,
     LOCATION_HIERARCHY_SCHEMA,
@@ -102,7 +102,7 @@ Nếu không đủ bằng chứng, trả relations rỗng. Chỉ trả JSON đú
 <locations>{json.dumps(compact, ensure_ascii=False)}</locations>
 <content>{content}</content>
 """.strip()
-    call_model = call_model or call_ollama
+    call_model = call_model or call_gemini
     return normalize_content_edges(content, locations, call_model(prompt, LOCATION_HIERARCHY_SCHEMA))
 
 

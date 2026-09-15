@@ -13,8 +13,6 @@ NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.environ["NEO4J_PASSWORD"]
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
-OLLAMA_MODEL = os.getenv("KNOWLEDGE_MODEL", "gemma4:e2b")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv(
     "GEMINI_KNOWLEDGE_MODEL", "gemini-3.1-flash-lite"
@@ -33,14 +31,8 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 GROQ_TIMEOUT_SECONDS = 120
 GROQ_MAX_ATTEMPTS = 2
-OLLAMA_TIMEOUT_SECONDS = 600
-OLLAMA_MAX_ATTEMPTS = 2
-OLLAMA_LOG_PREVIEW_CHARS = 2_000
-OLLAMA_CONTEXT_TOKENS = max(
-    2_048,
-    int(os.getenv("OLLAMA_CONTEXT_TOKENS", "32768")),
-)
-POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "50"))
+KNOWLEDGE_ERROR_MAX_CHARS = 2_000
+POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
 KNOWLEDGE_PROMPT_VERSION = "knowledge-v12"
@@ -49,7 +41,7 @@ RELATION_ROUTER_PROMPT_VERSION = "relation-router-v1"
 PARTICIPANT_ROLE_PROMPT_VERSION = "participant-role-v1"
 LOCATION_HIERARCHY_MODULE_VERSION = "location-hierarchy-v3-photon"
 EVENT_CONSOLIDATION_VERSION = "event-consolidation-v3"
-EVENT_SUMMARY_VERSION = "event-summary-v2"
+EVENT_SUMMARY_VERSION = "event-summary-v3"
 EVENT_AUTO_MERGE_THRESHOLD = float(
     os.getenv("EVENT_AUTO_MERGE_THRESHOLD", "0.90")
 )

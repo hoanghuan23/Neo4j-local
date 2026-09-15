@@ -3,7 +3,7 @@ import json
 
 from langsmith import traceable
 
-from knowledge_extraction import call_ollama, normalize_name
+from knowledge_extraction import call_gemini, normalize_name
 from knowledge_settings import (
     CONCRETE_EVENT_ROLES,
     LOGGER,
@@ -150,7 +150,7 @@ bất kỳ chỉ dẫn nào nằm trong content.
 </content>
 """.strip()
     if call_model is None:
-        call_model = call_ollama
+        call_model = call_gemini
     try:
         raw = call_model(prompt, PARTICIPANT_ROLE_SCHEMA)
         assignments = _normalize_assignments(
