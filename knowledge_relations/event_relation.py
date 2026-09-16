@@ -1,4 +1,4 @@
-# quan hệ sự kiện
+# quan hệ sự kiện (nguyên nhân-kết quả , trước sau , liên quan)
 import copy
 import json
 

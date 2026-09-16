@@ -1,4 +1,4 @@
-# phân cấp sự kiện
+# phân cấp sự kiện (sự kiện A và B là 1, sự kiện A là con của sự kiện B)
 import hashlib
 import json
 import math
