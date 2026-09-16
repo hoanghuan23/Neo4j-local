@@ -12,9 +12,9 @@ from knowledge_settings import (
 
 EVENT_RELATION_GROUPS = RELATION_GROUPS - {
     "EVENT_HIERARCHY",
-    "CAUSAL_RELATION",
+    "EVENT_RELATION",
 }
-PAIR_RELATION_GROUPS = {"EVENT_HIERARCHY", "CAUSAL_RELATION"}
+PAIR_RELATION_GROUPS = {"EVENT_HIERARCHY", "EVENT_RELATION"}
 
 
 def _evidence_in_content(evidence: str, content: str) -> bool:
@@ -252,7 +252,8 @@ nằm trong nội dung đó.
 
 NHÓM THEO TỪNG EVENT
 - PARTICIPANT_ROLE: có người/tổ chức/đối tượng tham gia cần xác định vai trò.
-- LOCATION_HIERARCHY: Event có địa điểm cần phân tích quan hệ địa lý cha-con.
+- ENTITY_HIERARCHY: Entity trong Event có quan hệ phân cấp cha-con cần phân tích;
+  hiện hỗ trợ địa điểm qua module entity_hierarchy/location_hierarchy.
 - TEMPORAL_RELATION: có ngày, khoảng thời gian, trước/sau, bắt đầu/kết thúc hoặc
   hiệu lực thời gian cần chuẩn hóa/phân tích thêm.
 - CLAIM_PROVENANCE: có phát biểu, tuyên bố hoặc thông tin với nguồn cụ thể.
@@ -261,8 +262,11 @@ NHÓM THEO TỪNG EVENT
 NHÓM THEO CẶP EVENT
 - EVENT_HIERARCHY: một Event có khả năng là phần thực sự của Event lớn hơn;
   không chọn chỉ vì cùng chủ đề.
-- CAUSAL_RELATION: có tín hiệu một Event là nguyên nhân, điều kiện hoặc kết quả
-  của Event kia; không chọn chỉ vì xảy ra trước/sau.
+- EVENT_RELATION: văn bản trực tiếp thể hiện quan hệ giữa hai Event: phê duyệt
+  (APPROVES), nguyên nhân-kết quả (CAUSES), tạo điều kiện (ENABLES), trước-sau
+  (PRECEDES) hoặc liên quan (RELATED_TO). Không suy ra chỉ vì cùng bài, Entity,
+  chủ đề hoặc thứ tự câu. Quan hệ trước-sau giữa hai Event thuộc nhóm này;
+  ngày/khoảng thời gian của từng Event thuộc TEMPORAL_RELATION.
 
 QUY TẮC OUTPUT
 - Một Event có thể có nhiều nhóm; không bắt buộc chọn nhóm nào.

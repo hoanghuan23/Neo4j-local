@@ -54,7 +54,7 @@ class RelationRouterTests(unittest.TestCase):
         self.assertEqual(result["event_routes"][0]["event_id"], "ev1")
         self.assertEqual(call_model.call_count, 1)
         prompt = call_model.call_args.args[0]
-        self.assertIn("không chọn chỉ vì xảy ra trước/sau", prompt)
+        self.assertIn("(PRECEDES) hoặc liên quan (RELATED_TO)", prompt)
         self.assertIn(
             "Phân biệt stance của tác giả Post với stance của người được trích dẫn",
             prompt,
@@ -76,7 +76,7 @@ class RelationRouterTests(unittest.TestCase):
             ],
         }
         causal = {
-            "relation_group": "CAUSAL_RELATION",
+            "relation_group": "EVENT_RELATION",
             "action": "USE_BASE_DATA",
             "reason": "Có từ gây.",
             "evidence_text": "mưa lớn gây ngập",
@@ -85,10 +85,10 @@ class RelationRouterTests(unittest.TestCase):
             "event_routes": [
                 {
                     "event_id": "ev1",
-                    "relation_groups": ["CAUSAL_RELATION", "CLAIM_PROVENANCE"],
+                    "relation_groups": ["EVENT_RELATION", "CLAIM_PROVENANCE"],
                     "route_details": [
                         {
-                            "relation_group": "CAUSAL_RELATION",
+                            "relation_group": "EVENT_RELATION",
                             "action": "ENRICH",
                             "reason": "Sai scope.",
                             "evidence_text": "mưa lớn gây ngập",
@@ -117,19 +117,19 @@ class RelationRouterTests(unittest.TestCase):
                 {
                     "event_a_id": "ev2",
                     "event_b_id": "ev1",
-                    "relation_groups": ["CAUSAL_RELATION"],
+                    "relation_groups": ["EVENT_RELATION"],
                     "route_details": [causal],
                 },
                 {
                     "event_a_id": "ev1",
                     "event_b_id": "ev2",
-                    "relation_groups": ["CAUSAL_RELATION"],
+                    "relation_groups": ["EVENT_RELATION"],
                     "route_details": [causal],
                 },
                 {
                     "event_a_id": "ev1",
                     "event_b_id": "ev1",
-                    "relation_groups": ["CAUSAL_RELATION"],
+                    "relation_groups": ["EVENT_RELATION"],
                     "route_details": [causal],
                 },
             ],
