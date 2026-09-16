@@ -5,8 +5,16 @@ Lấy mọi post có posted_at trong 7 ngày gần nhất, không lọc tier/is_
 Giá trị NULL từ PostgreSQL sẽ xóa thuộc tính tương ứng trong Neo4j.
 """
 
+import sys
+from pathlib import Path
+
 import psycopg2
 from neo4j import GraphDatabase
+
+# Allow direct execution after moving this script into import_database.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from import_database.import_facebook_from_postgreSQL import POSTGRES_CONFIG
 from knowledge_settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER

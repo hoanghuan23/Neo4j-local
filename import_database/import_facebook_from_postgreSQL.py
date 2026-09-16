@@ -1,8 +1,15 @@
 import os
+import sys
+from pathlib import Path
 
 import psycopg2
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
+
+# Allow direct execution after moving this script into import_database.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from knowledge_settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 
