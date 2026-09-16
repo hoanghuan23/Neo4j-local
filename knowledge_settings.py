@@ -37,7 +37,7 @@ KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
 KNOWLEDGE_PROMPT_VERSION = "knowledge-v14"
 KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v2"
-RELATION_ROUTER_PROMPT_VERSION = "relation-router-v2"
+RELATION_ROUTER_PROMPT_VERSION = "relation-router-v3"
 PARTICIPANT_ROLE_PROMPT_VERSION = "participant-role-v1"
 PARTICIPANT_EXTRACTION_PROMPT_VERSION = "participant-extraction-v1"
 EVENT_RELATION_PROMPT_VERSION = "event-relation-v1"
@@ -128,6 +128,29 @@ RELATION_GROUPS = {
     "EVENT_RELATION",
     "STANCE_PERSPECTIVE",
 }
+# Router detection is independent of this execution configuration.
+KNOWLEDGE_MODULES = {
+    "ENTITY_HIERARCHY": True,
+    "PARTICIPANT_ROLE": False,
+    "EVENT_RELATION": False,
+    "EVENT_HIERARCHY": False,
+    "TEMPORAL_RELATION": False,
+    "CLAIM_PROVENANCE": False,
+    "STANCE_PERSPECTIVE": False,
+}
+IMPLEMENTED_KNOWLEDGE_MODULES = {
+    "ENTITY_HIERARCHY", "PARTICIPANT_ROLE", "EVENT_RELATION", "EVENT_HIERARCHY",
+}
+
+
+def validate_module_config():
+    for name, enabled in KNOWLEDGE_MODULES.items():
+        if name not in RELATION_GROUPS or not isinstance(enabled, bool):
+            raise ValueError(f"Cấu hình module không hợp lệ: {name}")
+        if enabled and name not in IMPLEMENTED_KNOWLEDGE_MODULES:
+            raise ValueError(f"Module chưa được triển khai: {name}")
+
+
 RELATION_ROUTER_ACTIONS = {"ENRICH", "USE_BASE_DATA"}
 CONCRETE_EVENT_ROLES = EVENT_ROLES - {"PARTICIPANT"}
 CONFIDENCE_LEVELS = {"HIGH", "MEDIUM", "LOW"}
@@ -418,10 +441,11 @@ PAIR_ROUTE_SCHEMA = _strict_object(
 
 RELATION_ROUTER_SCHEMA = _strict_object(
     {
+        "detected_modules": {"type": "array", "items": {"type": "string", "enum": sorted(RELATION_GROUPS)}},
         "event_routes": {"type": "array", "items": EVENT_ROUTE_SCHEMA},
         "pair_routes": {"type": "array", "items": PAIR_ROUTE_SCHEMA},
     },
-    ["event_routes", "pair_routes"],
+    ["detected_modules", "event_routes", "pair_routes"],
 )
 
 # Temporary compatibility alias for existing callers and tests.

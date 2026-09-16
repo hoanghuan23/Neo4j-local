@@ -131,18 +131,16 @@ def test_pipeline_stage_order_and_stable_final_keys():
         record('classifier', lambda _: {'should_deep_analyze': True}),
         record('extraction', lambda _: knowledge),
         record('validation', validate_knowledge),
-        record('router', lambda *_: {'event_routes': [], 'pair_routes': []}),
+        record('router', lambda *_: {'detected_modules': [], 'event_routes': [], 'pair_routes': []}),
         'test', 'post', CONTENT,
         record('participants', lambda c, k: extract_participants(c, k, participant_model)),
         record('relations', lambda c, k: extract_event_relations(c, k, relation_model)),
     )
-    assert order == ['classifier', 'extraction', 'participants', 'relations', 'validation', 'router']
+    assert order == ['classifier', 'extraction', 'validation', 'router']
     expected = base()
-    expected['events'][0]['participants'] = [participant('person', role='ACTOR')]
-    expected['event_relations'] = relation_model.return_value['event_relations']
     assert result['knowledge'] == validate_knowledge(CONTENT, expected, 'test', 'post')
-    participant_model.assert_called_once()
-    relation_model.assert_called_once()
+    participant_model.assert_not_called()
+    relation_model.assert_not_called()
 
 
 @pytest.mark.parametrize('enabled,deep', [(False, True), (True, False)])
@@ -159,23 +157,27 @@ def test_skip_and_entity_only_do_not_call_modules(enabled, deep):
 
 
 @pytest.mark.parametrize('failed_stage', ['participants', 'relations'])
-def test_module_failure_marks_post_for_retry_without_persistence(failed_stage):
+def test_module_failure_keeps_committed_base(failed_stage):
     participants = Mock(side_effect=lambda _c, k: k)
     relations = Mock(side_effect=lambda _c, k: k)
     failing = participants if failed_stage == 'participants' else relations
     failing.side_effect = ValueError('invalid model response')
     session = Mock()
-    with patch.object(pipeline, '_load_posts', return_value=[dict(platform='test', post_id='post', content=CONTENT)]), \
+    session.execute_write.return_value = {'entities': 1, 'events': 2, 'event_relations': 0}
+    module = 'PARTICIPANT_ROLE' if failed_stage == 'participants' else 'EVENT_RELATION'
+    with patch.dict(pipeline.KNOWLEDGE_MODULES, {module: True}), patch.object(pipeline, '_load_posts', return_value=[dict(platform='test', post_id='post', content=CONTENT)]), \
          patch.object(pipeline, 'create_knowledge_schema'):
         summary = pipeline.process_new_posts(
             session, extract_knowledge_fn=lambda _: base(),
             classify_post_fn=lambda _: {'should_deep_analyze': True},
+            classify_relations_fn=lambda *_: {"detected_modules": [module], "event_routes": [], "pair_routes": []},
             extract_participants_fn=participants, extract_event_relations_fn=relations,
         )
-    assert summary['failed'] == 1
-    session.execute_write.assert_called_once_with(
-        pipeline.mark_knowledge_failure, 'test', 'post', 'invalid model response',
-    )
+    assert summary['deep'] == 1
+    failing.assert_called_once()
+    assert session.execute_write.call_count == 1
+    assert session.execute_write.call_args.args[0] is pipeline.save_knowledge_tx
+    assert session.execute_write.call_args.kwargs['detected_modules'] == [module]
 
 
 def test_legacy_consolidation_imports_point_to_new_implementation():

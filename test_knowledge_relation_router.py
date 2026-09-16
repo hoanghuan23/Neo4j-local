@@ -26,8 +26,8 @@ def event(local_id, evidence, participants=None):
 
 
 class RelationRouterTests(unittest.TestCase):
-    def test_does_not_call_model_without_events(self):
-        call_model = Mock()
+    def test_calls_model_without_events(self):
+        call_model = Mock(return_value={"detected_modules": [], "event_routes": [], "pair_routes": []})
 
         result = classify_relation_routes(
             CONTENT,
@@ -35,15 +35,15 @@ class RelationRouterTests(unittest.TestCase):
             call_model=call_model,
         )
 
-        self.assertEqual(result, {"event_routes": [], "pair_routes": []})
-        call_model.assert_not_called()
+        self.assertEqual(result, {"detected_modules": [], "event_routes": [], "pair_routes": []})
+        call_model.assert_called_once()
 
     def test_calls_model_once_and_passes_strict_schema(self):
         knowledge = {
             "entities": [],
             "events": [event("ev1", "mưa lớn gây ngập")],
         }
-        call_model = Mock(return_value={"event_routes": [], "pair_routes": []})
+        call_model = Mock(return_value={"detected_modules": [], "event_routes": [], "pair_routes": []})
 
         result = classify_relation_routes(
             CONTENT,
@@ -61,7 +61,7 @@ class RelationRouterTests(unittest.TestCase):
         )
         schema = call_model.call_args.args[1]
         self.assertFalse(schema["additionalProperties"])
-        self.assertEqual(set(schema["required"]), {"event_routes", "pair_routes"})
+        self.assertEqual(set(schema["required"]), {"detected_modules", "event_routes", "pair_routes"})
 
     def test_normalizes_invalid_missing_and_duplicate_routes(self):
         knowledge = {
@@ -82,6 +82,7 @@ class RelationRouterTests(unittest.TestCase):
             "evidence_text": "mưa lớn gây ngập",
         }
         raw = {
+            "detected_modules": [],
             "event_routes": [
                 {
                     "event_id": "ev1",
@@ -169,7 +170,7 @@ class RelationRouterTests(unittest.TestCase):
         result = normalize_relation_routes(
             CONTENT,
             knowledge,
-            {"event_routes": [], "pair_routes": []},
+            {"detected_modules": [], "event_routes": [], "pair_routes": []},
         )
 
         detail = result["event_routes"][0]["route_details"][0]

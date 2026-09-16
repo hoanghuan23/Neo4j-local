@@ -9,7 +9,7 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
     @patch.object(subject, "create_knowledge_schema")
     @patch.object(subject, "validate_knowledge")
     @patch.object(subject, "_load_posts")
-    def test_location_hierarchy_runs_after_base_save_without_router_dependency(
+    def test_location_hierarchy_runs_after_base_save_when_detected(
         self, load_posts, validate_knowledge, _create_schema
     ):
         load_posts.return_value = [
@@ -24,8 +24,8 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         session.execute_write.return_value = {"entities": 1, "events": 0, "event_relations": 0}
         order = []
 
-        def execute_write(function, *args):
-            order.append("base")
+        def execute_write(function, *args, **kwargs):
+            order.append("base" if function is subject.save_knowledge_tx else "completed")
             return {"entities": 1, "events": 0, "event_relations": 0}
 
         session.execute_write.side_effect = execute_write
@@ -37,15 +37,16 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
             session,
             extract_knowledge_fn=lambda _content: knowledge,
             classify_post_fn=lambda _content: {"should_deep_analyze": True, "reason_code": "DURABLE_ENTITY_INFORMATION"},
-            classify_relations_fn=lambda *_args: {"event_routes": [], "pair_routes": []},
+            classify_relations_fn=lambda *_args: {"detected_modules": ["ENTITY_HIERARCHY"], "event_routes": [], "pair_routes": []},
             enrich_locations_fn=enrich,
         )
-        self.assertEqual(order, ["base", "location"])
+        self.assertEqual(order, ["base", "location", "completed"])
         self.assertEqual(summary["location_hierarchy"]["osm_edges"], 2)
 
     @patch.object(subject, "create_knowledge_schema")
     @patch.object(subject, "validate_knowledge")
     @patch.object(subject, "_load_posts")
+    @patch.dict(subject.KNOWLEDGE_MODULES, {"EVENT_HIERARCHY": True})
     def test_consolidates_only_mentions_saved_by_current_batch(
         self,
         load_posts,
@@ -83,6 +84,7 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
                 "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
             },
             classify_relations_fn=lambda _content, _knowledge: {
+                "detected_modules": ["EVENT_HIERARCHY"],
                 "event_routes": [],
                 "pair_routes": [],
             },
@@ -124,7 +126,7 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         write_threads = []
         session = Mock()
 
-        def execute_write(*args):
+        def execute_write(*args, **kwargs):
             write_threads.append(threading.get_ident())
             return {"entities": 0, "events": 0, "event_relations": 0}
 
@@ -133,6 +135,7 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         with patch.object(subject, "KNOWLEDGE_WORKERS", 2):
             summary = subject.process_new_posts(
                 session,
+                classify_relations_fn=lambda *_: {"detected_modules": [], "event_routes": [], "pair_routes": []},
                 extract_knowledge_fn=extract,
                 classify_post_fn=lambda _content: {
                     "should_deep_analyze": True,
@@ -198,6 +201,7 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
             extract,
             lambda _content, raw, _platform, _post_id: raw,
             lambda _content, _knowledge: {
+                "detected_modules": ["EVENT_HIERARCHY"],
                 "event_routes": [],
                 "pair_routes": [],
             },
@@ -209,10 +213,10 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         extract.assert_called_once_with("content")
         self.assertEqual(result["classifier_decision"], "DEEP")
 
-    def test_extract_post_participants_precede_validation_and_router(self):
+    def test_extract_post_defers_participants_until_after_router(self):
         base = {"entities": [], "events": [{"local_id": "ev1"}]}
         enriched = {"entities": [], "events": [{"local_id": "ev1", "role": "ACTOR"}]}
-        routes = {"event_routes": [], "pair_routes": []}
+        routes = {"detected_modules": ["ENTITY_HIERARCHY"], "event_routes": [], "pair_routes": []}
         router = Mock(return_value=routes)
         enrich = Mock(return_value=enriched)
 
@@ -230,9 +234,9 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
             enrich,
         )
 
-        expected = {**enriched, "event_relations": []}
+        expected = base
         router.assert_called_once_with("content", expected)
-        enrich.assert_called_once_with("content", base)
+        enrich.assert_not_called()
         self.assertEqual(result["knowledge"], expected)
 
     def test_classifier_skip_does_not_call_participant_enrichment(self):
@@ -310,6 +314,7 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
             "event_relations": [],
         }
         routes = {
+            "detected_modules": ["PARTICIPANT_ROLE"],
             "event_routes": [
                 {
                     "event_id": "ev1",

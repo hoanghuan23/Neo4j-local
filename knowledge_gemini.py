@@ -246,19 +246,25 @@ class GeminiKnowledgeCaller:
         print(f"Số request có usage thực tế: {usage.requests}")
         with self._usage_lock:
             attempts = self._attempts
-            extraction = dict(self._stages.get("extraction", {}))
+            stages = {stage: dict(stats) for stage, stats in self._stages.items()}
         print(f"Tổng lần gọi API: {attempts}")
-        extraction_input_cost = self._cost(extraction.get("input", 0), 0)
-        extraction_output_cost = self._cost(
-            0, extraction.get("output", 0) + extraction.get("thinking", 0)
-        )
-        print(f"\nCHI PHÍ RIÊNG extract_knowledge ({extraction.get('calls', 0)} lần gọi API)")
-        print(f"Chi phí input extract_knowledge: ${extraction_input_cost:.8f}")
-        print(f"Chi phí output extract_knowledge (gồm thinking): ${extraction_output_cost:.8f}")
-        print(f"TỔNG CHI PHÍ extract_knowledge: ${extraction_input_cost + extraction_output_cost:.8f}")
-        missing_usage = extraction.get("calls", 0) - extraction.get("usage_calls", 0)
-        if missing_usage:
-            print(f"extract_knowledge: {missing_usage} lần gọi thiếu usage, chưa tính được chi phí.")
+        for stage, name in (
+            ("classifier", "lọc ban đầu (classify_knowledge_potential)"),
+            ("extraction", "extract_knowledge"),
+            ("relation_router", "phân loại module (classify_relation_routes)"),
+        ):
+            stats = stages.get(stage, {})
+            stage_input_cost = self._cost(stats.get("input", 0), 0)
+            stage_output_cost = self._cost(
+                0, stats.get("output", 0) + stats.get("thinking", 0)
+            )
+            print(f"\nCHI PHÍ RIÊNG {name} ({stats.get('calls', 0)} lần gọi API)")
+            print(f"Chi phí input {name}: ${stage_input_cost:.8f}")
+            print(f"Chi phí output {name}: ${stage_output_cost:.8f}")
+            print(f"TỔNG CHI PHÍ {name}: ${stage_input_cost + stage_output_cost:.8f}")
+            missing_usage = stats.get("calls", 0) - stats.get("usage_calls", 0)
+            if missing_usage:
+                print(f"{name}: {missing_usage} lần gọi thiếu usage, chưa tính được chi phí.")
         print("\nCHI PHÍ TOÀN BỘ PIPELINE")
         print(f"Input tokens thực tế: {usage.input_tokens:,}")
         print(f"Output tokens thực tế: {usage.output_tokens:,}")

@@ -2,6 +2,7 @@ import json
 
 from knowledge_settings import (
     EVENT_RELATION_TYPES,
+    RELATION_ROUTER_PROMPT_VERSION,
     GEMINI_MODEL,
     KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
     KNOWLEDGE_PROMPT_VERSION,
@@ -300,6 +301,7 @@ def upsert_events(
     post_id: str,
     events: list[dict],
     entity_lookup: dict,
+    replace_participants: bool = True,
 ) -> None:
     mention_keys = [event.get("mention_key", event["event_key"]) for event in events]
     _delete_stale_events(tx, platform, post_id, mention_keys)
@@ -376,10 +378,11 @@ def upsert_events(
             MERGE (p)-[:DESCRIBES]->(event)
             WITH mention
             OPTIONAL MATCH (mention)-[participant:HAS_PARTICIPANT]->()
-            DELETE participant
+            FOREACH (_ IN CASE WHEN $replace_participants THEN [1] ELSE [] END | DELETE participant)
             """,
             platform=platform,
             post_id=post_id,
+            replace_participants=replace_participants,
             mention_key=mention_key,
             event_key=event["event_key"],
             event_type=event["type"],
@@ -628,6 +631,9 @@ def save_knowledge_tx(
     knowledge: dict,
     classification: dict | None = None,
     classifier_decision: str | None = None,
+    *,
+    detected_modules: list[str] | None = None,
+    runnable_modules: set[str] | None = None,
 ) -> dict:
     post_exists = tx.run(
         """
@@ -668,7 +674,8 @@ def save_knowledge_tx(
             generic_entity_keys=generic_entity_keys,
         ).consume()
 
-    if any(e.get("type") == "ORGANIZATION" for e in knowledge["entities"]):
+    hierarchy_enabled = runnable_modules is None or "ENTITY_HIERARCHY" in runnable_modules
+    if hierarchy_enabled and any(e.get("type") == "ORGANIZATION" for e in knowledge["entities"]):
         from knowledge_relations.entity_hierarchy.organization_hierarchy import VERSION
         tx.run("""MATCH (p:Post {platform:$platform, platform_id:$post_id})
             SET p.organization_resolution_reviews=[], p.organization_hierarchy_status='PENDING',
@@ -677,8 +684,10 @@ def save_knowledge_tx(
             platform=platform, post_id=post_id, version=VERSION,
             snapshot=json.dumps(knowledge, ensure_ascii=False)).consume()
     entity_lookup = upsert_entities(tx, platform, post_id, knowledge["entities"], knowledge.get("organization_context", []))
-    upsert_events(tx, platform, post_id, knowledge["events"], entity_lookup)
-    upsert_event_relations(tx, knowledge["events"], knowledge["event_relations"])
+    upsert_events(tx, platform, post_id, knowledge["events"], entity_lookup,
+                  replace_participants=runnable_modules is None)
+    if runnable_modules is None:
+        upsert_event_relations(tx, knowledge["events"], knowledge["event_relations"])
     tx.run(
         """
         MATCH (p:Post {platform: $platform, platform_id: $post_id})
@@ -714,7 +723,19 @@ def save_knowledge_tx(
         classifier_decision=classifier_decision,
         classifier_prompt_version=KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
     ).consume()
-    if classifier_decision == "DEEP" and any(
+    if detected_modules is not None:
+        tx.run("""
+            MATCH (p:Post {platform: $platform, platform_id: $post_id})
+            SET p.modules_pending = $modules,
+                p.modules_completed = [],
+                p.realation_router_prompt = $router_version
+            REMOVE p.detected_modules, p.processing_status, p.analysis_status,
+                   p.relation_router_prompt_version, p.relation_router_classified_at
+            """, platform=platform, post_id=post_id,
+            modules=[] if classifier_decision == "SKIPPED" else sorted(set(detected_modules)),
+            router_version=None if classifier_decision == "SKIPPED" else RELATION_ROUTER_PROMPT_VERSION,
+        ).consume()
+    if hierarchy_enabled and classifier_decision == "DEEP" and any(
         entity.get("type") == "LOCATION" for entity in knowledge["entities"]
     ):
         tx.run(
@@ -735,6 +756,42 @@ def save_knowledge_tx(
     }
 
 
+def mark_module_completed(tx, platform, post_id, module):
+    """Move a successfully persisted module from pending to completed."""
+    tx.run("""
+        MATCH (p:Post {platform: $platform, platform_id: $post_id})
+        WHERE $module IN coalesce(p.modules_pending, [])
+        SET p.modules_pending = [m IN p.modules_pending WHERE m <> $module],
+            p.modules_completed = CASE WHEN $module IN coalesce(p.modules_completed, [])
+                THEN p.modules_completed ELSE coalesce(p.modules_completed, []) + [$module] END
+        """, platform=platform, post_id=post_id, module=module).consume()
+
+
+def complete_consolidated_modules(tx, mention_keys):
+    tx.run("""
+        MATCH (p:Post)-[:HAS_EVENT_MENTION]->(m:EventMention)
+        WHERE m.mention_key IN $mention_keys
+          AND 'EVENT_HIERARCHY' IN coalesce(p.modules_pending, [])
+        WITH DISTINCT p
+        MATCH (p)-[:HAS_EVENT_MENTION]->(mention:EventMention)
+        WITH p, collect(mention) AS mentions
+        WHERE all(m IN mentions WHERE coalesce(m.consolidation_status, '') = 'RESOLVED')
+        SET p.modules_pending = [m IN p.modules_pending WHERE m <> 'EVENT_HIERARCHY'],
+            p.modules_completed = CASE WHEN 'EVENT_HIERARCHY' IN coalesce(p.modules_completed, [])
+                THEN p.modules_completed ELSE coalesce(p.modules_completed, []) + ['EVENT_HIERARCHY'] END
+        """, mention_keys=mention_keys).consume()
+
+
+def save_module_knowledge_tx(tx, platform, post_id, knowledge, module):
+    """Persist module output separately from the committed base/router result."""
+    if module == "PARTICIPANT_ROLE":
+        lookup = upsert_entities(tx, platform, post_id, knowledge["entities"], knowledge.get("organization_context", []))
+        upsert_events(tx, platform, post_id, knowledge["events"], lookup)
+    elif module == "EVENT_RELATION":
+        upsert_event_relations(tx, knowledge["events"], knowledge["event_relations"])
+    mark_module_completed(tx, platform, post_id, module)
+
+
 def mark_knowledge_failure(tx, platform: str, post_id: str, error: str) -> None:
     tx.run(
         """
@@ -750,6 +807,7 @@ def mark_knowledge_failure(tx, platform: str, post_id: str, error: str) -> None:
             p.knowledge_prompt_version = $knowledge_prompt_version,
             p.knowledge_error = $knowledge_error,
             p.knowledge_retry_count = next_retry_count
+        REMOVE p.processing_status, p.analysis_status
         """,
         platform=platform,
         post_id=post_id,

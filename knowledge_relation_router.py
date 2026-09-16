@@ -130,6 +130,10 @@ def normalize_relation_routes(content: str, knowledge: dict, raw: object) -> dic
     """Validate model routes and return stable, complete router output."""
     if not isinstance(raw, dict):
         raise ValueError("Relation Router không trả về JSON object")
+    detected = raw.get("detected_modules")
+    if not isinstance(detected, list):
+        raise ValueError("Relation Router thiếu detected_modules")
+    detected = {name for name in detected if isinstance(name, str) and name in RELATION_GROUPS}
     raw_event_routes = raw.get("event_routes")
     raw_pair_routes = raw.get("pair_routes")
     if not isinstance(raw_event_routes, list) or not isinstance(raw_pair_routes, list):
@@ -222,7 +226,9 @@ def normalize_relation_routes(content: str, knowledge: dict, raw: object) -> dic
                 "route_details": details,
             }
         )
-    return {"event_routes": event_routes, "pair_routes": pair_routes}
+    for route in [*event_routes, *pair_routes]:
+        detected.update(route["relation_groups"])
+    return {"detected_modules": sorted(detected), "event_routes": event_routes, "pair_routes": pair_routes}
 
 
 @traceable(
@@ -236,10 +242,6 @@ def normalize_relation_routes(content: str, knowledge: dict, raw: object) -> dic
     },
 )
 def classify_relation_routes(content: str, knowledge: dict, call_model=None) -> dict:
-    events = knowledge.get("events", [])
-    if not isinstance(events, list) or not events:
-        return {"event_routes": [], "pair_routes": []}
-
     compact_knowledge = _compact_knowledge(knowledge)
     prompt = f"""
 Bạn là Relation Router cho pipeline knowledge graph. Hãy phân loại những module
@@ -253,7 +255,7 @@ nằm trong nội dung đó.
 NHÓM THEO TỪNG EVENT
 - PARTICIPANT_ROLE: có người/tổ chức/đối tượng tham gia cần xác định vai trò.
 - ENTITY_HIERARCHY: Entity trong Event có quan hệ phân cấp cha-con cần phân tích;
-  hiện hỗ trợ địa điểm qua module entity_hierarchy/location_hierarchy.
+  gồm địa điểm và tổ chức qua các nhánh location_hierarchy, organization_hierarchy.
 - TEMPORAL_RELATION: có ngày, khoảng thời gian, trước/sau, bắt đầu/kết thúc hoặc
   hiệu lực thời gian cần chuẩn hóa/phân tích thêm.
 - CLAIM_PROVENANCE: có phát biểu, tuyên bố hoặc thông tin với nguồn cụ thể.
@@ -269,6 +271,10 @@ NHÓM THEO CẶP EVENT
   ngày/khoảng thời gian của từng Event thuộc TEMPORAL_RELATION.
 
 QUY TẮC OUTPUT
+- detected_modules là danh sách module cần cho toàn Post, độc lập cấu hình bật/tắt.
+- Phân loại từ content và Entity ngay cả khi không có Event; khi đó event_routes
+  và pair_routes rỗng. Không tạo ID Event giả.
+- detected_modules bao gồm mọi nhóm trong các route chi tiết.
 - Một Event có thể có nhiều nhóm; không bắt buộc chọn nhóm nào.
 - Mỗi Event đầu vào xuất hiện đúng một lần trong event_routes.
 - Chỉ trả pair_routes cho cặp có tín hiệu thực tế, không liệt kê mọi tổ hợp.

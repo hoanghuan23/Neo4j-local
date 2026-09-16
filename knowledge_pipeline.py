@@ -7,6 +7,8 @@ from langsmith import traceable
 
 from knowledge_settings import (
     KNOWLEDGE_MAX_RETRIES,
+    KNOWLEDGE_MODULES,
+    validate_module_config,
     KNOWLEDGE_PIPELINE_ENABLED,
     KNOWLEDGE_WORKERS,
     LOGGER,
@@ -24,6 +26,9 @@ from knowledge_persistence import (
     mark_knowledge_failure,
     save_entities,
     save_knowledge_tx,
+    save_module_knowledge_tx,
+    mark_module_completed,
+    complete_consolidated_modules,
 )
 from knowledge_validation import validate_knowledge
 
@@ -65,14 +70,11 @@ def _extract_post(
         if needs_deep_extraction
         else {"entities": [], "events": [], "event_relations": []}
     )
-    if needs_deep_extraction:
-        raw_knowledge = extract_participants_fn(content, raw_knowledge)
-        raw_knowledge = extract_event_relations_fn(content, raw_knowledge)
     knowledge = validate_knowledge_fn(content, raw_knowledge, platform, post_id)
     relation_routes = (
         classify_relations_fn(content, knowledge)
         if needs_deep_extraction
-        else {"event_routes": [], "pair_routes": []}
+        else {"detected_modules": [], "event_routes": [], "pair_routes": []}
     )
     return {
         "classification": classification,
@@ -152,6 +154,7 @@ def process_new_posts(
     organization_context_fn=extract_context,
 ) -> dict:
     if KNOWLEDGE_PIPELINE_ENABLED:
+        validate_module_config()
         create_knowledge_schema(session)
     else:
         create_entity_schema(session)
@@ -211,6 +214,8 @@ def process_new_posts(
                 relation_router_summary=summary["relation_router"],
                 enrich_locations_fn=enrich_locations_fn,
                 location_summary=summary["location_hierarchy"],
+                extract_participants_fn=extract_participants_fn,
+                extract_event_relations_fn=extract_event_relations_fn,
                 enrich_organizations_fn=enrich_organizations_fn,
                 organization_context_fn=organization_context_fn,
             )
@@ -224,12 +229,14 @@ def process_new_posts(
         "descriptions_updated": 0,
         "failed": 0,
     }
-    if KNOWLEDGE_PIPELINE_ENABLED and consolidate_fn is not None:
+    if (KNOWLEDGE_PIPELINE_ENABLED and KNOWLEDGE_MODULES.get("EVENT_HIERARCHY")
+            and batch_mention_keys and consolidate_fn is not None):
         try:
             consolidation = consolidate_fn(
                 session,
                 mention_keys=batch_mention_keys,
             )
+            session.execute_write(complete_consolidated_modules, batch_mention_keys)
         except Exception:
             LOGGER.exception("Lỗi bước consolidation cuối batch")
             consolidation["failed"] += 1
@@ -266,6 +273,8 @@ def _save_extracted_post(
     relation_router_summary: dict | None = None,
     enrich_locations_fn=enrich_location_hierarchy,
     location_summary: dict | None = None,
+    extract_participants_fn=extract_participants,
+    extract_event_relations_fn=extract_event_relations,
     enrich_organizations_fn=enrich_organization_hierarchy,
     organization_context_fn=extract_context,
 ) -> str:
@@ -290,9 +299,13 @@ def _save_extracted_post(
             print(f"Đã lưu {saved_count}/{len(entities)} entity hợp lệ.")
             return "deep"
 
+        runnable_modules = {
+            name for name in relation_routes["detected_modules"]
+            if classifier_decision == "DEEP" and KNOWLEDGE_MODULES.get(name, False)
+        }
         print(json.dumps(knowledge, ensure_ascii=False, indent=2))
         print(json.dumps(relation_routes, ensure_ascii=False, indent=2))
-        if classifier_decision == "DEEP" and any(e.get("type") == "ORGANIZATION" for e in knowledge["entities"]):
+        if "ENTITY_HIERARCHY" in runnable_modules and any(e.get("type") == "ORGANIZATION" for e in knowledge["entities"]):
             try:
                 knowledge["organization_context"] = organization_context_fn(content, knowledge)
             except Exception:
@@ -304,9 +317,33 @@ def _save_extracted_post(
             knowledge,
             classification,
             classifier_decision,
+            detected_modules=relation_routes["detected_modules"],
+            runnable_modules=runnable_modules,
         )
+        for module, extract_fn in (
+            ("PARTICIPANT_ROLE", extract_participants_fn),
+            ("EVENT_RELATION", extract_event_relations_fn),
+        ):
+            if module not in runnable_modules:
+                continue
+            try:
+                enriched = extract_fn(content, knowledge)
+                enriched = validate_knowledge(content, enriched, platform, post_id)
+                # Participant enrichment must not change already persisted identities.
+                identities = {e["local_id"]: e for e in knowledge["events"]}
+                for event in enriched["events"]:
+                    original = identities[event["local_id"]]
+                    for key in ("mention_key", "event_key"):
+                        event[key] = original[key]
+                if "organization_context" in knowledge:
+                    enriched["organization_context"] = knowledge["organization_context"]
+                session.execute_write(save_module_knowledge_tx, platform, post_id, enriched, module)
+                knowledge = enriched
+            except Exception:
+                LOGGER.exception("Module %s thất bại sau khi lưu nền cho %s", module, post_id)
+        hierarchy_ok = True
         if (
-            classifier_decision == "DEEP"
+            "ENTITY_HIERARCHY" in runnable_modules
             and any(entity.get("type") == "LOCATION" for entity in knowledge["entities"])
         ):
             try:
@@ -322,15 +359,23 @@ def _save_extracted_post(
                     post_id,
                 )
                 hierarchy = {"errors": 1}
+            hierarchy_ok = not bool(hierarchy.get("errors", 0))
             if location_summary is not None:
                 for key, value in hierarchy.items():
                     location_summary[key] = location_summary.get(key, 0) + value
-        if classifier_decision == "DEEP" and any(e.get("type") == "ORGANIZATION" for e in knowledge["entities"]):
+        if "ENTITY_HIERARCHY" in runnable_modules and any(e.get("type") == "ORGANIZATION" for e in knowledge["entities"]):
             try:
-                enrich_organizations_fn(session, platform, post_id, content, knowledge)
+                organization = enrich_organizations_fn(session, platform, post_id, content, knowledge)
+                hierarchy_ok = hierarchy_ok and not bool(organization.get("errors", 0))
             except Exception:
+                hierarchy_ok = False
                 LOGGER.exception("ORGANIZATION hierarchy failed after base persistence for %s", post_id)
-        if mention_keys_out is not None:
+        if "ENTITY_HIERARCHY" in runnable_modules and hierarchy_ok:
+            try:
+                session.execute_write(mark_module_completed, platform, post_id, "ENTITY_HIERARCHY")
+            except Exception:
+                LOGGER.exception("Không thể cập nhật modules_completed cho %s", post_id)
+        if mention_keys_out is not None and "EVENT_HIERARCHY" in runnable_modules:
             mention_keys_out.extend(
                 event.get("mention_key", event["event_key"])
                 for event in knowledge["events"]

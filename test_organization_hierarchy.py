@@ -115,17 +115,17 @@ def test_pipeline_orders_context_base_location_organization():
     future = Future()
     knowledge = {'entities': [{'local_id': 'a', 'name': 'Công an Hải Phòng', 'type': 'ORGANIZATION'},
                               {'local_id': 'b', 'name': 'Hải Phòng', 'type': 'LOCATION'}], 'events': [], 'event_relations': []}
-    future.set_result({'knowledge': knowledge, 'relation_routes': {'event_routes': [], 'pair_routes': []},
+    future.set_result({'knowledge': knowledge, 'relation_routes': {'detected_modules': ['ENTITY_HIERARCHY'], 'event_routes': [], 'pair_routes': []},
                        'classification': {'should_deep_analyze': True}, 'classifier_decision': 'DEEP'})
     session = Mock()
-    session.execute_write.side_effect = lambda *_: order.append('base') or {'entities': 2, 'events': 0, 'event_relations': 0}
+    session.execute_write.side_effect = lambda fn, *_, **kwargs: order.append('base' if fn.__name__ == 'save_knowledge_tx' else 'completed') or {'entities': 2, 'events': 0, 'event_relations': 0}
     result = _save_extracted_post(session, {'platform': 'x', 'post_id': 'y', 'content': 'text'}, future,
         original_index=1, completed=1, total=1,
         organization_context_fn=lambda *_: order.append('context') or [],
         enrich_locations_fn=lambda *_: order.append('location') or {},
         enrich_organizations_fn=lambda *_: order.append('organization') or {})
     assert result == 'deep'
-    assert order == ['context', 'base', 'location', 'organization']
+    assert order == ['context', 'base', 'location', 'organization', 'completed']
 
 
 def test_preview_does_not_write_and_reports_conflict():
@@ -137,7 +137,7 @@ def test_preview_does_not_write_and_reports_conflict():
                  'organization_context': [{'source_entity_id': 'a', 'target_entity_id': 'c',
                     'relationship': 'SUBORDINATE_TO', 'evidence_text': 'A thuộc C'}]}
     session = Mock()
-    with patch('knowledge_relations.organization_hierarchy.load_graph', return_value=graph):
+    with patch('knowledge_relations.entity_hierarchy.organization_hierarchy.load_graph', return_value=graph):
         result = enrich_organization_hierarchy(session, 'x', 'y', 'A thuộc C', knowledge, preview=True)
     assert result['reviews']
     assert result['edges'] == []
