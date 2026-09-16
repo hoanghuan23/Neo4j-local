@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-import knowledge_relations.location_hierarchy as subject
+import knowledge_relations.entity_hierarchy.location_hierarchy as subject
 
 
 class LocationHierarchyTests(unittest.TestCase):

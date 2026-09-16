@@ -209,7 +209,7 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         extract.assert_called_once_with("content")
         self.assertEqual(result["classifier_decision"], "DEEP")
 
-    def test_extract_post_enriches_after_router_and_before_returning(self):
+    def test_extract_post_participants_precede_validation_and_router(self):
         base = {"entities": [], "events": [{"local_id": "ev1"}]}
         enriched = {"entities": [], "events": [{"local_id": "ev1", "role": "ACTOR"}]}
         routes = {"event_routes": [], "pair_routes": []}
@@ -230,9 +230,10 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
             enrich,
         )
 
-        router.assert_called_once_with("content", base)
-        enrich.assert_called_once_with("content", base, routes)
-        self.assertIs(result["knowledge"], enriched)
+        expected = {**enriched, "event_relations": []}
+        router.assert_called_once_with("content", expected)
+        enrich.assert_called_once_with("content", base)
+        self.assertEqual(result["knowledge"], expected)
 
     def test_classifier_skip_does_not_call_participant_enrichment(self):
         enrich = Mock()

@@ -25,13 +25,14 @@ from knowledge_persistence import (
 from knowledge_pipeline import _load_posts
 from knowledge_pipeline import process_new_posts as _process_new_posts
 from knowledge_relation_router import classify_relation_routes
-from knowledge_relations.participant_role import enrich_participant_roles
-from knowledge_relations.location_hierarchy import enrich_location_hierarchy
-from knowledge_relations.organization_hierarchy import (
+from knowledge_relations.participant_role import extract_participants
+from knowledge_relations.event_relation import extract_event_relations
+from knowledge_relations.entity_hierarchy.location_hierarchy import enrich_location_hierarchy
+from knowledge_relations.entity_hierarchy.organization_hierarchy import (
     extract_context,
     enrich_organization_hierarchy,
 )
-from knowledge_consolidation import consolidate_pending_mentions
+from knowledge_relations.event_hierarchy import consolidate_pending_mentions
 from knowledge_settings import *
 from knowledge_validation import (
     build_anonymous_participant_key,
@@ -102,13 +103,11 @@ def process_new_posts(session, call_model=None) -> dict:
             knowledge,
             call_model=call_model,
         ),
-        enrich_participants_fn=lambda content, knowledge, routes: (
-            enrich_participant_roles(
-                content,
-                knowledge,
-                routes,
-                call_model=call_model,
-            )
+        extract_participants_fn=lambda content, knowledge: extract_participants(
+            content, knowledge, call_model=call_model,
+        ),
+        extract_event_relations_fn=lambda content, knowledge: extract_event_relations(
+            content, knowledge, call_model=call_model,
         ),
         enrich_locations_fn=lambda session, platform, post_id, content, knowledge: (
             enrich_location_hierarchy(
@@ -130,6 +129,7 @@ def process_new_posts(session, call_model=None) -> dict:
 
 
 def main() -> None:
+    logging.getLogger("knowledge.api").setLevel(logging.INFO)
     logging.basicConfig(
         level=logging.WARNING,
         format="%(asctime)s | %(levelname)s | %(message)s",

@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from knowledge_relations.organization_hierarchy import (
+from knowledge_relations.entity_hierarchy.organization_hierarchy import (
     identity, choose, extract_context, propose, resolve_entity, persist_edges,
 )
 
@@ -96,7 +96,7 @@ def test_transactional_identity_and_edges_preserve_manual_data():
 
 def test_enrichment_failure_keeps_base_and_sets_failed():
     from unittest.mock import Mock
-    from knowledge_relations.organization_hierarchy import enrich_organization_hierarchy
+    from knowledge_relations.entity_hierarchy.organization_hierarchy import enrich_organization_hierarchy
     session = Mock()
     knowledge = {'entities': [{'local_id': 'a', 'name': 'A', 'type': 'ORGANIZATION'},
                               {'local_id': 'b', 'name': 'B', 'type': 'ORGANIZATION'}]}
@@ -130,7 +130,7 @@ def test_pipeline_orders_context_base_location_organization():
 
 def test_preview_does_not_write_and_reports_conflict():
     from unittest.mock import Mock, patch
-    from knowledge_relations.organization_hierarchy import enrich_organization_hierarchy
+    from knowledge_relations.entity_hierarchy.organization_hierarchy import enrich_organization_hierarchy
     graph = [node('a', 'A', parents=[{'relationship': 'SUBORDINATE_TO', 'node_id': 'b'}]), node('b', 'B'), node('c', 'C')]
     knowledge = {'entities': [{'local_id': 'a', 'name': 'A', 'type': 'ORGANIZATION'},
                               {'local_id': 'c', 'name': 'C', 'type': 'ORGANIZATION'}],

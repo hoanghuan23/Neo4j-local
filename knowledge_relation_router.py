@@ -37,32 +37,36 @@ def _participant_action(event: dict) -> str:
 
 
 def _compact_knowledge(knowledge: dict) -> dict:
-    return {
-        "entities": [
-            {
-                key: entity.get(key)
-                for key in ("local_id", "name", "canonical_name", "type")
-            }
-            for entity in knowledge.get("entities", [])
-            if isinstance(entity, dict)
-        ],
-        "events": [
-            {
-                key: event.get(key)
-                for key in (
-                    "local_id",
-                    "type",
-                    "title",
-                    "description",
-                    "evidence_text",
-                    "time_expression",
-                    "participants",
-                )
-            }
-            for event in knowledge.get("events", [])
-            if isinstance(event, dict)
-        ],
-    }
+    entities = []
+    for entity in knowledge.get("entities", []):
+        if not isinstance(entity, dict):
+            continue
+        item = {key: entity.get(key) for key in ("local_id", "name", "type")}
+        canonical = entity.get("canonical_name")
+        if canonical and canonical != entity.get("name"):
+            item["canonical_name"] = canonical
+        entities.append(item)
+
+    events = []
+    for event in knowledge.get("events", []):
+        if not isinstance(event, dict):
+            continue
+        # Description already carries the title's facts; full source content is
+        # supplied separately. Keep distinct evidence and semantic participant data.
+        item = {key: event.get(key) for key in ("local_id", "type", "description")}
+        for key in ("evidence_text", "time_expression"):
+            value = event.get(key)
+            if value and value != event.get("description"):
+                item[key] = value
+        item["participants"] = [
+            {key: participant[key] for key in (
+                "entity_id", "participant_text", "participant_scope", "role",
+            ) if participant.get(key) is not None}
+            for participant in event.get("participants", [])
+            if isinstance(participant, dict)
+        ]
+        events.append(item)
+    return {"entities": entities, "events": events}
 
 
 def _valid_detail(
@@ -266,14 +270,14 @@ QUY TẮC OUTPUT
 - Chỉ trả pair_routes cho cặp có tín hiệu thực tế, không liệt kê mọi tổ hợp.
 - Cặp Event không có hướng; dùng event_a_id/event_b_id theo thứ tự đầu vào.
 - Mỗi nhóm trong relation_groups có đúng một item tương ứng trong route_details.
-- reason giải thích ngắn vì sao cần route.
-- evidence_text là đoạn trích nguyên văn, không rỗng, có trong <content>.
+- reason là một cụm tiếng Việt khoảng 5–12 từ nêu tín hiệu riêng của nhóm; không kể lại Event hoặc lặp diễn giải giữa các nhóm.
+- evidence_text là đoạn nguyên văn ngắn nhất đủ chứng minh nhóm, không rỗng, có trong <content>; chỉ lấy nhiều câu khi cần giữ đủ bằng chứng.
 - action dùng ENRICH. Riêng PARTICIPANT_ROLE có thể dùng USE_BASE_DATA nếu
   participant và role nền đã đầy đủ; hậu kiểm hệ thống sẽ xác nhận lại action.
 - Phân biệt stance của tác giả Post với stance của người được trích dẫn.
 
 <base_knowledge>
-{json.dumps(compact_knowledge, ensure_ascii=False)}
+{json.dumps(compact_knowledge, ensure_ascii=False, separators=(",", ":"))}
 </base_knowledge>
 
 <content>

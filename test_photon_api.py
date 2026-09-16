@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import photon_api
-from knowledge_relations import location_hierarchy as hierarchy
+from knowledge_relations.entity_hierarchy import location_hierarchy as hierarchy
 from knowledge_settings import LOCATION_HIERARCHY_MODULE_VERSION
 
 

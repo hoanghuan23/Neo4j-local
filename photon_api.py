@@ -4,7 +4,7 @@ import json
 
 import requests
 
-from knowledge_relations.location_hierarchy import (
+from knowledge_relations.entity_hierarchy.location_hierarchy import (
     ADMIN_FIELDS,
     clean_osm_admin_name,
     match_score,

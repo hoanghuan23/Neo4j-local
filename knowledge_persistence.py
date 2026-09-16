@@ -110,7 +110,7 @@ def _merge_entity(tx, platform: str, post_id: str, entity: dict, entities=(), co
     if prepared is None:
         return None
     if prepared["entity_type"] == "ORGANIZATION":
-        from knowledge_relations.organization_hierarchy import resolve_entity
+        from knowledge_relations.entity_hierarchy.organization_hierarchy import resolve_entity
         return resolve_entity(tx, platform, post_id, entity, prepared, entities, context)
     result = tx.run(
         ENTITY_MERGE_QUERY,
@@ -669,7 +669,7 @@ def save_knowledge_tx(
         ).consume()
 
     if any(e.get("type") == "ORGANIZATION" for e in knowledge["entities"]):
-        from knowledge_relations.organization_hierarchy import VERSION
+        from knowledge_relations.entity_hierarchy.organization_hierarchy import VERSION
         tx.run("""MATCH (p:Post {platform:$platform, platform_id:$post_id})
             SET p.organization_resolution_reviews=[], p.organization_hierarchy_status='PENDING',
                 p.organization_hierarchy_version=$version,

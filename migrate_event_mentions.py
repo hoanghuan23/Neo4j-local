@@ -4,7 +4,7 @@ import json
 
 from neo4j import GraphDatabase
 
-from knowledge_consolidation import (
+from knowledge_relations.event_hierarchy import (
     _resolve_prompt,
     _summary_prompt,
     _validated_decisions,

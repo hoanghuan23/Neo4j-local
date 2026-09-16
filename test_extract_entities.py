@@ -170,9 +170,10 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertEqual(
             subject.ENTITY_SCHEMA["required"],
-            ["entities", "events", "event_relations"],
+            ["entities", "events"],
         )
-        self.assertIn("event_relations", properties)
+        self.assertNotIn("event_relations", properties)
+        self.assertNotIn("participants", event_properties)
         self.assertNotIn("event_realations", properties)
         self.assertNotIn("start_year", event_properties)
         self.assertNotIn("end_year", event_properties)
@@ -184,8 +185,8 @@ class ExtractionTests(unittest.TestCase):
     def test_knowledge_schema_is_strict_and_uses_bounded_enums(self):
         schema = subject.KNOWLEDGE_SCHEMA
         event = schema["properties"]["events"]["items"]
-        participant = event["properties"]["participants"]["items"]
-        relation = schema["properties"]["event_relations"]["items"]
+        participant = subject.PARTICIPANT_ITEM_SCHEMA
+        relation = subject.EVENT_RELATION_SCHEMA["properties"]["event_relations"]["items"]
 
         self.assertFalse(schema["additionalProperties"])
         self.assertFalse(event["additionalProperties"])
@@ -207,7 +208,7 @@ class ExtractionTests(unittest.TestCase):
         )
 
     @patch.object(subject, "call_groq")
-    def test_extract_knowledge_returns_all_sections(self, call_groq):
+    def test_extract_knowledge_returns_only_entities_and_events(self, call_groq):
         expected = {
             "entities": [],
             "events": [
@@ -226,6 +227,9 @@ class ExtractionTests(unittest.TestCase):
         }
         call_groq.return_value = expected
 
+        expected = {"entities": [], "events": [dict(expected["events"][0])]}
+        expected["events"][0].pop("participants")
+        expected["events"][0]["title_needs_backfill"] = False
         self.assertEqual(subject.extract_knowledge("A meeting happened."), expected)
         self.assertIs(call_groq.call_args_list[0].args[1], subject.ENTITY_SCHEMA)
 
@@ -243,26 +247,12 @@ class ExtractionTests(unittest.TestCase):
         )
 
         prompt = call_groq.call_args.args[0]
-        self.assertIn("BƯỚC 0 - HARD GATE", prompt)
-        self.assertIn("mong muốn;", prompt)
-        self.assertIn("sở thích;", prompt)
-        self.assertIn("Tối đa 5 Event", prompt)
-        self.assertIn("hất/tạt/ném vào người", prompt)
-        self.assertIn("events có thể là []", prompt)
-        self.assertIn('"ông Đoàn Bảo Châu"', prompt)
-        self.assertIn("Participant có tên riêng phải dùng entity_id", prompt)
-        self.assertIn("không tham gia Event", prompt)
-        self.assertIn('"ngày 7", "tháng 8", "hôm nay"', prompt)
-        self.assertIn("giá dầu;", prompt)
-        self.assertIn("entities = []", prompt)
-        self.assertIn("số tiền, mức phạt, số", prompt)
-        self.assertIn("có thể dùng nhiều câu liền kề", prompt)
-        self.assertIn("35 triệu đồng và trừ 10 điểm", prompt)
-        self.assertIn("STRUCTURAL / SCHEMA VALIDATION", prompt)
-        self.assertIn("participant_scope = GLOBAL_ROLE hoặc POST_LOCAL", prompt)
-        self.assertIn('"Đại biểu quốc hội"', prompt)
-        self.assertIn("luôn chọn POST_LOCAL", prompt)
-        self.assertIn("mọi ID vẫn phải tham chiếu đúng loại đối tượng", prompt)
+        for rule in ("HARD GATE", "LOCATION", "Substring", "DROWNING",
+                     "giao thông", "precision"):
+            self.assertIn(rule, prompt)
+        for removed in ("GLOBAL_ROLE", "POST_LOCAL", "PARTICIPANT", "EVENT RELATION", "QUYẾT ĐỊNH CUỐI", "VALIDATION", "Tối đa 5 Event",
+                        "ID Entity duy nhất", "CHỈ trả JSON"):
+            self.assertNotIn(removed, prompt)
 
     def test_extract_knowledge_recovers_explicit_vietnam_when_model_omits_it(self):
         content = (
@@ -359,7 +349,7 @@ class ExtractionTests(unittest.TestCase):
                 "resolution_confidence": "HIGH",
             }
         ]
-        call_groq.return_value = {"entities": expected}
+        call_groq.return_value = {"entities": expected, "events": []}
 
         self.assertEqual(subject.extract_entities("President Trump spoke."), expected)
         self.assertIs(call_groq.call_args.args[1], subject.ENTITY_SCHEMA)
@@ -531,7 +521,7 @@ class KnowledgeValidationTests(unittest.TestCase):
         knowledge = subject.validate_knowledge(content, raw, "facebook", "post-1")
 
         self.assertEqual(
-            [entity["local_id"] for entity in knowledge["entities"]], ["e2"]
+            [entity["local_id"] for entity in knowledge["entities"]], ["e1"]
         )
         actor = knowledge["events"][0]["participants"][0]
         self.assertIsNone(actor["entity_id"])
@@ -935,7 +925,7 @@ class KnowledgeValidationTests(unittest.TestCase):
         knowledge = subject.validate_knowledge(content, raw)
 
         self.assertEqual(
-            [event["local_id"] for event in knowledge["events"]], ["ev1", "ev3"]
+            [event["local_id"] for event in knowledge["events"]], ["ev1", "ev2"]
         )
 
     def test_validation_keeps_at_most_five_events(self):
@@ -1061,7 +1051,7 @@ class KnowledgeValidationTests(unittest.TestCase):
         self.assertEqual(participants[0]["participant_text"], "a man")
         self.assertEqual(participants[0]["confidence"], 0)
 
-    def test_dangling_entity_id_recovers_unique_anonymous_participant(self):
+    def test_dangling_entity_id_drops_participant_but_keeps_events(self):
         content = "nữ tài xế cho biết đã lùi xe và nữ tài xế bị phạt."
         raw = {
             "entities": [],
@@ -1085,15 +1075,9 @@ class KnowledgeValidationTests(unittest.TestCase):
         events = subject.validate_knowledge(content, raw)["events"]
 
         self.assertEqual(len(events), 2)
-        self.assertEqual(
-            [event["participants"][0]["participant_text"] for event in events],
-            ["nữ tài xế", "nữ tài xế"],
-        )
-        self.assertTrue(
-            all(event["participants"][0]["entity_id"] is None for event in events)
-        )
+        self.assertTrue(all(event["participants"] == [] for event in events))
 
-    def test_dangling_id_recovers_search_force_as_anonymous_actor(self):
+    def test_dangling_id_does_not_infer_anonymous_actor(self):
         content = (
             "Ngày 5/8, lực lượng tìm kiếm, quy tập hài cốt liệt sĩ "
             "tiếp tục phát hiện và quy tập 12 bộ hài cốt."
@@ -1113,17 +1097,7 @@ class KnowledgeValidationTests(unittest.TestCase):
 
         event = subject.validate_knowledge(content, raw)["events"][0]
 
-        self.assertEqual(len(event["participants"]), 1)
-        self.assertEqual(
-            event["participants"][0],
-            {
-                "entity_id": None,
-                "participant_text": "lực lượng tìm kiếm",
-                "participant_scope": "POST_LOCAL",
-                "role": "ACTOR",
-                "confidence": 1.0,
-            },
-        )
+        self.assertEqual(event["participants"], [])
 
     def test_anonymous_key_is_shared_across_events_and_roles_in_one_post(self):
         participant = {

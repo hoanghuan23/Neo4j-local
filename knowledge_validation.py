@@ -1,9 +1,10 @@
 import hashlib
 import re
+from contextvars import ContextVar
 
 from event_titles import is_valid_event_title
 from knowledge_settings import (
-    ANONYMOUS_PARTICIPANT_PATTERN,
+    LOGGER,
     EVENT_ACTION_TRIGGERS,
     EVENT_NAME_PATTERN,
     EVENT_RELATION_TYPES,
@@ -26,8 +27,24 @@ from knowledge_extraction import (
     make_search_name,
     normalize_name,
     normalize_null,
+    normalize_knowledge_collections,
     prepare_entity,
 )
+
+
+_VALIDATION_POST = ContextVar("validation_post", default=("", ""))
+
+
+def _log_drop(kind: str, reason: str, identifier="") -> None:
+    platform, post_id = _VALIDATION_POST.get()
+    LOGGER.debug(
+        "knowledge validation | platform=%s post=%s kind=%s id=%s reason=%s",
+        platform, post_id, kind, str(identifier)[:80], reason,
+    )
+
+
+def _invalid_text_fields(raw: dict, fields: tuple[str, ...]) -> bool:
+    return any(raw.get(key) is not None and not isinstance(raw[key], str) for key in fields)
 
 
 def validate_entities(raw_entities) -> dict:
@@ -50,15 +67,21 @@ def validate_entities(raw_entities) -> dict:
 
     for raw in raw_entities:
         if not isinstance(raw, dict):
+            _log_drop("entity", "invalid_object")
+            continue
+        if _invalid_text_fields(raw, ('local_id', 'name', 'canonical_name', 'type', 'resolution_confidence')):
+            _log_drop("entities", "invalid_text_type")
             continue
         local_id = _clean_text(raw.get("local_id"))
         if not local_id or local_id in seen_local_ids:
+            _log_drop("entity", "missing_or_duplicate_id", local_id)
             continue
         seen_local_ids.add(local_id)
 
         name = _clean_text(raw.get("name"))
         entity_type = classify_entity_type(raw)
         if is_generic_entity(raw):
+            _log_drop("entity", "generic_entity", local_id)
             if name:
                 result["generic_participants"][local_id] = name
             if name and entity_type:
@@ -72,6 +95,7 @@ def validate_entities(raw_entities) -> dict:
 
         prepared = prepare_entity(raw)
         if prepared is None:
+            _log_drop("entity", "invalid_entity", local_id)
             continue
         raw_entity_names = {
             normalized_name
@@ -164,19 +188,6 @@ def _participant_signature(participant: dict) -> str:
     return f"{identity}:{participant['role']}"
 
 
-def _infer_anonymous_participant_text(raw_event: dict) -> str:
-    """Recover one unambiguous anonymous description from an event."""
-    candidates = {}
-    for field in ("description", "evidence_text"):
-        text = _clean_text(raw_event.get(field))
-        for match in ANONYMOUS_PARTICIPANT_PATTERN.finditer(text):
-            candidate = _clean_text(match.group(0))
-            candidates.setdefault(normalize_name(candidate), candidate)
-    if len(candidates) == 1:
-        return next(iter(candidates.values()))
-    return ""
-
-
 def _resolve_participant_scope(value, participant_text: str) -> str:
     explicit_scope = _enum_value(value, PARTICIPANT_SCOPES)
     if explicit_scope is not None:
@@ -219,11 +230,17 @@ def validate_events(
 
     for raw in raw_events:
         if len(result["events"]) >= MAX_EVENTS_PER_POST:
+            _log_drop("event", "event_limit")
             break
         if not isinstance(raw, dict):
+            _log_drop("event", "invalid_object")
+            continue
+        if _invalid_text_fields(raw, ('local_id', 'type', 'title', 'description', 'evidence_text', 'status', 'time_expression')):
+            _log_drop("events", "invalid_text_type")
             continue
         local_id = _clean_text(raw.get("local_id"))
         if not local_id or local_id in seen_local_ids:
+            _log_drop("event", "missing_or_duplicate_id", local_id)
             continue
         seen_local_ids.add(local_id)
 
@@ -239,6 +256,7 @@ def validate_events(
             or confidence is None
             or not _evidence_in_content(evidence_text, content)
         ):
+            _log_drop("event", "invalid_fields_or_evidence", local_id)
             continue
         event_type = resolve_event_type(extracted_type, evidence_text)
 
@@ -251,12 +269,19 @@ def validate_events(
 
         for raw_participant in raw_participants:
             if not isinstance(raw_participant, dict):
+                _log_drop("participant", "invalid_object", local_id)
+                continue
+            if _invalid_text_fields(raw_participant, (
+                "entity_id", "participant_text", "participant_scope", "role",
+            )):
+                _log_drop("participant", "invalid_text_type", local_id)
                 continue
             role = _enum_value(raw_participant.get("role"), EVENT_ROLES)
             participant_confidence = _valid_confidence(
                 raw_participant.get("confidence")
             )
             if role is None or participant_confidence is None:
+                _log_drop("participant", "invalid_role_or_confidence", local_id)
                 continue
 
             raw_entity_id = _clean_text(raw_participant.get("entity_id"))
@@ -284,13 +309,14 @@ def validate_events(
                     participant_text or generic_participants[raw_entity_id]
                 )
             elif raw_entity_id:
-                entity_id = None
-                if not participant_text:
-                    participant_text = _infer_anonymous_participant_text(raw)
+                _log_drop("participant", "dangling_entity_reference", raw_entity_id)
+                continue
 
             if participant_text and EVENT_NAME_PATTERN.search(participant_text):
+                _log_drop("participant", "event_name_as_participant", local_id)
                 continue
             if not entity_id and not participant_text:
+                _log_drop("participant", "missing_identity", local_id)
                 continue
             participant = {
                 "entity_id": entity_id,
@@ -311,6 +337,7 @@ def validate_events(
                 ][raw_entity_id]
             signature = _participant_signature(participant)
             if signature in seen_participants:
+                _log_drop("participant", "duplicate", local_id)
                 continue
             seen_participants.add(signature)
             participants.append(participant)
@@ -370,6 +397,10 @@ def validate_event_relations(
 
     for raw in raw_relations:
         if not isinstance(raw, dict):
+            _log_drop("relation", "invalid_object")
+            continue
+        if _invalid_text_fields(raw, ('source_event_id', 'target_event_id', 'type', 'evidence_text')):
+            _log_drop("event_relations", "invalid_text_type")
             continue
         raw_source = _clean_text(raw.get("source_event_id"))
         raw_target = _clean_text(raw.get("target_event_id"))
@@ -386,9 +417,11 @@ def validate_event_relations(
             or not _evidence_in_content(evidence_text, content)
             or not _relation_evidence_is_explicit(relation_type, evidence_text)
         ):
+            _log_drop("relation", "invalid_reference_or_evidence", raw_source)
             continue
         signature = (source, relation_type, target)
         if signature in seen:
+            _log_drop("relation", "duplicate", raw_source)
             continue
         seen.add(signature)
         relations.append(
@@ -428,13 +461,13 @@ def build_anonymous_participant_key(
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
-def validate_knowledge(
+def _validate_knowledge(
     content: str,
     raw_knowledge: dict,
     platform: str = "",
     post_id: str = "",
 ) -> dict:
-    raw = normalize_null(raw_knowledge if isinstance(raw_knowledge, dict) else {})
+    raw = normalize_null(normalize_knowledge_collections(raw_knowledge))
     entity_validation = validate_entities(raw.get("entities", []))
     event_validation = validate_events(
         raw.get("events", []), content, entity_validation
@@ -452,9 +485,42 @@ def validate_knowledge(
         for participant in event["participants"]:
             participant.pop("_entity_identity", None)
 
+    # Keys/signatures above use semantic identities, never renumbered local IDs.
+    entity_ids = {
+        entity["local_id"]: f"e{index}"
+        for index, entity in enumerate(entity_validation["entities"], 1)
+    }
+    event_ids = {
+        event["local_id"]: f"ev{index}"
+        for index, event in enumerate(events, 1)
+    }
+    for entity in entity_validation["entities"]:
+        entity["local_id"] = entity_ids[entity["local_id"]]
+    for event in events:
+        event["local_id"] = event_ids[event["local_id"]]
+        for participant in event["participants"]:
+            if participant["entity_id"]:
+                participant["entity_id"] = entity_ids[participant["entity_id"]]
+    for relation in relations:
+        relation["source_event_id"] = event_ids[relation["source_event_id"]]
+        relation["target_event_id"] = event_ids[relation["target_event_id"]]
+
     return {
         "entities": entity_validation["entities"],
         "events": events,
         "event_relations": relations,
         "generic_entity_keys": entity_validation["generic_entity_keys"],
     }
+
+
+def validate_knowledge(
+    content: str,
+    raw_knowledge: dict,
+    platform: str = "",
+    post_id: str = "",
+) -> dict:
+    token = _VALIDATION_POST.set((platform, post_id))
+    try:
+        return _validate_knowledge(content, raw_knowledge, platform, post_id)
+    finally:
+        _VALIDATION_POST.reset(token)

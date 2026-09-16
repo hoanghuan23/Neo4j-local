@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 from neo4j import GraphDatabase
 
-from knowledge_consolidation import (
+from knowledge_relations.event_hierarchy import (
     _delete_possible_pair,
     _record_match_decisions,
     _resolve_prompt,
@@ -440,7 +440,7 @@ class EventConsolidationTests(unittest.TestCase):
 
         self.assertIn("cùng một occurrence", prompt)
         self.assertIn("Madam Pang", prompt)
-        self.assertIn("semantic_score_components", prompt)
+        self.assertNotIn("semantic_score_components", prompt)
         self.assertNotIn('"retrieval_score"', prompt)
 
     def test_delete_possible_is_scoped_to_one_event_pair(self):

@@ -598,7 +598,7 @@ def test_mixed_schema_post_scoping_and_event_participants(precision_graph, legac
 
 
 def test_location_enrichment_preserves_existing_administrative_hierarchy():
-    from knowledge_relations.location_hierarchy import _persist_edges_tx, _upsert_osm_chain_tx
+    from knowledge_relations.entity_hierarchy.location_hierarchy import _persist_edges_tx, _upsert_osm_chain_tx
 
     settings = Settings()
     marker = f"codex-location-hierarchy-{uuid4().hex}"

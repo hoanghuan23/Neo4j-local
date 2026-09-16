@@ -7,7 +7,7 @@ import logging
 from neo4j import GraphDatabase
 
 from knowledge_gemini import GeminiKnowledgeCaller
-from knowledge_relations.location_hierarchy import enrich_location_hierarchy
+from knowledge_relations.entity_hierarchy.location_hierarchy import enrich_location_hierarchy
 from knowledge_settings import (
     LOCATION_HIERARCHY_MODULE_VERSION,
     NEO4J_PASSWORD,

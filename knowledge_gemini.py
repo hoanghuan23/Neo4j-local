@@ -1,5 +1,10 @@
 import json
 import threading
+import logging
+import time
+import inspect
+from contextvars import ContextVar
+from functools import wraps
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -16,6 +21,47 @@ from knowledge_tracing import (
     set_langsmith_usage,
     trace_llm,
 )
+
+
+API_LOGGER = logging.getLogger("knowledge.api")
+_POST_CONTEXT = ContextVar("gemini_post", default="batch")
+
+
+def log_post_calls(function):
+    """Attach post identity within each worker; never include source text."""
+    signature = inspect.signature(function)
+
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        values = signature.bind(*args, **kwargs).arguments
+        post = values.get("post", values)
+        token = _POST_CONTEXT.set(f"{post.get('platform', '')}:{post.get('post_id', '')}")
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _POST_CONTEXT.reset(token)
+    return wrapped
+
+
+def _stage_for_schema(schema):
+    import knowledge_settings as settings
+    for name, stage in (
+        ("KNOWLEDGE_CLASSIFIER_SCHEMA", "classifier"),
+        ("KNOWLEDGE_SCHEMA", "extraction"),
+        ("EVENT_TITLE_SCHEMA", "title"),
+        ("RELATION_ROUTER_SCHEMA", "relation_router"),
+        ("PARTICIPANT_ROLE_SCHEMA", "participant_role"),
+        ("PARTICIPANT_EXTRACTION_SCHEMA", "participant_extraction"),
+        ("EVENT_RELATION_SCHEMA", "event_relation"),
+        ("LOCATION_HIERARCHY_SCHEMA", "location_hierarchy"),
+        ("EVENT_CONSOLIDATION_SCHEMA", "consolidation_match"),
+        ("EVENT_SUMMARY_SCHEMA", "consolidation_summary"),
+    ):
+        if schema == getattr(settings, name):
+            return stage
+    if set(schema.get("properties", {})) == {"relations"}:
+        return "organization_hierarchy"
+    return "unknown"
 
 
 TOKENS_PER_MILLION = Decimal("1000000")
@@ -69,6 +115,8 @@ class GeminiKnowledgeCaller:
         self.types = types_module
         self._usage = GeminiUsage()
         self._usage_lock = threading.Lock()
+        self._stages = {}
+        self._attempts = 0
 
     @trace_llm(
         name="gemini-knowledge-extraction",
@@ -76,6 +124,48 @@ class GeminiKnowledgeCaller:
         model=GEMINI_MODEL,
     )
     def __call__(self, prompt: str, output_schema: dict) -> dict:
+        stage = _stage_for_schema(output_schema)
+        started = time.monotonic()
+        record = {"usage": GeminiUsage()}
+        with self._usage_lock:
+            self._attempts += 1
+            request_id = self._attempts
+        status = "ok"
+        try:
+            return self._request(prompt, output_schema, record)
+        except Exception as error:
+            status = type(error).__name__
+            raise
+        finally:
+            usage = record["usage"]
+            elapsed = time.monotonic() - started
+            with self._usage_lock:
+                stats = self._stages.setdefault(stage, {
+                    "calls": 0, "errors": 0, "usage_calls": 0,
+                    "input": 0, "output": 0, "thinking": 0,
+                })
+                stats["calls"] += 1
+                stats["errors"] += status != "ok"
+                stats["usage_calls"] += usage.requests
+                stats["input"] += usage.input_tokens
+                stats["output"] += usage.output_tokens
+                stats["thinking"] += usage.thinking_tokens
+            cost = self._cost(usage.input_tokens, usage.billable_output_tokens)
+            API_LOGGER.debug(
+                "Gemini function=%s call=%s stage=%s post=%s status=%s seconds=%.2f "
+                "input=%s output=%s thinking=%s usage_known=%s cost_usd=%.8f",
+                "extract_knowledge" if stage == "extraction" else stage,
+                request_id, stage, _POST_CONTEXT.get(), status, elapsed,
+                usage.input_tokens, usage.output_tokens, usage.thinking_tokens,
+                bool(usage.requests), cost,
+            )
+
+    @staticmethod
+    def _cost(input_tokens, output_tokens):
+        return (Decimal(input_tokens) * Decimal(GEMINI_INPUT_PRICE_PER_MILLION)
+                + Decimal(output_tokens) * Decimal(GEMINI_OUTPUT_PRICE_PER_MILLION)) / TOKENS_PER_MILLION
+
+    def _request(self, prompt, output_schema, record):
         set_langsmith_model(self.model)
         response = self.client.models.generate_content(
             model=self.model,
@@ -90,6 +180,7 @@ class GeminiKnowledgeCaller:
         )
         usage = _usage_from_response(response)
         self._add_usage(usage)
+        record["usage"] = usage
         set_langsmith_usage(
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
@@ -149,13 +240,28 @@ class GeminiKnowledgeCaller:
         label = f" - {stage_label}" if stage_label else ""
         print(
             f"TỔNG KẾT CHI PHÍ GEMINI{label} "
-            f"CHO TỐI ĐA {target_posts} REQUEST"
+            f"CHO {target_posts} POST"
         )
         print(f"Model: {self.model}")
-        print(f"Số request có usage thực tế: {usage.requests}/{target_posts}")
+        print(f"Số request có usage thực tế: {usage.requests}")
+        with self._usage_lock:
+            attempts = self._attempts
+            extraction = dict(self._stages.get("extraction", {}))
+        print(f"Tổng lần gọi API: {attempts}")
+        extraction_input_cost = self._cost(extraction.get("input", 0), 0)
+        extraction_output_cost = self._cost(
+            0, extraction.get("output", 0) + extraction.get("thinking", 0)
+        )
+        print(f"\nCHI PHÍ RIÊNG extract_knowledge ({extraction.get('calls', 0)} lần gọi API)")
+        print(f"Chi phí input extract_knowledge: ${extraction_input_cost:.8f}")
+        print(f"Chi phí output extract_knowledge (gồm thinking): ${extraction_output_cost:.8f}")
+        print(f"TỔNG CHI PHÍ extract_knowledge: ${extraction_input_cost + extraction_output_cost:.8f}")
+        missing_usage = extraction.get("calls", 0) - extraction.get("usage_calls", 0)
+        if missing_usage:
+            print(f"extract_knowledge: {missing_usage} lần gọi thiếu usage, chưa tính được chi phí.")
+        print("\nCHI PHÍ TOÀN BỘ PIPELINE")
         print(f"Input tokens thực tế: {usage.input_tokens:,}")
         print(f"Output tokens thực tế: {usage.output_tokens:,}")
-        print(f"Thinking tokens thực tế: {usage.thinking_tokens:,}")
         print(
             "Billable output tokens: "
             f"{usage.billable_output_tokens:,}"

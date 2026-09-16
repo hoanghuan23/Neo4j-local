@@ -35,10 +35,12 @@ KNOWLEDGE_ERROR_MAX_CHARS = 2_000
 POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
-KNOWLEDGE_PROMPT_VERSION = "knowledge-v12"
+KNOWLEDGE_PROMPT_VERSION = "knowledge-v14"
 KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v2"
 RELATION_ROUTER_PROMPT_VERSION = "relation-router-v1"
 PARTICIPANT_ROLE_PROMPT_VERSION = "participant-role-v1"
+PARTICIPANT_EXTRACTION_PROMPT_VERSION = "participant-extraction-v1"
+EVENT_RELATION_PROMPT_VERSION = "event-relation-v1"
 LOCATION_HIERARCHY_MODULE_VERSION = "location-hierarchy-v3-photon"
 EVENT_CONSOLIDATION_VERSION = "event-consolidation-v3"
 EVENT_SUMMARY_VERSION = "event-summary-v3"
@@ -143,7 +145,7 @@ def _strict_object(properties: dict, required: list[str]) -> dict:
 
 ENTITY_ITEM_SCHEMA = _strict_object(
     {
-        "local_id": {"type": "string"},
+        "local_id": {"type": "string", "description": "Entity ID: e1, e2, ..."},
         "name": {"type": "string"},
         "canonical_name": {"type": "string"},
         "type": {"type": "string", "enum": sorted(ENTITY_TYPES)},
@@ -220,7 +222,7 @@ LOCATION_HIERARCHY_SCHEMA = _strict_object(
 
 EVENT_ITEM_SCHEMA = _strict_object(
     {
-        "local_id": {"type": "string"},
+        "local_id": {"type": "string", "description": "Event ID: ev1, ev2, ..."},
         "type": {"type": "string", "enum": sorted(EVENT_TYPES)},
         "title": {"type": "string"},
         "description": {"type": "string"},
@@ -232,10 +234,6 @@ EVENT_ITEM_SCHEMA = _strict_object(
             "minimum": 0,
             "maximum": 1,
         },
-        "participants": {
-            "type": "array",
-            "items": PARTICIPANT_ITEM_SCHEMA,
-        },
     },
     [
         "local_id",
@@ -246,7 +244,6 @@ EVENT_ITEM_SCHEMA = _strict_object(
         "status",
         "time_expression",
         "confidence",
-        "participants",
     ],
 )
 
@@ -268,12 +265,28 @@ KNOWLEDGE_SCHEMA = _strict_object(
             "items": EVENT_ITEM_SCHEMA,
             "maxItems": MAX_EVENTS_PER_POST,
         },
-        "event_relations": {
+    },
+    ["entities", "events"],
+)
+
+PARTICIPANT_EXTRACTION_SCHEMA = _strict_object(
+    {
+        "events": {
             "type": "array",
-            "items": EVENT_RELATION_ITEM_SCHEMA,
+            "items": _strict_object(
+                {
+                    "event_id": {"type": "string"},
+                    "participants": {"type": "array", "items": PARTICIPANT_ITEM_SCHEMA},
+                },
+                ["event_id", "participants"],
+            ),
         },
     },
-    ["entities", "events", "event_relations"],
+    ["events"],
+)
+EVENT_RELATION_SCHEMA = _strict_object(
+    {"event_relations": {"type": "array", "items": EVENT_RELATION_ITEM_SCHEMA}},
+    ["event_relations"],
 )
 
 EVENT_MATCH_DECISIONS = {

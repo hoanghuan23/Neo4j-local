@@ -1,9 +1,9 @@
-"""Conservative organization identity resolution and evidence-based enrichment."""
+# phân cấp tổ chức (organization)
 import json
 import re
 
 from knowledge_extraction import normalize_name, make_search_name, call_gemini
-from knowledge_relations.location_hierarchy import _search_variants
+from knowledge_relations.entity_hierarchy.location_hierarchy import _search_variants
 
 VERSION = 'organization-hierarchy-v1'
 RELATIONS = ('SUBORDINATE_TO', 'JURISDICTION')

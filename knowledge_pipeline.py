@@ -1,3 +1,5 @@
+from knowledge_gemini import log_post_calls
+
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -12,9 +14,10 @@ from knowledge_settings import (
 )
 from knowledge_extraction import classify_knowledge_potential, extract_knowledge
 from knowledge_relation_router import classify_relation_routes
-from knowledge_relations.participant_role import enrich_participant_roles
-from knowledge_relations.location_hierarchy import enrich_location_hierarchy
-from knowledge_relations.organization_hierarchy import extract_context, enrich_organization_hierarchy
+from knowledge_relations.participant_role import extract_participants
+from knowledge_relations.event_relation import extract_event_relations
+from knowledge_relations.entity_hierarchy.location_hierarchy import enrich_location_hierarchy
+from knowledge_relations.entity_hierarchy.organization_hierarchy import extract_context, enrich_organization_hierarchy
 from knowledge_persistence import (
     create_entity_schema,
     create_knowledge_schema,
@@ -35,6 +38,7 @@ from knowledge_validation import validate_knowledge
         "content": inputs["content"],
     },
 )
+@log_post_calls
 def _extract_post(
     classify_post_fn,
     extract_knowledge_fn,
@@ -43,7 +47,8 @@ def _extract_post(
     platform: str,
     post_id: str,
     content: str,
-    enrich_participants_fn=enrich_participant_roles,
+    extract_participants_fn=extract_participants,
+    extract_event_relations_fn=extract_event_relations,
 ) -> dict:
     if not KNOWLEDGE_PIPELINE_ENABLED:
         return {
@@ -60,14 +65,15 @@ def _extract_post(
         if needs_deep_extraction
         else {"entities": [], "events": [], "event_relations": []}
     )
+    if needs_deep_extraction:
+        raw_knowledge = extract_participants_fn(content, raw_knowledge)
+        raw_knowledge = extract_event_relations_fn(content, raw_knowledge)
     knowledge = validate_knowledge_fn(content, raw_knowledge, platform, post_id)
     relation_routes = (
         classify_relations_fn(content, knowledge)
         if needs_deep_extraction
         else {"event_routes": [], "pair_routes": []}
     )
-    if needs_deep_extraction:
-        knowledge = enrich_participants_fn(content, knowledge, relation_routes)
     return {
         "classification": classification,
         "classifier_decision": "DEEP" if needs_deep_extraction else "SKIPPED",
@@ -138,7 +144,8 @@ def process_new_posts(
     extract_knowledge_fn=extract_knowledge,
     classify_post_fn=classify_knowledge_potential,
     classify_relations_fn=classify_relation_routes,
-    enrich_participants_fn=enrich_participant_roles,
+    extract_participants_fn=extract_participants,
+    extract_event_relations_fn=extract_event_relations,
     enrich_locations_fn=enrich_location_hierarchy,
     consolidate_fn=None,
     enrich_organizations_fn=enrich_organization_hierarchy,
@@ -166,7 +173,8 @@ def process_new_posts(
                 post["platform"],
                 post["post_id"],
                 post["content"],
-                enrich_participants_fn,
+                extract_participants_fn,
+                extract_event_relations_fn,
             ): (index, post)
             for index, post in enumerate(posts, start=1)
         }
@@ -244,6 +252,7 @@ def process_new_posts(
     return summary
 
 
+@log_post_calls
 def _save_extracted_post(
     session,
     post,
