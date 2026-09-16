@@ -1,182 +1,144 @@
-import unittest
-from unittest.mock import Mock
+import copy
+from unittest.mock import Mock, patch
 
-from knowledge_relation_router import (
-    classify_relation_routes,
-    normalize_relation_routes,
-)
+import pytest
 
-
-CONTENT = (
-    "Bộ Công an cho biết mưa lớn gây ngập tại quận Thanh Xuân vào ngày 2/9. "
-    "Người dân phản đối việc đóng đường."
-)
+from knowledge_relation_router import classify_relation_routes, normalize_relation_routes
+from knowledge_settings import RELATION_GROUPS, RELATION_ROUTER_SCHEMA, KNOWLEDGE_MODULES
 
 
-def event(local_id, evidence, participants=None):
-    return {
-        "local_id": local_id,
-        "type": "OTHER",
-        "title": local_id,
-        "description": evidence,
-        "evidence_text": evidence,
-        "time_expression": None,
-        "participants": participants or [],
-    }
+CONTENT = "Bộ Công an cho biết mưa lớn gây ngập. Người dân phản đối việc đóng đường."
 
 
-class RelationRouterTests(unittest.TestCase):
-    def test_calls_model_without_events(self):
-        call_model = Mock(return_value={"detected_modules": [], "event_routes": [], "pair_routes": []})
-
-        result = classify_relation_routes(
-            CONTENT,
-            {"entities": [], "events": []},
-            call_model=call_model,
-        )
-
-        self.assertEqual(result, {"detected_modules": [], "event_routes": [], "pair_routes": []})
-        call_model.assert_called_once()
-
-    def test_calls_model_once_and_passes_strict_schema(self):
-        knowledge = {
-            "entities": [],
-            "events": [event("ev1", "mưa lớn gây ngập")],
-        }
-        call_model = Mock(return_value={"detected_modules": [], "event_routes": [], "pair_routes": []})
-
-        result = classify_relation_routes(
-            CONTENT,
-            knowledge,
-            call_model=call_model,
-        )
-
-        self.assertEqual(result["event_routes"][0]["event_id"], "ev1")
-        self.assertEqual(call_model.call_count, 1)
-        prompt = call_model.call_args.args[0]
-        self.assertIn("(PRECEDES) hoặc liên quan (RELATED_TO)", prompt)
-        self.assertIn(
-            "Phân biệt stance của tác giả Post với stance của người được trích dẫn",
-            prompt,
-        )
-        schema = call_model.call_args.args[1]
-        self.assertFalse(schema["additionalProperties"])
-        self.assertEqual(set(schema["required"]), {"detected_modules", "event_routes", "pair_routes"})
-
-    def test_normalizes_invalid_missing_and_duplicate_routes(self):
-        knowledge = {
-            "entities": [],
-            "events": [
-                event(
-                    "ev1",
-                    "Bộ Công an cho biết mưa lớn gây ngập",
-                    [{"entity_id": "e1", "role": "SPEAKER"}],
-                ),
-                event("ev2", "Người dân phản đối việc đóng đường"),
-            ],
-        }
-        causal = {
-            "relation_group": "EVENT_RELATION",
-            "action": "USE_BASE_DATA",
-            "reason": "Có từ gây.",
-            "evidence_text": "mưa lớn gây ngập",
-        }
-        raw = {
-            "detected_modules": [],
-            "event_routes": [
-                {
-                    "event_id": "ev1",
-                    "relation_groups": ["EVENT_RELATION", "CLAIM_PROVENANCE"],
-                    "route_details": [
-                        {
-                            "relation_group": "EVENT_RELATION",
-                            "action": "ENRICH",
-                            "reason": "Sai scope.",
-                            "evidence_text": "mưa lớn gây ngập",
-                        },
-                        {
-                            "relation_group": "CLAIM_PROVENANCE",
-                            "action": "USE_BASE_DATA",
-                            "reason": "Có nguồn phát biểu.",
-                            "evidence_text": "Bộ Công an cho biết",
-                        },
-                        {
-                            "relation_group": "TEMPORAL_RELATION",
-                            "action": "ENRICH",
-                            "reason": "Evidence bịa.",
-                            "evidence_text": "ngày không tồn tại",
-                        },
-                    ],
-                },
-                {
-                    "event_id": "unknown",
-                    "relation_groups": ["TEMPORAL_RELATION"],
-                    "route_details": [],
-                },
-            ],
-            "pair_routes": [
-                {
-                    "event_a_id": "ev2",
-                    "event_b_id": "ev1",
-                    "relation_groups": ["EVENT_RELATION"],
-                    "route_details": [causal],
-                },
-                {
-                    "event_a_id": "ev1",
-                    "event_b_id": "ev2",
-                    "relation_groups": ["EVENT_RELATION"],
-                    "route_details": [causal],
-                },
-                {
-                    "event_a_id": "ev1",
-                    "event_b_id": "ev1",
-                    "relation_groups": ["EVENT_RELATION"],
-                    "route_details": [causal],
-                },
-            ],
-        }
-
-        result = normalize_relation_routes(CONTENT, knowledge, raw)
-
-        self.assertEqual(
-            [route["event_id"] for route in result["event_routes"]],
-            ["ev1", "ev2"],
-        )
-        ev1 = result["event_routes"][0]
-        self.assertEqual(
-            ev1["relation_groups"],
-            ["CLAIM_PROVENANCE", "PARTICIPANT_ROLE"],
-        )
-        self.assertEqual(ev1["route_details"][0]["action"], "ENRICH")
-        self.assertEqual(ev1["route_details"][1]["action"], "USE_BASE_DATA")
-        self.assertEqual(result["event_routes"][1]["relation_groups"], [])
-        self.assertEqual(len(result["pair_routes"]), 1)
-        pair = result["pair_routes"][0]
-        self.assertEqual((pair["event_a_id"], pair["event_b_id"]), ("ev1", "ev2"))
-        self.assertEqual(pair["route_details"][0]["action"], "ENRICH")
-
-    def test_participant_fallback_is_marked_for_enrichment(self):
-        knowledge = {
-            "entities": [],
-            "events": [
-                event(
-                    "ev1",
-                    "Người dân phản đối việc đóng đường",
-                    [{"entity_id": None, "role": "PARTICIPANT"}],
-                )
-            ],
-        }
-
-        result = normalize_relation_routes(
-            CONTENT,
-            knowledge,
-            {"detected_modules": [], "event_routes": [], "pair_routes": []},
-        )
-
-        detail = result["event_routes"][0]["route_details"][0]
-        self.assertEqual(detail["relation_group"], "PARTICIPANT_ROLE")
-        self.assertEqual(detail["action"], "ENRICH")
+def event(local_id="ev1", time_expression=None):
+    return dict(local_id=local_id, type="OTHER", description="mưa lớn gây ngập",
+                evidence_text="mưa lớn gây ngập", time_expression=time_expression,
+                participants=[])
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize("count,expected", [
+    (0, []),
+    (1, ["EVENT_HIERARCHY", "PARTICIPANT_ROLE"]),
+    (2, ["EVENT_HIERARCHY", "EVENT_RELATION", "PARTICIPANT_ROLE"]),
+])
+def test_code_event_thresholds(count, expected):
+    knowledge = {"events": [event(f"ev{i}") for i in range(count)]}
+    model = Mock(return_value={"detected_modules": []})
+    assert classify_relation_routes(CONTENT, knowledge, model) == {"detected_modules": expected}
+    model.assert_called_once()
+
+
+@pytest.mark.parametrize("entity_type,expected", [
+    ("LOCATION", ["ENTITY_HIERARCHY"]),
+    ("ORGANIZATION", ["ENTITY_HIERARCHY"]),
+    ("PERSON", []),
+])
+def test_entity_hierarchy_without_events(entity_type, expected):
+    model = Mock(return_value={"detected_modules": []})
+    result = classify_relation_routes(CONTENT, {"entities": [{"type": entity_type}]}, model)
+    assert result == {"detected_modules": expected}
+
+
+def test_distinct_valid_ids_only():
+    knowledge = {"events": [event(), event(), None, {}, event(""), event(" ")]}
+    assert normalize_relation_routes(CONTENT, knowledge, {"detected_modules": []}) == {
+        "detected_modules": ["EVENT_HIERARCHY", "PARTICIPANT_ROLE"]}
+
+
+@pytest.mark.parametrize("time", ["2/9", "  hôm qua  ", "từ tháng 1 đến tháng 3"])
+def test_temporal_from_extraction_is_not_delegated(time):
+    model = Mock(return_value={"detected_modules": []})
+    result = classify_relation_routes(CONTENT, {"events": [event(time_expression=time)]}, model)
+    assert "TEMPORAL_RELATION" in result["detected_modules"]
+    instructions = model.call_args.args[0].split("<base_knowledge>")[0]
+    assert "- TEMPORAL_RELATION:" not in instructions
+    assert "- CLAIM_PROVENANCE:" in instructions
+    assert "- STANCE_PERSPECTIVE:" in instructions
+
+
+@pytest.mark.parametrize("time", [None, "", "  ", " null ", "NONE", "nil", "n/a", 123])
+def test_missing_temporal_delegates_without_inferring_from_status(time):
+    current = event(time_expression=time)
+    current["status"] = "COMPLETED"
+    knowledge = {"events": [current], "posted_at": "2026-01-01"}
+    model = Mock(return_value={"detected_modules": []})
+    assert "TEMPORAL_RELATION" not in classify_relation_routes(CONTENT, knowledge, model)["detected_modules"]
+    assert "- TEMPORAL_RELATION:" in model.call_args.args[0]
+    assert "(PRECEDES) giữa hai Event" in model.call_args.args[0]
+    model.return_value = {"detected_modules": ["TEMPORAL_RELATION"]}
+    assert "TEMPORAL_RELATION" in classify_relation_routes(CONTENT, knowledge, model)["detected_modules"]
+
+
+def test_merge_filters_deduplicates_sorts_and_preserves_input():
+    knowledge = {"entities": [{"type": "LOCATION"}], "events": [event()]}
+    before = copy.deepcopy(knowledge)
+    raw = {"detected_modules": ["STANCE_PERSPECTIVE", "INVALID", None, {}, [],
+                               "CLAIM_PROVENANCE", "STANCE_PERSPECTIVE", "EVENT_RELATION"]}
+    assert normalize_relation_routes(CONTENT, knowledge, raw) == {"detected_modules": [
+        "CLAIM_PROVENANCE", "ENTITY_HIERARCHY", "EVENT_HIERARCHY", "PARTICIPANT_ROLE",
+        "STANCE_PERSPECTIVE"]}
+    assert knowledge == before
+
+
+def test_llm_cannot_add_structural_modules():
+    model = Mock(return_value={"detected_modules": sorted(RELATION_GROUPS)})
+    assert classify_relation_routes(CONTENT, {}, model) == {"detected_modules": [
+        "CLAIM_PROVENANCE", "STANCE_PERSPECTIVE", "TEMPORAL_RELATION"]}
+
+
+def test_strict_schema_and_no_detail_output_instructions():
+    model = Mock(return_value={"detected_modules": []})
+    classify_relation_routes(CONTENT, {}, model)
+    prompt, schema = model.call_args.args
+    assert schema == RELATION_ROUTER_SCHEMA
+    assert schema["required"] == ["detected_modules"]
+    assert set(schema["properties"]) == {"detected_modules"}
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["detected_modules"]["items"]["enum"] == sorted(RELATION_GROUPS)
+    for old in ("event_routes", "pair_routes", "route_details", "reason", "evidence_text", "action"):
+        assert old not in prompt
+    assert "Phân biệt stance của tác giả Post với stance của người được trích dẫn" in prompt
+
+
+def test_empty_input_skips_model():
+    model = Mock()
+    assert classify_relation_routes("  ", {}, model) == {"detected_modules": []}
+    model.assert_not_called()
+
+
+def test_code_only_with_no_semantic_context_skips_model():
+    model = Mock()
+    assert classify_relation_routes("", {"entities": [{"type": "LOCATION"}]}, model) == {
+        "detected_modules": ["ENTITY_HIERARCHY"]}
+    model.assert_not_called()
+
+
+@pytest.mark.parametrize("knowledge", [
+    {"entities": [{"name": "Công ty A", "type": "ORGANIZATION"}]},
+    {"events": [event()]},
+    {"events": [{"local_id": "ev1", "participants": [{"participant_text": "người dân"}]}]},
+])
+def test_knowledge_text_still_calls_model_without_content(knowledge):
+    model = Mock(return_value={"detected_modules": ["CLAIM_PROVENANCE"]})
+    assert "CLAIM_PROVENANCE" in classify_relation_routes("", knowledge, model)["detected_modules"]
+    model.assert_called_once()
+
+
+def test_detection_independent_of_execution_configuration():
+    model = Mock(return_value={"detected_modules": ["CLAIM_PROVENANCE", "STANCE_PERSPECTIVE"]})
+    with patch.dict(KNOWLEDGE_MODULES, {name: False for name in RELATION_GROUPS}):
+        assert classify_relation_routes(CONTENT, {}, model) == {
+            "detected_modules": ["CLAIM_PROVENANCE", "STANCE_PERSPECTIVE"]}
+    model.assert_called_once()
+
+
+@pytest.mark.parametrize("raw", [None, [], {}, {"detected_modules": None}, {"detected_modules": "bad"}])
+def test_invalid_output_raises_even_with_code_decisions(raw):
+    model = Mock(return_value=raw)
+    with pytest.raises(ValueError):
+        classify_relation_routes(CONTENT, {"events": [event()]}, model)
+
+
+def test_model_error_propagates():
+    with pytest.raises(RuntimeError, match="model failed"):
+        classify_relation_routes(CONTENT, {}, Mock(side_effect=RuntimeError("model failed")))

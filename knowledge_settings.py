@@ -37,7 +37,7 @@ KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
 KNOWLEDGE_PROMPT_VERSION = "knowledge-v14"
 KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v2"
-RELATION_ROUTER_PROMPT_VERSION = "relation-router-v3"
+RELATION_ROUTER_PROMPT_VERSION = "relation-router-v4"
 PARTICIPANT_ROLE_PROMPT_VERSION = "participant-role-v1"
 PARTICIPANT_EXTRACTION_PROMPT_VERSION = "participant-extraction-v1"
 EVENT_RELATION_PROMPT_VERSION = "event-relation-v1"
@@ -151,7 +151,6 @@ def validate_module_config():
             raise ValueError(f"Module chưa được triển khai: {name}")
 
 
-RELATION_ROUTER_ACTIONS = {"ENRICH", "USE_BASE_DATA"}
 CONCRETE_EVENT_ROLES = EVENT_ROLES - {"PARTICIPANT"}
 CONFIDENCE_LEVELS = {"HIGH", "MEDIUM", "LOW"}
 MAX_EVENTS_PER_POST = 5
@@ -392,60 +391,11 @@ KNOWLEDGE_CLASSIFIER_SCHEMA = _strict_object(
     ["should_deep_analyze", "reason_code"],
 )
 
-RELATION_ROUTE_DETAIL_SCHEMA = _strict_object(
-    {
-        "relation_group": {
-            "type": "string",
-            "enum": sorted(RELATION_GROUPS),
-        },
-        "action": {
-            "type": "string",
-            "enum": sorted(RELATION_ROUTER_ACTIONS),
-        },
-        "reason": {"type": "string"},
-        "evidence_text": {"type": "string"},
-    },
-    ["relation_group", "action", "reason", "evidence_text"],
-)
-
-EVENT_ROUTE_SCHEMA = _strict_object(
-    {
-        "event_id": {"type": "string"},
-        "relation_groups": {
-            "type": "array",
-            "items": {"type": "string", "enum": sorted(RELATION_GROUPS)},
-        },
-        "route_details": {
-            "type": "array",
-            "items": RELATION_ROUTE_DETAIL_SCHEMA,
-        },
-    },
-    ["event_id", "relation_groups", "route_details"],
-)
-
-PAIR_ROUTE_SCHEMA = _strict_object(
-    {
-        "event_a_id": {"type": "string"},
-        "event_b_id": {"type": "string"},
-        "relation_groups": {
-            "type": "array",
-            "items": {"type": "string", "enum": sorted(RELATION_GROUPS)},
-        },
-        "route_details": {
-            "type": "array",
-            "items": RELATION_ROUTE_DETAIL_SCHEMA,
-        },
-    },
-    ["event_a_id", "event_b_id", "relation_groups", "route_details"],
-)
-
 RELATION_ROUTER_SCHEMA = _strict_object(
     {
         "detected_modules": {"type": "array", "items": {"type": "string", "enum": sorted(RELATION_GROUPS)}},
-        "event_routes": {"type": "array", "items": EVENT_ROUTE_SCHEMA},
-        "pair_routes": {"type": "array", "items": PAIR_ROUTE_SCHEMA},
     },
-    ["detected_modules", "event_routes", "pair_routes"],
+    ["detected_modules"],
 )
 
 # Temporary compatibility alias for existing callers and tests.

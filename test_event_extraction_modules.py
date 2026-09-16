@@ -131,7 +131,7 @@ def test_pipeline_stage_order_and_stable_final_keys():
         record('classifier', lambda _: {'should_deep_analyze': True}),
         record('extraction', lambda _: knowledge),
         record('validation', validate_knowledge),
-        record('router', lambda *_: {'detected_modules': [], 'event_routes': [], 'pair_routes': []}),
+        record('router', lambda *_: {'detected_modules': []}),
         'test', 'post', CONTENT,
         record('participants', lambda c, k: extract_participants(c, k, participant_model)),
         record('relations', lambda c, k: extract_event_relations(c, k, relation_model)),
@@ -170,7 +170,7 @@ def test_module_failure_keeps_committed_base(failed_stage):
         summary = pipeline.process_new_posts(
             session, extract_knowledge_fn=lambda _: base(),
             classify_post_fn=lambda _: {'should_deep_analyze': True},
-            classify_relations_fn=lambda *_: {"detected_modules": [module], "event_routes": [], "pair_routes": []},
+            classify_relations_fn=lambda *_: {"detected_modules": [module]},
             extract_participants_fn=participants, extract_event_relations_fn=relations,
         )
     assert summary['deep'] == 1

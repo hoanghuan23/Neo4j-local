@@ -115,7 +115,7 @@ def test_pipeline_orders_context_base_location_organization():
     future = Future()
     knowledge = {'entities': [{'local_id': 'a', 'name': 'Công an Hải Phòng', 'type': 'ORGANIZATION'},
                               {'local_id': 'b', 'name': 'Hải Phòng', 'type': 'LOCATION'}], 'events': [], 'event_relations': []}
-    future.set_result({'knowledge': knowledge, 'relation_routes': {'detected_modules': ['ENTITY_HIERARCHY'], 'event_routes': [], 'pair_routes': []},
+    future.set_result({'knowledge': knowledge, 'relation_routes': {'detected_modules': ['ENTITY_HIERARCHY']},
                        'classification': {'should_deep_analyze': True}, 'classifier_decision': 'DEEP'})
     session = Mock()
     session.execute_write.side_effect = lambda fn, *_, **kwargs: order.append('base' if fn.__name__ == 'save_knowledge_tx' else 'completed') or {'entities': 2, 'events': 0, 'event_relations': 0}

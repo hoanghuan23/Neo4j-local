@@ -16,9 +16,8 @@ def test_config_defaults_and_unimplemented_module():
 
 
 def test_detected_modules_normalized_without_events():
-    result = normalize_relation_routes('text', {'entities': [], 'events': []}, {
+    result = normalize_relation_routes('text', {'entities': [{'type': 'LOCATION'}], 'events': []}, {
         'detected_modules': ['ENTITY_HIERARCHY', 'INVALID', 'ENTITY_HIERARCHY', None],
-        'event_routes': [], 'pair_routes': [],
     })
     assert result['detected_modules'] == ['ENTITY_HIERARCHY']
 
@@ -52,7 +51,7 @@ def test_persistence_records_detection_and_does_not_schedule_disabled_hierarchy(
 def test_hierarchy_requires_both_detection_and_configuration(detected, enabled, should_run):
     future = Future()
     future.set_result({'knowledge': {'entities': [{'type': 'LOCATION'}], 'events': [], 'event_relations': []},
-        'relation_routes': {'detected_modules': detected, 'event_routes': [], 'pair_routes': []},
+        'relation_routes': {'detected_modules': detected},
         'classification': {'should_deep_analyze': True}, 'classifier_decision': 'DEEP'})
     session = Mock()
     session.execute_write.return_value = {'entities': 1, 'events': 0, 'event_relations': 0}
@@ -102,7 +101,7 @@ def test_enabled_participant_runs_after_base_and_preserves_keys():
     knowledge = validate_knowledge(CONTENT, base(), 'test', '1')
     future = Future()
     future.set_result({'knowledge': knowledge,
-        'relation_routes': {'detected_modules': ['PARTICIPANT_ROLE'], 'event_routes': [], 'pair_routes': []},
+        'relation_routes': {'detected_modules': ['PARTICIPANT_ROLE']},
         'classification': {'should_deep_analyze': True}, 'classifier_decision': 'DEEP'})
     session = Mock()
     session.execute_write.return_value = {'entities': 1, 'events': 2, 'event_relations': 0}
@@ -129,7 +128,7 @@ def test_entity_completion_requires_all_branches(location_errors, organization_e
     future = Future()
     future.set_result({'knowledge': {'entities': [{'type': 'LOCATION'}, {'type': 'ORGANIZATION'}],
         'events': [], 'event_relations': []},
-        'relation_routes': {'detected_modules': ['ENTITY_HIERARCHY'], 'event_routes': [], 'pair_routes': []},
+        'relation_routes': {'detected_modules': ['ENTITY_HIERARCHY']},
         'classification': {'should_deep_analyze': True}, 'classifier_decision': 'DEEP'})
     session = Mock()
     session.execute_write.return_value = {'entities': 2, 'events': 0, 'event_relations': 0}

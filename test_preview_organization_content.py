@@ -17,7 +17,7 @@ def test_import_writes_content_and_knowledge_in_same_transaction():
     tx = MagicMock()
     session.execute_write.side_effect = lambda fn: fn(tx)
     knowledge = {'entities': [], 'events': [], 'event_relations': []}
-    routes = {'event_routes': [], 'pair_routes': []}
+    routes = {"detected_modules": []}
     with patch('knowledge_extraction.extract_knowledge', return_value=knowledge), \
          patch('knowledge_relation_router.classify_relation_routes', return_value=routes), \
          patch('knowledge_persistence.create_knowledge_schema'), \

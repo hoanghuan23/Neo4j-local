@@ -38,33 +38,24 @@ def knowledge():
     }
 
 
-def routes(action="ENRICH"):
-    return {
-        "event_routes": [
-            {
-                "event_id": "ev1",
-                "route_details": [
-                    {
-                        "relation_group": "PARTICIPANT_ROLE",
-                        "action": action,
-                    }
-                ],
-            }
-        ],
-        "pair_routes": [],
-    }
-
-
 class ParticipantRoleTests(unittest.TestCase):
-    def test_use_base_data_returns_same_object_without_model_call(self):
+    def test_concrete_roles_return_same_object_without_model_call(self):
         base = knowledge()
+        base["events"][0]["participants"][0]["role"] = "ACTOR"
         call_model = Mock()
 
         result = enrich_participant_roles(
-            CONTENT, base, routes("USE_BASE_DATA"), call_model=call_model
+            CONTENT, base, call_model=call_model
         )
 
         self.assertIs(result, base)
+        call_model.assert_not_called()
+
+    def test_empty_participants_skip_model(self):
+        base = knowledge()
+        base["events"][0]["participants"] = []
+        call_model = Mock()
+        self.assertIs(enrich_participant_roles(CONTENT, base, call_model=call_model), base)
         call_model.assert_not_called()
 
     def test_enriches_roles_by_index_and_preserves_every_other_field(self):
@@ -90,7 +81,7 @@ class ParticipantRoleTests(unittest.TestCase):
         )
 
         result = enrich_participant_roles(
-            CONTENT, base, routes(), call_model=call_model
+            CONTENT, base, call_model=call_model
         )
 
         self.assertEqual(
@@ -105,8 +96,12 @@ class ParticipantRoleTests(unittest.TestCase):
             actual.pop("role")
             self.assertEqual(actual, expected)
 
-    def test_ignores_invalid_duplicate_and_unrouted_assignments(self):
+    def test_ignores_invalid_duplicate_and_unselected_assignments(self):
         base = knowledge()
+        other = copy.deepcopy(base["events"][0])
+        other["local_id"] = "ev2"
+        other["participants"][0]["role"] = "VICTIM"
+        base["events"].append(other)
         call_model = Mock(
             return_value={
                 "assignments": [
@@ -145,13 +140,16 @@ class ParticipantRoleTests(unittest.TestCase):
         )
 
         result = enrich_participant_roles(
-            CONTENT, base, routes(), call_model=call_model
+            CONTENT, base, call_model=call_model
         )
 
         self.assertEqual(
             [item["role"] for item in result["events"][0]["participants"]],
             ["ACTOR", "ACTOR"],
         )
+
+        self.assertEqual(result["events"][1], other)
+        self.assertNotIn('"event_id": "ev2"', call_model.call_args.args[0])
 
     def test_model_failure_and_invalid_output_keep_base_data(self):
         for output in (ValueError("failed"), {}, {"assignments": "bad"}):
@@ -162,7 +160,7 @@ class ParticipantRoleTests(unittest.TestCase):
                     return_value=output if not isinstance(output, Exception) else None,
                 )
                 result = enrich_participant_roles(
-                    CONTENT, base, routes(), call_model=call_model
+                    CONTENT, base, call_model=call_model
                 )
                 self.assertIs(result, base)
 

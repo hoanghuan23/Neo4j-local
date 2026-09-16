@@ -60,7 +60,7 @@ def _extract_post(
             "classification": None,
             "classifier_decision": None,
             "knowledge": extract_knowledge_fn(content),
-            "relation_routes": {"event_routes": [], "pair_routes": []},
+            "relation_routes": {"detected_modules": []},
         }
 
     classification = classify_post_fn(content)
@@ -74,7 +74,7 @@ def _extract_post(
     relation_routes = (
         classify_relations_fn(content, knowledge)
         if needs_deep_extraction
-        else {"detected_modules": [], "event_routes": [], "pair_routes": []}
+        else {"detected_modules": []}
     )
     return {
         "classification": classification,
@@ -188,10 +188,7 @@ def process_new_posts(
             "failed": 0,
             "relation_routes": [],
             "relation_router": {
-                "events": 0,
-                "pairs": 0,
                 "groups": {},
-                "actions": {"USE_BASE_DATA": 0, "ENRICH": 0},
             },
             "location_hierarchy": {
                 "locations": 0, "content_edges": 0, "osm_edges": 0,
@@ -418,13 +415,5 @@ def _save_extracted_post(
 
 
 def _accumulate_relation_router_summary(summary: dict, routes: dict) -> None:
-    event_routes = routes.get("event_routes", [])
-    pair_routes = routes.get("pair_routes", [])
-    summary["events"] += len(event_routes)
-    summary["pairs"] += len(pair_routes)
-    for route in [*event_routes, *pair_routes]:
-        for detail in route.get("route_details", []):
-            group = detail["relation_group"]
-            action = detail["action"]
-            summary["groups"][group] = summary["groups"].get(group, 0) + 1
-            summary["actions"][action] = summary["actions"].get(action, 0) + 1
+    for group in sorted(set(routes.get("detected_modules", []))):
+        summary["groups"][group] = summary["groups"].get(group, 0) + 1

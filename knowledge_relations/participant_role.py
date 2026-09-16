@@ -23,22 +23,15 @@ def _evidence_in_content(evidence: object, content: str) -> bool:
     )
 
 
-def _enrich_event_ids(relation_routes: object) -> set[str]:
-    if not isinstance(relation_routes, dict):
-        return set()
-    event_ids = set()
-    for route in relation_routes.get("event_routes", []):
-        if not isinstance(route, dict) or not isinstance(route.get("event_id"), str):
-            continue
-        for detail in route.get("route_details", []):
-            if (
-                isinstance(detail, dict)
-                and detail.get("relation_group") == "PARTICIPANT_ROLE"
-                and detail.get("action") == "ENRICH"
-            ):
-                event_ids.add(route["event_id"])
-                break
-    return event_ids
+def _enrich_event_ids(knowledge: dict) -> set[str]:
+    return {
+        event["local_id"]
+        for event in knowledge.get("events", [])
+        if isinstance(event, dict) and isinstance(event.get("local_id"), str)
+        and isinstance(event.get("participants"), list)
+        and any(isinstance(participant, dict) and participant.get("role") == "PARTICIPANT"
+                for participant in event["participants"])
+    }
 
 
 def _normalize_assignments(
@@ -89,17 +82,15 @@ def _normalize_assignments(
     process_inputs=lambda inputs: {
         "content": inputs["content"],
         "knowledge": inputs["knowledge"],
-        "relation_routes": inputs["relation_routes"],
     },
 )
 def enrich_participant_roles(
     content: str,
     knowledge: dict,
-    relation_routes: dict,
     call_model=None,
 ) -> dict:
     """Refine roles while preserving the base participant list and identities."""
-    enrich_event_ids = _enrich_event_ids(relation_routes)
+    enrich_event_ids = _enrich_event_ids(knowledge)
     if not enrich_event_ids:
         return knowledge
 
