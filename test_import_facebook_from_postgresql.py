@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, call
 
-import import_facebook_from_postgreSQL as subject
+import import_database.import_facebook_from_postgreSQL as subject
 
 
 class FacebookPostSyncTests(unittest.TestCase):

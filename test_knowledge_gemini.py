@@ -144,7 +144,7 @@ def test_summary_totals_only_deep_extraction_calls(capsys):
     summary = capsys.readouterr().out
     assert 'CHI PHÍ RIÊNG extract_knowledge (80 lần gọi API)' in summary
     assert 'Chi phí input extract_knowledge: $0.00200000' in summary
-    assert 'Chi phí output extract_knowledge (gồm thinking): $0.00276000' in summary
+    assert 'Chi phí output extract_knowledge: $0.00276000' in summary
     assert 'TỔNG CHI PHÍ extract_knowledge: $0.00476000' in summary
     assert 'TỔNG CHI PHÍ (USD, Standard): $0.01071000' in summary
 
