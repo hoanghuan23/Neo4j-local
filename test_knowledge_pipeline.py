@@ -126,7 +126,10 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
 
         def execute_write(*args, **kwargs):
             write_threads.append(threading.get_ident())
-            return {"entities": 0, "events": 0, "event_relations": 0}
+            return {
+                "entities": 2, "events": 1, "event_relations": 0,
+                "entity_node_ids": {"ORGANIZATION": ["org-1"], "LOCATION": ["loc-1"]},
+            }
 
         session.execute_write.side_effect = execute_write
 
@@ -145,6 +148,9 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         self.assertNotIn(main_thread, extraction_threads)
         self.assertEqual(write_threads, [main_thread, main_thread])
         self.assertEqual(summary["deep"], 2)
+        self.assertEqual(summary["analyzed"], {
+            "organizations": 1, "locations": 1, "events": 2,
+        })
         create_schema.assert_called_once_with(session)
 
     @patch.object(subject, "create_knowledge_schema")

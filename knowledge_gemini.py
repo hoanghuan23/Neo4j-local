@@ -248,11 +248,26 @@ class GeminiKnowledgeCaller:
             attempts = self._attempts
             stages = {stage: dict(stats) for stage, stats in self._stages.items()}
         print(f"Tổng lần gọi API: {attempts}")
-        for stage, name in (
+        stage_names = dict((
             ("classifier", "lọc ban đầu (classify_knowledge_potential)"),
             ("extraction", "extract_knowledge"),
             ("relation_router", "phân loại module (classify_relation_routes)"),
-        ):
+        ))
+        additional_names = {
+            "title": "tạo tiêu đề sự kiện (title)",
+            "participant_role": "vai trò tham gia (participant_role)",
+            "participant_extraction": "trích xuất bên tham gia (participant_extraction)",
+            "event_relation": "quan hệ sự kiện (event_relation)",
+            "location_hierarchy": "phân cấp địa điểm (location_hierarchy)",
+            "organization_hierarchy": "phân cấp tổ chức (organization_hierarchy)",
+            "consolidation_match": "đối chiếu sự kiện (consolidation_match)",
+            "consolidation_summary": "tổng hợp mô tả sự kiện (consolidation_summary)",
+            "unknown": "chưa xác định (unknown)",
+        }
+        for stage in sorted(stages):
+            if stage not in stage_names:
+                stage_names[stage] = additional_names.get(stage, stage)
+        for stage, name in stage_names.items():
             stats = stages.get(stage, {})
             stage_input_cost = self._cost(stats.get("input", 0), 0)
             stage_output_cost = self._cost(

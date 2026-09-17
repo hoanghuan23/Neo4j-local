@@ -197,6 +197,7 @@ def process_new_posts(
             },
         }
         batch_mention_keys = []
+        analyzed_counts = {"organizations": set(), "locations": set(), "events": 0}
         for completed, future in enumerate(as_completed(future_to_post), start=1):
             original_index, post = future_to_post[future]
             outcome = _save_extracted_post(
@@ -215,6 +216,7 @@ def process_new_posts(
                 extract_event_relations_fn=extract_event_relations_fn,
                 enrich_organizations_fn=enrich_organizations_fn,
                 organization_context_fn=organization_context_fn,
+                analyzed_counts=analyzed_counts,
             )
             summary[outcome] += 1
 
@@ -238,11 +240,23 @@ def process_new_posts(
             LOGGER.exception("Lỗi bước consolidation cuối batch")
             consolidation["failed"] += 1
     summary["consolidation"] = consolidation
+    summary["analyzed"] = {
+        "organizations": len(analyzed_counts["organizations"]),
+        "locations": len(analyzed_counts["locations"]),
+        "events": analyzed_counts["events"],
+    }
 
     print(
         "\nTổng kết pipeline: "
         f"{summary['total']} post, {summary['skipped']} skipped, "
         f"{summary['deep']} deep, {summary['failed']} lỗi."
+    )
+    print(
+        "Kết quả batch: "
+        f"{summary['analyzed']['organizations']} node Organization, "
+        f"{summary['analyzed']['locations']} node Location "
+        "(node được lưu, không trùng trong batch, gồm cả node đã có); "
+        f"{summary['analyzed']['events']} sự kiện được phân tích và lưu (EventMention)."
     )
     print(
         "Consolidation: "
@@ -274,6 +288,7 @@ def _save_extracted_post(
     extract_event_relations_fn=extract_event_relations,
     enrich_organizations_fn=enrich_organization_hierarchy,
     organization_context_fn=extract_context,
+    analyzed_counts=None,
 ) -> str:
     """Persist one validated extraction on the main thread."""
     platform = post["platform"]
@@ -317,6 +332,11 @@ def _save_extracted_post(
             detected_modules=relation_routes["detected_modules"],
             runnable_modules=runnable_modules,
         )
+        if analyzed_counts is not None:
+            node_ids = counts.get("entity_node_ids", {})
+            analyzed_counts["organizations"].update(node_ids.get("ORGANIZATION", []))
+            analyzed_counts["locations"].update(node_ids.get("LOCATION", []))
+            analyzed_counts["events"] += counts["events"]
         for module, extract_fn in (
             ("PARTICIPANT_ROLE", extract_participants_fn),
             ("EVENT_RELATION", extract_event_relations_fn),

@@ -1412,7 +1412,10 @@ class PersistenceTests(unittest.TestCase):
 
         counts = subject.save_knowledge_tx(tx, "facebook", "post-1", knowledge)
 
-        self.assertEqual(counts, {"entities": 0, "events": 0, "event_relations": 0})
+        self.assertEqual(counts, {
+            "entities": 0, "events": 0, "event_relations": 0,
+            "entity_node_ids": {"ORGANIZATION": [], "LOCATION": []},
+        })
         queries = "\n".join(call.args[0] for call in tx.run.call_args_list)
         self.assertIn("p.knowledge_processed = true", queries)
         self.assertIn("p.knowledge_retry_count = 0", queries)

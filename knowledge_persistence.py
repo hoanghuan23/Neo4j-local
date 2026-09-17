@@ -41,13 +41,17 @@ WITH p, candidate,
 ORDER BY match_priority
 WITH p, collect(candidate) AS candidates
 WITH p, candidates,
-     [candidate IN candidates WHERE candidate.level IS NOT NULL] AS administrative
-// Ambiguous locations need context; do not create or link an arbitrary node.
+     [candidate IN candidates WHERE candidate.level IS NOT NULL] AS administrative,
+     [candidate IN candidates WHERE candidate.level = 1] AS provinces
+// Prefer the province when lower-level administrative names overlap.
+// Other ambiguous locations still need context.
 WHERE $entity_type <> 'LOCATION'
    OR size(candidates) <= 1
+   OR size(provinces) = 1
    OR size(administrative) = 1
 WITH p, CASE
     WHEN $entity_type <> 'LOCATION' THEN head(candidates)
+    WHEN size(provinces) = 1 THEN provinces[0]
     WHEN size(administrative) = 1 THEN administrative[0]
     WHEN size(candidates) = 1 THEN candidates[0]
     ELSE null
@@ -751,6 +755,13 @@ def save_knowledge_tx(
         ).consume()
     return {
         "entities": len(entity_lookup),
+        "entity_node_ids": {
+            entity_type: sorted({
+                entity["node_id"] for entity in entity_lookup.values()
+                if entity.get("entity_type") == entity_type and entity.get("node_id")
+            })
+            for entity_type in ("ORGANIZATION", "LOCATION")
+        },
         "events": len(knowledge["events"]),
         "event_relations": len(knowledge["event_relations"]),
     }
