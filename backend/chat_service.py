@@ -8,6 +8,7 @@ from backend.models import (
     DetailResult,
     EventSearchCursor,
     EventResult,
+    EventSearchPage,
     EventLocationQuery,
     EventLocationCandidate,
     ParsedQuestion,
@@ -50,14 +51,14 @@ class EventRepository(Protocol):
         limit: int,
         after: tuple[float, str, str] | None = None,
         hot_only: bool = False,
-    ) -> list[dict]: ...
+    ) -> EventSearchPage: ...
 
     def search_related_events(
         self, *, location: str | None, entity: str | None, hours: int,
         posted_date: date | None, limit: int,
         after: tuple[float, str, str] | None = None,
         hot_only: bool = False,
-    ) -> list[dict]: ...
+    ) -> EventSearchPage: ...
 
     def search_related_entities(
         self,
@@ -271,6 +272,7 @@ class ChatService:
             answer=answer,
             query=parsed,
             count=len(results),
+            total_count=getattr(raw_results, "total_count", None),
             results=results,
             has_more=has_more,
             next_cursor=next_cursor,

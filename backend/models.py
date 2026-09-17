@@ -4,6 +4,14 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class EventSearchPage(list[dict]):
+    """Search rows with the distinct event count before cursor/limit filtering."""
+
+    def __init__(self, rows: list[dict], *, total_count: int):
+        super().__init__(rows)
+        self.total_count = total_count
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2_000)
     limit: int = Field(default=10, ge=1, le=50)
@@ -216,6 +224,11 @@ class ChatResponse(BaseModel):
     answer: str
     query: ParsedQuestion | DetailQuery | EventLocationQuery
     count: int
+    total_count: int | None = Field(
+        default=None, ge=0,
+        description="Tổng số sự kiện khớp trong nhóm đang tìm, trước phân trang; "
+                    "null nếu không áp dụng hoặc repository không cung cấp tổng.",
+    )
     results: list[EventResult] = Field(default_factory=list)
     details: list[DetailResult] = Field(default_factory=list)
     location_candidates: list[EventLocationCandidate] = Field(default_factory=list)

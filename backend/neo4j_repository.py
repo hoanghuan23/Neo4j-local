@@ -8,6 +8,7 @@ from neo4j import GraphDatabase
 
 from backend.event_candidate_search import EVENT_CANDIDATES_QUERY, candidate_search_parameters
 from backend.config import Settings
+from backend.models import EventSearchPage
 from backend.event_search_queries import (
     SEARCH_EVENTS_QUERY,
     SEARCH_LEGACY_EVENTS_QUERY,
@@ -251,7 +252,7 @@ class Neo4jRepository:
         limit: int, posted_date: date | None = None,
         after: tuple[float, str, str] | None = None,
         hot_only: bool = False,
-    ) -> list[dict[str, Any]]:
+    ) -> EventSearchPage:
         return self.search_events(
             location=location, entity=entity, hours=hours, limit=limit,
             posted_date=posted_date, after=after, hot_only=hot_only, _related=True,
@@ -268,7 +269,7 @@ class Neo4jRepository:
         after: tuple[float, str, str] | None = None,
         hot_only: bool = False,
         _related: bool = False,
-    ) -> list[dict[str, Any]]:
+    ) -> EventSearchPage:
         if self.driver is None:
             raise RuntimeError("Neo4j chưa được kết nối")
         location_key = normalize_name(location) if location else None
@@ -399,7 +400,9 @@ class Neo4jRepository:
                 for result in sorted_results
                 if rank(result) < after
             ]
-        return sorted_results[:limit]
+        return EventSearchPage(
+            sorted_results[:limit], total_count=len(results_by_event_key),
+        )
 
     def search_related_entities(
         self,
