@@ -554,6 +554,33 @@ def test_direct_normalized_names_aliases_and_partial_names(precision_graph, lega
 
 
 @pytest.mark.parametrize('legacy', [False, True])
+def test_hcm_location_question_matches_administrative_names(precision_graph, legacy):
+    from backend.question_parser import RuleBasedQuestionParser
+
+    entity, event, search, run, marker = precision_graph
+    entity('city', 'TP. Hồ Chí Minh', 'LOCATION',
+           aliases=['tphcm', 'thành phố hồ chí minh', 'tp.hcm', 'tp hcm'],
+           search_name='tp. ho chi minh')
+    entity('person', 'Hồ Chí Minh', 'PERSON')
+    entity('organization', 'Công an Thành phố Hồ Chí Minh')
+    entity('road', 'đường Hồ Chí Minh nhánh Tây', 'LOCATION')
+    key = event('city-event', legacy=legacy, participants=['city'])
+    for other in ('person', 'organization', 'road'):
+        event(other + '-event', legacy=legacy, participants=[other])
+    parser = RuleBasedQuestionParser()
+    for question in ('sự kiện tp Hồ Chí Minh', 'sự kiện thành phố Hồ Chí Minh'):
+        parsed = parser.parse(question)
+        assert parsed.location == 'Hồ Chí Minh'
+        assert [r['event_key'] for r in search(location=parsed.location)] == [key]
+        assert key not in {r['event_key'] for r in search(related=True, location=parsed.location)}
+    # Aliases and array properties from consolidation follow the same rules.
+    run('''MATCH (e:Entity {entity_id: $marker + 'city'})
+           SET e.name = ['Tên khác'], e.search_name = ['ten khac'],
+               e.aliases = ['THÀNH PHỐ  HỒ CHÍ MINH']''')
+    assert [r['event_key'] for r in search(location='Ho Chi Minh')] == [key]
+
+
+@pytest.mark.parametrize('legacy', [False, True])
 def test_related_text_only_and_combined_filters(precision_graph, legacy):
     entity, event, search, run, marker = precision_graph
     entity('hanoi', 'Hà Nội', 'LOCATION')

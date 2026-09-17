@@ -37,9 +37,21 @@ def _names(node: str) -> str:
         f"reduce(name = '', word IN [word IN split({folded}, ' ') WHERE word <> ''] | "
         "name + CASE WHEN name = '' THEN '' ELSE ' ' END + word)"
     )
-    return (
+    entries = (
         f"[entry IN ({values}) WHERE entry.value IS NOT NULL AND trim(entry.value) <> '' | "
         f"{{field: entry.field, value: {folded}}}]"
+    )
+    # The question parser removes broad administrative labels. Apply the same
+    # equivalence to LOCATION names/aliases, without changing PERSON or
+    # ORGANIZATION names or admitting arbitrary substring matches.
+    return (
+        f"({entries}) + CASE WHEN {node}.type = 'LOCATION' THEN "
+        f"reduce(names = [], entry IN ({entries}) | names + "
+        "[prefix IN ['thanh pho ', 'tinh ', 'tp. ', 'tp ', 'tp.'] "
+        "WHERE entry.value STARTS WITH prefix "
+        "AND trim(substring(entry.value, size(prefix))) <> '' | "
+        "{field: entry.field, value: trim(substring(entry.value, size(prefix)))}]) "
+        "ELSE [] END"
     )
 
 
