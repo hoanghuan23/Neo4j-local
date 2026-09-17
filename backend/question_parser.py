@@ -45,6 +45,7 @@ _TIME_MARKER = (
     r"|(?:trong\s+)?tuần\s+trước"
     rf"|{_CALENDAR_DATE_PATTERN}"
     rf"|{_MONTH_DURATION_PATTERN}"
+    r"|(?:trong\s+)?ngày(?:\s+hôm\s+nay)?|trong\s+tuần|tuần\s+này"
     r"|hôm\s+nay|hôm\s+qua|gần\s+đây|vừa\s+qua"
 )
 _PREVIOUS_WEEK_RE = re.compile(r"\b(?:trong\s+)?tuần\s+trước\b", re.IGNORECASE)
@@ -85,28 +86,34 @@ _ENTITY_TIME_SUFFIX_RE = re.compile(
 _LATEST_EVENTS_QUERY_RE = re.compile(
     r"^(?:(?:cho\s+(?:tôi|mình)\s+biết|tìm)\s+)?"
     r"(?:các\s+|những\s+)?sự\s+kiện\s+"
-    r"(?:mới\s+nhất|mới\s+đây|gần\s+đây|hôm\s+nay)$",
+    r"(?:mới\s+nhất|mới\s+đây|gần\s+đây|hôm\s+nay|trong\s+tuần|tuần\s+này)$",
     re.IGNORECASE,
 )
 
 
 _HOT_EVENTS_QUERY_RE = re.compile(
     r"^(?:(?:cho\s+(?:tôi|mình)\s+biết|tìm)\s+)?"
-    r"(?:các\s+|những\s+)?sự\s+kiện\s+hot\s+"
-    r"(?:hôm\s+nay|trong\s+ngày(?:\s+hôm\s+nay)?|trong\s+tuần|tuần\s+này)$",
+    r"(?:các\s+|những\s+)?sự\s+kiện\s+hot\b",
     re.IGNORECASE,
 )
 
 
 def is_hot_events_query(question: str) -> bool:
     normalized = _SPACE_RE.sub(" ", question.strip()).strip(" \t,?.!")
-    return _HOT_EVENTS_QUERY_RE.fullmatch(normalized) is not None
+    return _HOT_EVENTS_QUERY_RE.match(normalized) is not None
 
 
 def is_latest_events_query(question: str) -> bool:
     """Return whether the question requests the default latest-event feed."""
     normalized = _SPACE_RE.sub(" ", question.strip()).strip(" \t,?.!")
     return _LATEST_EVENTS_QUERY_RE.fullmatch(normalized) is not None
+
+
+def is_weekly_events_query(question: str) -> bool:
+    """Recognize the unfiltered feed for the last seven days."""
+    return is_latest_events_query(question) and re.search(
+        r"\btuần\b", question, re.IGNORECASE
+    ) is not None
 
 
 def normalize_location_for_search(location: str | None) -> str | None:
@@ -156,7 +163,14 @@ class RuleBasedQuestionParser:
 
     def parse(self, question: str) -> ParsedQuestion:
         text = _SPACE_RE.sub(" ", question.strip())
-        if is_latest_events_query(text) or is_hot_events_query(text):
+        if is_hot_events_query(text):
+            # Reuse ordinary location/entity parsing after removing the hot prefix.
+            remainder = _HOT_EVENTS_QUERY_RE.sub("", text).strip(" \t,?.!")
+            entity = normalize_entity_for_search(self._parse_entity(remainder))
+            location_text = re.sub(rf"\b(?:{_TIME_MARKER})\b", "", remainder,
+                                   flags=re.IGNORECASE).strip()
+            location = self._parse_location("sự kiện " + location_text) if location_text else None
+        elif is_latest_events_query(text):
             entity = None
             location = None
         else:
@@ -174,7 +188,8 @@ class RuleBasedQuestionParser:
         if is_hot_events_query(text):
             if re.search(r"\btuần\b", text, re.IGNORECASE):
                 return None
-            return self.today_provider()
+            if re.search(r"\b(?:hôm\s+nay|trong\s+ngày)\b", text, re.IGNORECASE):
+                return self.today_provider()
         match = _CALENDAR_DATE_RE.search(text)
         if not match:
             if re.search(r"\bhôm\s+nay\b", text, re.IGNORECASE):
@@ -191,6 +206,8 @@ class RuleBasedQuestionParser:
             return None
 
     def _parse_hours(self, text: str) -> int:
+        if is_weekly_events_query(text):
+            return min(7 * 24, self.max_hours)
         if is_hot_events_query(text) and re.search(r"\btuần\b", text, re.IGNORECASE):
             return min(7 * 24, self.max_hours)
         if _PREVIOUS_WEEK_RE.search(text):

@@ -567,3 +567,35 @@ def test_gemini_weekly_hot_query_overrides_incorrect_model_time():
     assert parsed.posted_date is None
     assert parsed.entity is None
     assert parsed.location is None
+
+
+@pytest.mark.parametrize('question', ['các sự kiện hot Hà Nội', 'sự kiện hot tại Hà Nội trong tuần'])
+def test_gemini_preserves_hot_location(question):
+    client = Mock()
+    client.models.generate_content.return_value = SimpleNamespace(parsed={
+        'hours': 24, 'location': None, 'entity': question,
+    })
+    parser = GeminiQuestionParser(client=client, types_module=FakeTypes, model='test-model')
+    parsed = parser.parse(question)
+    assert parsed.hot_only
+    assert parsed.location == 'Hà Nội'
+    assert parsed.entity is None
+    assert parsed.hours == (168 if 'tuần' in question else 24)
+
+
+@pytest.mark.parametrize('question', ['các sự kiện trong tuần', 'sự kiện tuần này'])
+def test_gemini_weekly_feed_overrides_incorrect_filters_and_time(question):
+    client = Mock()
+    client.models.generate_content.return_value = SimpleNamespace(parsed={
+        'hours': 24, 'posted_date': '2026-09-15',
+        'location': 'trong tuần', 'entity': question, 'hot_only': True,
+        'clarification_question': 'Bạn muốn tìm ở đâu?',
+    })
+    parser = GeminiQuestionParser(client=client, types_module=FakeTypes, model='test-model')
+    parsed = parser.parse(question)
+    assert parsed.hours == 168
+    assert parsed.posted_date is None
+    assert parsed.location is None
+    assert parsed.entity is None
+    assert not parsed.hot_only
+    assert parsed.clarification_question is None

@@ -499,12 +499,17 @@ Dữ liệu:
 
 
 def evaluate_merge_guard(mention: dict, candidate: dict) -> dict:
-    """Reject only clear contradictions before an automatic merge."""
+    """Block contradictions and review ambiguity before an automatic merge.
+
+    PASS may include non-blocking warnings in reason_codes, such as an
+    occurrence time that could not be parsed.
+    """
     left = comparison_profile(mention)
     right = comparison_profile(candidate)
     follow_up = _is_follow_up_pair(left, right)
     block = []
     review = []
+    warnings = []
     actions = frozenset((left["action_family"], right["action_family"]))
     if left["action_family"] and right["action_family"]:
         if left["action_family"] != right["action_family"] and not follow_up:
@@ -542,7 +547,7 @@ def evaluate_merge_guard(mention: dict, candidate: dict) -> dict:
         and (left["has_unparsed_time"] or right["has_unparsed_time"])
         and not left_dates & right_dates
     ):
-        review.append("OCCURRENCE_TIME_UNCERTAIN")
+        warnings.append("OCCURRENCE_TIME_UNCERTAIN")
 
     left_locations = _identities(left["locations"])
     right_locations = _identities(right["locations"])
@@ -569,7 +574,7 @@ def evaluate_merge_guard(mention: dict, candidate: dict) -> dict:
         review.append("EVENT_TYPE_MISMATCH")
 
     status = "BLOCK" if block else "REVIEW" if review else "PASS"
-    return {"status": status, "reason_codes": block + review}
+    return {"status": status, "reason_codes": block + review + warnings}
 
 
 def effective_match_decision(

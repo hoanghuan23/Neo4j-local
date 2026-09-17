@@ -372,6 +372,80 @@ class EventConsolidationTests(unittest.TestCase):
         self.assertIn("MAIN_ACTOR_ANONYMOUS_OR_UNSTABLE", guard["reason_codes"])
         self.assertIn("OCCURRENCE_TIME_UNCERTAIN", guard["reason_codes"])
 
+    def test_unparsed_time_warning_respects_confidence_and_is_persisted(self):
+        mention = self.mention("VETC thông báo chính sách phí")
+        mention["time_expression"] = "hôm qua"
+        event = self.event("candidate", mention["description"])
+        event["occurrence_times"] = ["hôm qua"]
+        for confidence, expected in (
+            (0.99, "SAME_EVENT"),
+            (0.90, "SAME_EVENT"),
+            (0.89, "POSSIBLE_SAME_EVENT"),
+        ):
+            with self.subTest(confidence=confidence):
+                effective = effective_match_decision({
+                    "candidate_event_key": "candidate",
+                    "decision": "SAME_EVENT",
+                    "confidence": confidence,
+                    "reason": "Cùng thông báo",
+                }, mention, event, threshold=0.90)
+                self.assertEqual(effective["guard_status"], "PASS")
+                self.assertEqual(effective["decision"], expected)
+                self.assertEqual(effective["guard_reason_codes"], [
+                    "OCCURRENCE_TIME_UNCERTAIN",
+                ])
+                tx = Mock()
+                _record_match_decisions(tx, "m1", "current", [effective])
+                row = tx.run.call_args.kwargs["rows"][0]
+                self.assertEqual(row["effective_decision"], expected)
+                self.assertEqual(row["guard_status"], "PASS")
+                self.assertEqual(row["guard_reason_codes"], [
+                    "OCCURRENCE_TIME_UNCERTAIN",
+                ])
+                if expected == "POSSIBLE_SAME_EVENT":
+                    _sync_possible_decision(tx, "current", "candidate", effective)
+                    self.assertEqual(tx.run.call_args.kwargs["guard_reason_codes"], [
+                        "OCCURRENCE_TIME_UNCERTAIN",
+                    ])
+
+    def test_unparsed_time_does_not_bypass_other_guards(self):
+        for identified, status, expected, reason in (
+            (False, "REVIEW", "POSSIBLE_SAME_EVENT", "MAIN_ACTOR_ANONYMOUS_OR_UNSTABLE"),
+            (True, "BLOCK", "DIFFERENT_EVENT", "MAIN_ACTOR_CONFLICT"),
+        ):
+            with self.subTest(status=status):
+                mention = self.mention("Thông báo chính sách phí")
+                mention.update({
+                    "time_expression": "hôm qua",
+                    "participants": [self.participant("A", identified=identified)],
+                })
+                event = self.event("candidate", mention["description"])
+                event.update({
+                    "occurrence_times": ["hôm qua"],
+                    "participants": [self.participant("B", identified=identified)],
+                })
+                effective = effective_match_decision({
+                    "decision": "SAME_EVENT", "confidence": 0.99,
+                }, mention, event, threshold=0.90)
+                self.assertEqual(effective["guard_status"], status)
+                self.assertEqual(effective["decision"], expected)
+                self.assertEqual(set(effective["guard_reason_codes"]), {
+                    reason, "OCCURRENCE_TIME_UNCERTAIN",
+                })
+
+    def test_unparsed_time_does_not_promote_resolver_decisions(self):
+        mention = self.mention("VETC thông báo chính sách phí")
+        mention["time_expression"] = "hôm qua"
+        event = self.event("candidate", mention["description"])
+        event["occurrence_times"] = ["hôm qua"]
+        for label in ("POSSIBLE_SAME_EVENT", "DIFFERENT_EVENT"):
+            with self.subTest(decision=label):
+                effective = effective_match_decision({
+                    "decision": label, "confidence": 0.99,
+                }, mention, event, threshold=0.90)
+                self.assertEqual(effective["decision"], label)
+                self.assertEqual(effective["guard_status"], "NOT_APPLICABLE")
+
     def test_low_confidence_same_event_becomes_possible(self):
         mention = self.mention("Infantino dự khán chung kết")
         mention["participants"] = [self.participant("gianni infantino")]

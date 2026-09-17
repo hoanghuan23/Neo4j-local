@@ -80,3 +80,42 @@ def test_weekly_hot_query_uses_seven_days(question):
     assert parsed.posted_date is None
     assert parsed.location is None
     assert parsed.entity is None
+
+
+@pytest.mark.parametrize('question', [
+    'các sự kiện hot Hà Nội',
+    'các sự kiện hot tại Hà Nội',
+    'Tìm những sự kiện hot ở Hà Nội?',
+    'sự kiện hot khu vực Hà Nội',
+])
+def test_hot_location_query(question):
+    parsed = RuleBasedQuestionParser().parse(question)
+    assert parsed.hot_only
+    assert parsed.location == 'Hà Nội'
+    assert parsed.entity is None
+    assert parsed.hours == 24
+    assert parsed.posted_date is None
+
+
+@pytest.mark.parametrize('time_text,hours,today', [
+    ('hôm nay', 24, True), ('trong ngày', 24, True),
+    ('trong tuần', 168, False), ('tuần này', 168, False),
+    ('trong 48 giờ', 48, False),
+])
+@pytest.mark.parametrize('template', ['sự kiện hot tại Hà Nội {}', 'sự kiện hot {} tại Hà Nội'])
+def test_hot_location_with_time(time_text, hours, today, template):
+    parsed = RuleBasedQuestionParser().parse(template.format(time_text))
+    assert parsed.hot_only
+    assert parsed.location == 'Hà Nội'
+    assert parsed.hours == hours
+    assert parsed.posted_date == (date.today() if today else None)
+
+
+def test_hot_location_is_forwarded_to_repository():
+    from backend.models import EventSearchPage
+    repository = MagicMock()
+    repository.search_events.return_value = EventSearchPage([], total_count=0)
+    service = ChatService(RuleBasedQuestionParser(), repository)
+    service.chat('các sự kiện hot Hà Nội', limit=10)
+    assert repository.search_events.call_args.kwargs['location'] == 'Hà Nội'
+    assert repository.search_events.call_args.kwargs['hot_only'] is True
