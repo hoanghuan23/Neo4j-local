@@ -987,6 +987,8 @@ def consolidate_pending_mentions(
     session,
     call_model: Callable,
     mention_keys: list[str] | None = None,
+    *,
+    preserve_mention_order: bool = False,
 ) -> dict:
     stats = {
         "mentions": 0,
@@ -997,6 +999,9 @@ def consolidate_pending_mentions(
         "failed": 0,
     }
     pending = _load_pending_mentions(session, mention_keys)
+    if preserve_mention_order and mention_keys is not None:
+        order = {key: index for index, key in enumerate(mention_keys)}
+        pending.sort(key=lambda mention: order[mention["mention_key"]])
     print(
         f"Bắt đầu consolidation {len(pending)} mention"
         + (" của batch hiện tại." if mention_keys is not None else " tồn đọng.")
