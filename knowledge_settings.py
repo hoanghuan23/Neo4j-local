@@ -39,7 +39,6 @@ KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
 KNOWLEDGE_PROMPT_VERSION = "knowledge-v14"
 KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v2"
-RELATION_ROUTER_PROMPT_VERSION = "relation-router-v4"
 PARTICIPANT_ROLE_PROMPT_VERSION = "participant-role-v1"
 PARTICIPANT_EXTRACTION_PROMPT_VERSION = "participant-extraction-v1"
 EVENT_RELATION_PROMPT_VERSION = "event-relation-v1"
@@ -130,7 +129,7 @@ RELATION_GROUPS = {
     "EVENT_RELATION",
     "STANCE_PERSPECTIVE",
 }
-# Router detection is independent of this execution configuration.
+# Modules execute when enabled and validated input is available.
 KNOWLEDGE_MODULES = {
     "ENTITY_HIERARCHY": True,
     "PARTICIPANT_ROLE": False,
@@ -391,13 +390,6 @@ KNOWLEDGE_CLASSIFIER_SCHEMA = _strict_object(
         },
     },
     ["should_deep_analyze", "reason_code"],
-)
-
-RELATION_ROUTER_SCHEMA = _strict_object(
-    {
-        "detected_modules": {"type": "array", "items": {"type": "string", "enum": sorted(RELATION_GROUPS)}},
-    },
-    ["detected_modules"],
 )
 
 # Temporary compatibility alias for existing callers and tests.

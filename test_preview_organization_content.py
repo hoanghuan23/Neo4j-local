@@ -17,9 +17,7 @@ def test_import_writes_content_and_knowledge_in_same_transaction():
     tx = MagicMock()
     session.execute_write.side_effect = lambda fn: fn(tx)
     knowledge = {'entities': [], 'events': [], 'event_relations': []}
-    routes = {"detected_modules": []}
     with patch('knowledge_extraction.extract_knowledge', return_value=knowledge), \
-         patch('knowledge_relation_router.classify_relation_routes', return_value=routes), \
          patch('knowledge_persistence.create_knowledge_schema'), \
          patch('knowledge_persistence.save_knowledge_tx', return_value={'events': 0}) as save:
         first = save_content(session, 'Một nội dung thử nghiệm.', MagicMock())
@@ -31,7 +29,7 @@ def test_import_writes_content_and_knowledge_in_same_transaction():
     params = tx.run.call_args.kwargs
     assert params['content'] == 'Một nội dung thử nghiệm.'
     assert 'knowledge_analysis' in tx.run.call_args.args[0]
-    assert 'knowledge_relation_routes' in tx.run.call_args.args[0]
+    assert 'knowledge_relation_routes' not in tx.run.call_args.args[0]
 
 
 def test_ambiguous_location_keeps_source_local_identity():

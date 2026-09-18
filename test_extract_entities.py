@@ -56,7 +56,6 @@ class NormalizationTests(unittest.TestCase):
 
 class GeminiPipelineTests(unittest.TestCase):
     @patch.object(subject, "_process_new_posts")
-    @patch.object(subject, "classify_relation_routes")
     @patch.object(subject, "consolidate_pending_mentions")
     @patch.object(subject._extraction, "extract_knowledge")
     @patch.object(subject._extraction, "classify_knowledge_potential")
@@ -67,7 +66,6 @@ class GeminiPipelineTests(unittest.TestCase):
         classify,
         extract,
         consolidate,
-        route,
         process,
     ):
         process.return_value = {"deep": 1}
@@ -79,15 +77,9 @@ class GeminiPipelineTests(unittest.TestCase):
         kwargs = process.call_args.kwargs
         kwargs["classify_post_fn"]("content")
         kwargs["extract_knowledge_fn"]("content")
-        kwargs["classify_relations_fn"]("content", {"events": []})
         kwargs["consolidate_fn"]("session")
         classify.assert_called_once_with("content", call_model=call_gemini)
         extract.assert_called_once_with("content", call_model=call_gemini)
-        route.assert_called_once_with(
-            "content",
-            {"events": []},
-            call_model=call_gemini,
-        )
         consolidate.assert_called_once_with("session", call_model=call_gemini)
 
 

@@ -24,7 +24,6 @@ from knowledge_persistence import (
 )
 from knowledge_pipeline import _load_posts
 from knowledge_pipeline import process_new_posts as _process_new_posts
-from knowledge_relation_router import classify_relation_routes
 from knowledge_relations.participant_role import extract_participants
 from knowledge_relations.event_relation import extract_event_relations
 from knowledge_relations.entity_hierarchy.location_hierarchy import enrich_location_hierarchy
@@ -96,11 +95,6 @@ def process_new_posts(session, call_model=None) -> dict:
         ),
         extract_knowledge_fn=lambda content: _extraction.extract_knowledge(
             content,
-            call_model=call_model,
-        ),
-        classify_relations_fn=lambda content, knowledge: classify_relation_routes(
-            content,
-            knowledge,
             call_model=call_model,
         ),
         extract_participants_fn=lambda content, knowledge: extract_participants(

@@ -37,7 +37,6 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
             session,
             extract_knowledge_fn=lambda _content: knowledge,
             classify_post_fn=lambda _content: {"should_deep_analyze": True, "reason_code": "DURABLE_ENTITY_INFORMATION"},
-            classify_relations_fn=lambda *_args: {"detected_modules": ["ENTITY_HIERARCHY"]},
             enrich_locations_fn=enrich,
         )
         self.assertEqual(order, ["base", "location", "completed"])
@@ -82,9 +81,6 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
             classify_post_fn=lambda _content: {
                 "should_deep_analyze": True,
                 "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
-            },
-            classify_relations_fn=lambda _content, _knowledge: {
-                "detected_modules": ["EVENT_HIERARCHY"],
             },
             consolidate_fn=consolidate,
         )
@@ -136,7 +132,6 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         with patch.object(subject, "KNOWLEDGE_WORKERS", 2):
             summary = subject.process_new_posts(
                 session,
-                classify_relations_fn=lambda *_: {"detected_modules": []},
                 extract_knowledge_fn=extract,
                 classify_post_fn=lambda _content: {
                     "should_deep_analyze": True,
@@ -204,9 +199,6 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
             lambda _content: classification,
             extract,
             lambda _content, raw, _platform, _post_id: raw,
-            lambda _content, _knowledge: {
-                "detected_modules": ["EVENT_HIERARCHY"],
-            },
             "facebook",
             "1",
             "content",
@@ -215,11 +207,9 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         extract.assert_called_once_with("content")
         self.assertEqual(result["classifier_decision"], "DEEP")
 
-    def test_extract_post_defers_participants_until_after_router(self):
+    def test_extract_post_defers_participants_until_after_base_save(self):
         base = {"entities": [], "events": [{"local_id": "ev1"}]}
         enriched = {"entities": [], "events": [{"local_id": "ev1", "role": "ACTOR"}]}
-        routes = {"detected_modules": ["ENTITY_HIERARCHY"]}
-        router = Mock(return_value=routes)
         enrich = Mock(return_value=enriched)
 
         result = subject._extract_post(
@@ -229,7 +219,6 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
             },
             lambda _content: base,
             lambda _content, raw, _platform, _post_id: raw,
-            router,
             "facebook",
             "1",
             "content",
@@ -237,7 +226,6 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
         )
 
         expected = base
-        router.assert_called_once_with("content", expected)
         enrich.assert_not_called()
         self.assertEqual(result["knowledge"], expected)
 
@@ -251,7 +239,6 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
             },
             Mock(),
             lambda _content, raw, _platform, _post_id: raw,
-            Mock(),
             "facebook",
             "1",
             "content",
@@ -263,43 +250,7 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
     @patch.object(subject, "create_knowledge_schema")
     @patch.object(subject, "validate_knowledge")
     @patch.object(subject, "_load_posts")
-    def test_router_failure_retries_post_without_saving_knowledge(
-        self,
-        load_posts,
-        validate_knowledge,
-        _create_schema,
-    ):
-        load_posts.return_value = [
-            {"platform": "facebook", "post_id": "1", "content": "event"}
-        ]
-        validate_knowledge.return_value = {
-            "entities": [],
-            "events": [{"local_id": "ev1"}],
-            "event_relations": [],
-        }
-        session = Mock()
-
-        def fail_router(_content, _knowledge):
-            raise ValueError("router failed")
-
-        summary = subject.process_new_posts(
-            session,
-            extract_knowledge_fn=lambda _content: {},
-            classify_post_fn=lambda _content: {
-                "should_deep_analyze": True,
-                "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
-            },
-            classify_relations_fn=fail_router,
-        )
-
-        self.assertEqual(summary["failed"], 1)
-        self.assertEqual(session.execute_write.call_count, 1)
-        self.assertIs(session.execute_write.call_args.args[0], subject.mark_knowledge_failure)
-
-    @patch.object(subject, "create_knowledge_schema")
-    @patch.object(subject, "validate_knowledge")
-    @patch.object(subject, "_load_posts")
-    def test_returns_and_summarizes_relation_routes(
+    def test_summary_has_no_routing_results(
         self,
         load_posts,
         validate_knowledge,
@@ -315,7 +266,6 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
             ],
             "event_relations": [],
         }
-        routes = {"detected_modules": ["PARTICIPANT_ROLE"]}
         session = Mock()
         session.execute_write.return_value = {
             "entities": 0,
@@ -330,14 +280,11 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
                 "should_deep_analyze": True,
                 "reason_code": "SUBSTANTIVE_EVENT_OR_CHANGE",
             },
-            classify_relations_fn=lambda _content, _knowledge: routes,
         )
 
-        self.assertEqual(summary["relation_routes"][0]["post_id"], "1")
-        self.assertEqual(
-            summary["relation_router"]["groups"]["PARTICIPANT_ROLE"], 1
-        )
-        self.assertEqual(summary["relation_router"], {"groups": {"PARTICIPANT_ROLE": 1}})
+        self.assertEqual(summary["deep"], 1)
+        self.assertNotIn("relation_routes", summary)
+        self.assertNotIn("relation_router", summary)
 
     def test_load_posts_applies_configured_limit(self):
         session = Mock()
@@ -396,11 +343,3 @@ class KnowledgePipelineConcurrencyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-def test_router_summary_counts_each_module_once_per_post():
-    summary = {"groups": {}}
-    subject._accumulate_relation_router_summary(summary, {
-        "detected_modules": ["PARTICIPANT_ROLE", "PARTICIPANT_ROLE", "EVENT_HIERARCHY"]})
-    subject._accumulate_relation_router_summary(summary, {"detected_modules": ["PARTICIPANT_ROLE"]})
-    assert summary == {"groups": {"PARTICIPANT_ROLE": 2, "EVENT_HIERARCHY": 1}}

@@ -15,7 +15,6 @@ from knowledge_settings import (
     POST_LIMIT,
 )
 from knowledge_extraction import classify_knowledge_potential, extract_knowledge
-from knowledge_relation_router import classify_relation_routes
 from knowledge_relations.participant_role import extract_participants
 from knowledge_relations.event_relation import extract_event_relations
 from knowledge_relations.entity_hierarchy.location_hierarchy import enrich_location_hierarchy
@@ -48,7 +47,6 @@ def _extract_post(
     classify_post_fn,
     extract_knowledge_fn,
     validate_knowledge_fn,
-    classify_relations_fn,
     platform: str,
     post_id: str,
     content: str,
@@ -60,7 +58,6 @@ def _extract_post(
             "classification": None,
             "classifier_decision": None,
             "knowledge": extract_knowledge_fn(content),
-            "relation_routes": {"detected_modules": []},
         }
 
     classification = classify_post_fn(content)
@@ -71,16 +68,10 @@ def _extract_post(
         else {"entities": [], "events": [], "event_relations": []}
     )
     knowledge = validate_knowledge_fn(content, raw_knowledge, platform, post_id)
-    relation_routes = (
-        classify_relations_fn(content, knowledge)
-        if needs_deep_extraction
-        else {"detected_modules": []}
-    )
     return {
         "classification": classification,
         "classifier_decision": "DEEP" if needs_deep_extraction else "SKIPPED",
         "knowledge": knowledge,
-        "relation_routes": relation_routes,
     }
 
 
@@ -145,7 +136,6 @@ def process_new_posts(
     session,
     extract_knowledge_fn=extract_knowledge,
     classify_post_fn=classify_knowledge_potential,
-    classify_relations_fn=classify_relation_routes,
     extract_participants_fn=extract_participants,
     extract_event_relations_fn=extract_event_relations,
     enrich_locations_fn=enrich_location_hierarchy,
@@ -172,7 +162,6 @@ def process_new_posts(
                 classify_post_fn,
                 extract_knowledge_fn,
                 validate_knowledge,
-                classify_relations_fn,
                 post["platform"],
                 post["post_id"],
                 post["content"],
@@ -186,10 +175,6 @@ def process_new_posts(
             "skipped": 0,
             "deep": 0,
             "failed": 0,
-            "relation_routes": [],
-            "relation_router": {
-                "groups": {},
-            },
             "location_hierarchy": {
                 "locations": 0, "content_edges": 0, "osm_edges": 0,
                 "parents_created": 0, "parents_reused": 0,
@@ -208,8 +193,6 @@ def process_new_posts(
                 completed=completed,
                 total=len(posts),
                 mention_keys_out=batch_mention_keys,
-                relation_routes_out=summary["relation_routes"],
-                relation_router_summary=summary["relation_router"],
                 enrich_locations_fn=enrich_locations_fn,
                 location_summary=summary["location_hierarchy"],
                 extract_participants_fn=extract_participants_fn,
@@ -280,8 +263,6 @@ def _save_extracted_post(
     completed: int,
     total: int,
     mention_keys_out: list[str] | None = None,
-    relation_routes_out: list[dict] | None = None,
-    relation_router_summary: dict | None = None,
     enrich_locations_fn=enrich_location_hierarchy,
     location_summary: dict | None = None,
     extract_participants_fn=extract_participants,
@@ -301,7 +282,6 @@ def _save_extracted_post(
     try:
         extraction_result = future.result()
         knowledge = extraction_result["knowledge"]
-        relation_routes = extraction_result["relation_routes"]
         classification = extraction_result["classification"]
         classifier_decision = extraction_result["classifier_decision"]
         if not KNOWLEDGE_PIPELINE_ENABLED:
@@ -311,12 +291,8 @@ def _save_extracted_post(
             print(f"Đã lưu {saved_count}/{len(entities)} entity hợp lệ.")
             return "deep"
 
-        runnable_modules = {
-            name for name in relation_routes["detected_modules"]
-            if classifier_decision == "DEEP" and KNOWLEDGE_MODULES.get(name, False)
-        }
+        runnable_modules = runnable_modules_for(knowledge) if classifier_decision == "DEEP" else set()
         print(json.dumps(knowledge, ensure_ascii=False, indent=2))
-        print(json.dumps(relation_routes, ensure_ascii=False, indent=2))
         if "ENTITY_HIERARCHY" in runnable_modules and any(e.get("type") == "ORGANIZATION" for e in knowledge["entities"]):
             try:
                 knowledge["organization_context"] = organization_context_fn(content, knowledge)
@@ -329,7 +305,6 @@ def _save_extracted_post(
             knowledge,
             classification,
             classifier_decision,
-            detected_modules=relation_routes["detected_modules"],
             runnable_modules=runnable_modules,
         )
         if analyzed_counts is not None:
@@ -397,19 +372,6 @@ def _save_extracted_post(
                 event.get("mention_key", event["event_key"])
                 for event in knowledge["events"]
             )
-        if classifier_decision == "DEEP" and relation_routes_out is not None:
-            relation_routes_out.append(
-                {
-                    "platform": platform,
-                    "post_id": post_id,
-                    **relation_routes,
-                }
-            )
-        if classifier_decision == "DEEP" and relation_router_summary is not None:
-            _accumulate_relation_router_summary(
-                relation_router_summary,
-                relation_routes,
-            )
         print(
             "Đã lưu "
             f"{counts['entities']} Entity, {counts['events']} Event, "
@@ -434,6 +396,14 @@ def _save_extracted_post(
         return "failed"
 
 
-def _accumulate_relation_router_summary(summary: dict, routes: dict) -> None:
-    for group in sorted(set(routes.get("detected_modules", []))):
-        summary["groups"][group] = summary["groups"].get(group, 0) + 1
+def runnable_modules_for(knowledge: dict) -> set[str]:
+    """Enabled modules with enough validated input to execute."""
+    events = knowledge.get("events", [])
+    inputs = {
+        "ENTITY_HIERARCHY": any(e.get("type") in {"LOCATION", "ORGANIZATION"}
+                                for e in knowledge.get("entities", [])),
+        "PARTICIPANT_ROLE": bool(events),
+        "EVENT_HIERARCHY": bool(events),
+        "EVENT_RELATION": len(events) >= 2,
+    }
+    return {name for name, ready in inputs.items() if ready and KNOWLEDGE_MODULES.get(name, False)}

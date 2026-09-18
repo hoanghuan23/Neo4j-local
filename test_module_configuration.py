@@ -5,7 +5,6 @@ import pytest
 import knowledge_pipeline as pipeline
 import knowledge_persistence as persistence
 import knowledge_settings as settings
-from knowledge_relation_router import normalize_relation_routes
 
 
 def test_config_defaults_and_unimplemented_module():
@@ -15,15 +14,8 @@ def test_config_defaults_and_unimplemented_module():
             pipeline.process_new_posts(Mock())
 
 
-def test_detected_modules_normalized_without_events():
-    result = normalize_relation_routes('text', {'entities': [{'type': 'LOCATION'}], 'events': []}, {
-        'detected_modules': ['ENTITY_HIERARCHY', 'INVALID', 'ENTITY_HIERARCHY', None],
-    })
-    assert result['detected_modules'] == ['ENTITY_HIERARCHY']
-
-
 @pytest.mark.parametrize('skip', [True, False])
-def test_persistence_records_detection_and_does_not_schedule_disabled_hierarchy(skip):
+def test_persistence_preserves_completion_and_does_not_schedule_disabled_hierarchy(skip):
     tx = Mock()
     tx.run.return_value.single.return_value = {'post_count': 1}
     knowledge = {'entities': [{'type': 'LOCATION'}, {'type': 'ORGANIZATION'}],
@@ -33,25 +25,19 @@ def test_persistence_records_detection_and_does_not_schedule_disabled_hierarchy(
          patch.object(persistence, 'upsert_event_relations') as relations:
         persistence.save_knowledge_tx(tx, 'test', '1', knowledge,
             classifier_decision='SKIPPED' if skip else 'DEEP',
-            detected_modules=['ENTITY_HIERARCHY'], runnable_modules=set())
+            runnable_modules=set())
     calls = tx.run.call_args_list
-    saved = next(c.kwargs for c in calls if 'SET p.modules_pending' in c.args[0])
-    assert saved['modules'] == ([] if skip else ['ENTITY_HIERARCHY'])
-    assert 'status' not in saved
-    assert saved['router_version'] == (None if skip else settings.RELATION_ROUTER_PROMPT_VERSION)
+    assert any('SET p.modules_completed = coalesce(p.modules_completed, [])' in c.args[0] for c in calls)
+    assert not any('modules_pending' in c.args[0] for c in calls)
     assert not any('hierarchy_status' in c.args[0] for c in calls)
     assert events.call_args.kwargs['replace_participants'] is False
     relations.assert_not_called()
 
 
-@pytest.mark.parametrize('detected,enabled,should_run', [
-    ([], True, False), (['ENTITY_HIERARCHY'], False, False),
-    (['ENTITY_HIERARCHY'], True, True),
-])
-def test_hierarchy_requires_both_detection_and_configuration(detected, enabled, should_run):
+@pytest.mark.parametrize('enabled,should_run', [(False, False), (True, True)])
+def test_hierarchy_requires_configuration(enabled, should_run):
     future = Future()
     future.set_result({'knowledge': {'entities': [{'type': 'LOCATION'}], 'events': [], 'event_relations': []},
-        'relation_routes': {'detected_modules': detected},
         'classification': {'should_deep_analyze': True}, 'classifier_decision': 'DEEP'})
     session = Mock()
     session.execute_write.return_value = {'entities': 1, 'events': 0, 'event_relations': 0}
@@ -70,12 +56,12 @@ def test_hierarchy_requires_both_detection_and_configuration(detected, enabled, 
 
 
 def test_skipped_does_not_call_router_or_extractors():
-    extract, router, participant, relations = Mock(), Mock(), Mock(), Mock()
+    extract, participant, relations = Mock(), Mock(), Mock()
     result = pipeline._extract_post(lambda _: {'should_deep_analyze': False}, extract,
-        lambda c, k, p, i: k, router, 'test', '1', 'text', participant, relations)
-    for fn in (extract, router, participant, relations):
+        lambda c, k, p, i: k, 'test', '1', 'text', participant, relations)
+    for fn in (extract, participant, relations):
         fn.assert_not_called()
-    assert result['relation_routes']['detected_modules'] == []
+    assert result['classifier_decision'] == 'SKIPPED'
 
 
 def test_pipeline_calls_real_persistence_signature_for_skipped():
@@ -88,9 +74,6 @@ def test_pipeline_calls_real_persistence_signature_for_skipped():
          patch.object(persistence, 'upsert_events'):
         summary = pipeline.process_new_posts(session, classify_post_fn=lambda _: {'should_deep_analyze': False})
     assert summary['skipped'] == 1
-    saved = next(c.kwargs for c in tx.run.call_args_list if 'SET p.modules_pending' in c.args[0])
-    assert saved['modules'] == []
-    assert 'status' not in saved
     classifier = next(c.kwargs for c in tx.run.call_args_list if 'classifier_decision' in c.kwargs)
     assert classifier['classifier_decision'] == 'SKIPPED'
 
@@ -101,7 +84,6 @@ def test_enabled_participant_runs_after_base_and_preserves_keys():
     knowledge = validate_knowledge(CONTENT, base(), 'test', '1')
     future = Future()
     future.set_result({'knowledge': knowledge,
-        'relation_routes': {'detected_modules': ['PARTICIPANT_ROLE']},
         'classification': {'should_deep_analyze': True}, 'classifier_decision': 'DEEP'})
     session = Mock()
     session.execute_write.return_value = {'entities': 1, 'events': 2, 'event_relations': 0}
@@ -128,7 +110,6 @@ def test_entity_completion_requires_all_branches(location_errors, organization_e
     future = Future()
     future.set_result({'knowledge': {'entities': [{'type': 'LOCATION'}, {'type': 'ORGANIZATION'}],
         'events': [], 'event_relations': []},
-        'relation_routes': {'detected_modules': ['ENTITY_HIERARCHY']},
         'classification': {'should_deep_analyze': True}, 'classifier_decision': 'DEEP'})
     session = Mock()
     session.execute_write.return_value = {'entities': 2, 'events': 0, 'event_relations': 0}
@@ -155,3 +136,19 @@ def test_module_output_and_completion_share_transaction():
         with pytest.raises(RuntimeError):
             persistence.save_module_knowledge_tx(tx, 'test', '1', knowledge, 'EVENT_RELATION')
         complete.assert_not_called()
+
+
+@pytest.mark.parametrize('entities,event_count,expected', [
+    ([], 0, set()),
+    ([{'type': 'PERSON'}], 0, set()),
+    ([{'type': 'LOCATION'}], 0, {'ENTITY_HIERARCHY'}),
+    ([{'type': 'ORGANIZATION'}], 0, {'ENTITY_HIERARCHY'}),
+    ([], 1, {'PARTICIPANT_ROLE', 'EVENT_HIERARCHY'}),
+    ([], 2, {'PARTICIPANT_ROLE', 'EVENT_HIERARCHY', 'EVENT_RELATION'}),
+])
+def test_enabled_modules_require_sufficient_input(entities, event_count, expected):
+    knowledge = {'entities': entities, 'events': [{'local_id': str(i)} for i in range(event_count)]}
+    with patch.dict(settings.KNOWLEDGE_MODULES, {name: True for name in settings.IMPLEMENTED_KNOWLEDGE_MODULES}):
+        assert pipeline.runnable_modules_for(knowledge) == expected
+    with patch.dict(settings.KNOWLEDGE_MODULES, {name: False for name in settings.KNOWLEDGE_MODULES}):
+        assert pipeline.runnable_modules_for(knowledge) == set()

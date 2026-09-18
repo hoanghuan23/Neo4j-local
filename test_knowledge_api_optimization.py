@@ -1,7 +1,6 @@
 from unittest.mock import Mock
 
 from knowledge_relations.event_hierarchy import summarize_event
-from knowledge_relation_router import _compact_knowledge
 
 
 TITLE = 'Một sự việc cụ thể được mô tả trực tiếp trong nội dung bài viết'
@@ -70,25 +69,6 @@ def test_failed_persistence_does_not_cache_summary():
     with pytest.raises(RuntimeError, match='write failed'):
         summarize_event(session, 'event', Mock(), summary_cache=cache)
     assert cache == {}
-
-
-def test_router_payload_retains_distinct_evidence_aliases_and_roles():
-    knowledge = {'entities': [dict(local_id='e1', name='A', canonical_name='A', type='PERSON'),
-                              dict(local_id='e2', name='B', canonical_name='Bee', type='PERSON')],
-                 'events': [dict(local_id='ev1', type='OTHER', title=TITLE,
-                                 description='Occurrence', evidence_text='Different source',
-                                 time_expression='today', participants=[dict(
-                                     entity_id='e1', participant_text=None, participant_scope=None,
-                                     role='ACTOR', confidence=.9)])]}
-    compact = _compact_knowledge(knowledge)
-    assert 'canonical_name' not in compact['entities'][0]
-    assert compact['entities'][1]['canonical_name'] == 'Bee'
-    saved = compact['events'][0]
-    assert 'title' not in saved
-    assert saved['evidence_text'] == 'Different source'
-    assert saved['time_expression'] == 'today'
-    assert saved['participants'] == [dict(entity_id='e1', role='ACTOR')]
-    assert knowledge['events'][0]['title'] == TITLE
 
 
 def test_match_payload_keeps_distinct_sources_and_all_candidates():

@@ -49,7 +49,6 @@ def _stage_for_schema(schema):
         ("KNOWLEDGE_CLASSIFIER_SCHEMA", "classifier"),
         ("KNOWLEDGE_SCHEMA", "extraction"),
         ("EVENT_TITLE_SCHEMA", "title"),
-        ("RELATION_ROUTER_SCHEMA", "relation_router"),
         ("PARTICIPANT_ROLE_SCHEMA", "participant_role"),
         ("PARTICIPANT_EXTRACTION_SCHEMA", "participant_extraction"),
         ("EVENT_RELATION_SCHEMA", "event_relation"),
@@ -251,7 +250,6 @@ class GeminiKnowledgeCaller:
         stage_names = dict((
             ("classifier", "lọc ban đầu (classify_knowledge_potential)"),
             ("extraction", "extract_knowledge"),
-            ("relation_router", "phân loại module (classify_relation_routes)"),
         ))
         additional_names = {
             "title": "tạo tiêu đề sự kiện (title)",

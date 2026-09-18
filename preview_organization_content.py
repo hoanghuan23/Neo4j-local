@@ -17,24 +17,30 @@ def save_content(session, content, call_model):
     """
     from knowledge_extraction import extract_knowledge
     from knowledge_validation import validate_knowledge
-    from knowledge_relation_router import classify_relation_routes
     from knowledge_relations.participant_role import extract_participants
     from knowledge_relations.event_relation import extract_event_relations
     from knowledge_relations.entity_hierarchy.organization_hierarchy import extract_context
     from knowledge_relations.entity_hierarchy.location_hierarchy import enrich_location_hierarchy
-    from knowledge_persistence import create_knowledge_schema, save_knowledge_tx
+    from knowledge_persistence import (create_knowledge_schema, save_knowledge_tx,
+                                       save_module_knowledge_tx, mark_module_completed)
+    from knowledge_pipeline import runnable_modules_for
+    from knowledge_settings import validate_module_config
 
     if not content.strip():
         raise ValueError('Content không được rỗng')
+    validate_module_config()
     platform = 'manual'
     post_id = hashlib.sha256(content.encode('utf-8')).hexdigest()
     knowledge = extract_knowledge(content, call_model=call_model)
-    knowledge = extract_participants(content, knowledge, call_model=call_model)
-    knowledge = extract_event_relations(content, knowledge, call_model=call_model)
     knowledge = validate_knowledge(content, knowledge, platform, post_id)
-    routes = classify_relation_routes(content, knowledge, call_model=call_model)
+    modules = runnable_modules_for(knowledge)
+    if 'PARTICIPANT_ROLE' in modules:
+        knowledge = extract_participants(content, knowledge, call_model=call_model)
+    if 'EVENT_RELATION' in modules:
+        knowledge = extract_event_relations(content, knowledge, call_model=call_model)
+    knowledge = validate_knowledge(content, knowledge, platform, post_id)
     has_organizations = any(e['type'] == 'ORGANIZATION' for e in knowledge['entities'])
-    if has_organizations:
+    if has_organizations and 'ENTITY_HIERARCHY' in modules:
         knowledge['organization_context'] = extract_context(content, knowledge, call_model=call_model)
 
     create_knowledge_schema(session)
@@ -46,27 +52,35 @@ def save_content(session, content, call_model):
             ON CREATE SET p.created_at=datetime(), p.posted_at=localdatetime('UTC')
             SET p.posted_at=localdatetime(p.posted_at),
                 p.content=$content, p.updated_at=datetime(),
-                p.knowledge_analysis=$analysis, p.knowledge_relation_routes=$routes''',
+                p.knowledge_analysis=$analysis''',
             platform=platform, post_id=post_id, content=content,
-            analysis=json.dumps(knowledge, ensure_ascii=False),
-            routes=json.dumps(routes, ensure_ascii=False)).consume()
-        return save_knowledge_tx(tx, platform, post_id, knowledge,
-                                 {'should_deep_analyze': True, 'reason_code': 'MANUAL'}, 'DEEP')
+            analysis=json.dumps(knowledge, ensure_ascii=False)).consume()
+        counts = save_knowledge_tx(tx, platform, post_id, knowledge,
+                                  {'should_deep_analyze': True, 'reason_code': 'MANUAL'}, 'DEEP',
+                                  runnable_modules=modules)
+        for module in ('PARTICIPANT_ROLE', 'EVENT_RELATION'):
+            if module in modules:
+                save_module_knowledge_tx(tx, platform, post_id, knowledge, module)
+        return counts
 
     counts = session.execute_write(persist)
     result = {'mode': 'saved_to_neo4j', 'platform': platform, 'post_id': post_id,
-              'content': content, 'counts': counts, 'knowledge': knowledge,
-              'relation_routes': routes}
+              'content': content, 'counts': counts, 'knowledge': knowledge}
     # Base data remains queryable if an external enrichment service fails.
     for key, enabled, enrich in (
         ('location_hierarchy', any(e['type'] == 'LOCATION' for e in knowledge['entities']), enrich_location_hierarchy),
         ('organization_hierarchy', has_organizations, enrich_organization_hierarchy),
     ):
-        if enabled:
+        if enabled and 'ENTITY_HIERARCHY' in modules:
             try:
                 result[key] = enrich(session, platform, post_id, content, knowledge, call_model=call_model)
             except Exception as error:
                 result[key] = {'errors': 1, 'error': str(error)}
+    if 'ENTITY_HIERARCHY' in modules and all(
+        not result.get(key, {}).get('errors', 0)
+        for key in ('location_hierarchy', 'organization_hierarchy')
+    ):
+        session.execute_write(mark_module_completed, platform, post_id, 'ENTITY_HIERARCHY')
     return result
 
 

@@ -131,12 +131,11 @@ def test_pipeline_stage_order_and_stable_final_keys():
         record('classifier', lambda _: {'should_deep_analyze': True}),
         record('extraction', lambda _: knowledge),
         record('validation', validate_knowledge),
-        record('router', lambda *_: {'detected_modules': []}),
         'test', 'post', CONTENT,
         record('participants', lambda c, k: extract_participants(c, k, participant_model)),
         record('relations', lambda c, k: extract_event_relations(c, k, relation_model)),
     )
-    assert order == ['classifier', 'extraction', 'validation', 'router']
+    assert order == ['classifier', 'extraction', 'validation']
     expected = base()
     assert result['knowledge'] == validate_knowledge(CONTENT, expected, 'test', 'post')
     participant_model.assert_not_called()
@@ -145,15 +144,14 @@ def test_pipeline_stage_order_and_stable_final_keys():
 
 @pytest.mark.parametrize('enabled,deep', [(False, True), (True, False)])
 def test_skip_and_entity_only_do_not_call_modules(enabled, deep):
-    participants, relations, router = Mock(), Mock(), Mock()
+    participants, relations = Mock(), Mock()
     with patch.object(pipeline, 'KNOWLEDGE_PIPELINE_ENABLED', enabled):
         pipeline._extract_post(
             lambda _: {'should_deep_analyze': deep}, lambda _: base(),
-            validate_knowledge, router, 'test', 'post', CONTENT, participants, relations,
+            validate_knowledge, 'test', 'post', CONTENT, participants, relations,
         )
     participants.assert_not_called()
     relations.assert_not_called()
-    router.assert_not_called()
 
 
 @pytest.mark.parametrize('failed_stage', ['participants', 'relations'])
@@ -170,14 +168,13 @@ def test_module_failure_keeps_committed_base(failed_stage):
         summary = pipeline.process_new_posts(
             session, extract_knowledge_fn=lambda _: base(),
             classify_post_fn=lambda _: {'should_deep_analyze': True},
-            classify_relations_fn=lambda *_: {"detected_modules": [module]},
             extract_participants_fn=participants, extract_event_relations_fn=relations,
         )
     assert summary['deep'] == 1
     failing.assert_called_once()
     assert session.execute_write.call_count == 1
     assert session.execute_write.call_args.args[0] is pipeline.save_knowledge_tx
-    assert session.execute_write.call_args.kwargs['detected_modules'] == [module]
+    assert session.execute_write.call_args.kwargs['runnable_modules'] == {module}
 
 
 def test_legacy_consolidation_imports_point_to_new_implementation():

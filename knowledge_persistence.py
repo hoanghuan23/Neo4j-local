@@ -2,7 +2,6 @@ import json
 
 from knowledge_settings import (
     EVENT_RELATION_TYPES,
-    RELATION_ROUTER_PROMPT_VERSION,
     GEMINI_MODEL,
     KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
     KNOWLEDGE_PROMPT_VERSION,
@@ -636,7 +635,6 @@ def save_knowledge_tx(
     classification: dict | None = None,
     classifier_decision: str | None = None,
     *,
-    detected_modules: list[str] | None = None,
     runnable_modules: set[str] | None = None,
 ) -> dict:
     post_exists = tx.run(
@@ -695,7 +693,8 @@ def save_knowledge_tx(
     tx.run(
         """
         MATCH (p:Post {platform: $platform, platform_id: $post_id})
-        SET p.entity_processed = true,
+        SET p.modules_completed = coalesce(p.modules_completed, []),
+            p.entity_processed = true,
             p.entity_processed_at = datetime(),
             p.knowledge_processed = true,
             p.knowledge_processed_at = datetime(),
@@ -727,18 +726,6 @@ def save_knowledge_tx(
         classifier_decision=classifier_decision,
         classifier_prompt_version=KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
     ).consume()
-    if detected_modules is not None:
-        tx.run("""
-            MATCH (p:Post {platform: $platform, platform_id: $post_id})
-            SET p.modules_pending = $modules,
-                p.modules_completed = [],
-                p.realation_router_prompt = $router_version
-            REMOVE p.detected_modules, p.processing_status, p.analysis_status,
-                   p.relation_router_prompt_version, p.relation_router_classified_at
-            """, platform=platform, post_id=post_id,
-            modules=[] if classifier_decision == "SKIPPED" else sorted(set(detected_modules)),
-            router_version=None if classifier_decision == "SKIPPED" else RELATION_ROUTER_PROMPT_VERSION,
-        ).consume()
     if hierarchy_enabled and classifier_decision == "DEEP" and any(
         entity.get("type") == "LOCATION" for entity in knowledge["entities"]
     ):
@@ -768,12 +755,10 @@ def save_knowledge_tx(
 
 
 def mark_module_completed(tx, platform, post_id, module):
-    """Move a successfully persisted module from pending to completed."""
+    """Record a successfully persisted module without duplicates."""
     tx.run("""
         MATCH (p:Post {platform: $platform, platform_id: $post_id})
-        WHERE $module IN coalesce(p.modules_pending, [])
-        SET p.modules_pending = [m IN p.modules_pending WHERE m <> $module],
-            p.modules_completed = CASE WHEN $module IN coalesce(p.modules_completed, [])
+        SET p.modules_completed = CASE WHEN $module IN coalesce(p.modules_completed, [])
                 THEN p.modules_completed ELSE coalesce(p.modules_completed, []) + [$module] END
         """, platform=platform, post_id=post_id, module=module).consume()
 
@@ -782,19 +767,17 @@ def complete_consolidated_modules(tx, mention_keys):
     tx.run("""
         MATCH (p:Post)-[:HAS_EVENT_MENTION]->(m:EventMention)
         WHERE m.mention_key IN $mention_keys
-          AND 'EVENT_HIERARCHY' IN coalesce(p.modules_pending, [])
         WITH DISTINCT p
         MATCH (p)-[:HAS_EVENT_MENTION]->(mention:EventMention)
         WITH p, collect(mention) AS mentions
         WHERE all(m IN mentions WHERE coalesce(m.consolidation_status, '') = 'RESOLVED')
-        SET p.modules_pending = [m IN p.modules_pending WHERE m <> 'EVENT_HIERARCHY'],
-            p.modules_completed = CASE WHEN 'EVENT_HIERARCHY' IN coalesce(p.modules_completed, [])
+        SET p.modules_completed = CASE WHEN 'EVENT_HIERARCHY' IN coalesce(p.modules_completed, [])
                 THEN p.modules_completed ELSE coalesce(p.modules_completed, []) + ['EVENT_HIERARCHY'] END
         """, mention_keys=mention_keys).consume()
 
 
 def save_module_knowledge_tx(tx, platform, post_id, knowledge, module):
-    """Persist module output separately from the committed base/router result."""
+    """Persist module output separately from the committed base result."""
     if module == "PARTICIPANT_ROLE":
         lookup = upsert_entities(tx, platform, post_id, knowledge["entities"], knowledge.get("organization_context", []))
         upsert_events(tx, platform, post_id, knowledge["events"], lookup)
