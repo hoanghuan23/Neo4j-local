@@ -3,7 +3,6 @@ import math
 import re
 import unicodedata
 from functools import lru_cache
-from groq import Groq
 from knowledge_gemini import call_gemini
 
 from langsmith import traceable
@@ -17,10 +16,6 @@ from knowledge_settings import (
     EVENT_NAME_PATTERN,
     GENERIC_ENTITY_EXACT,
     GENERIC_PERSON_OR_GROUP_SUFFIXES,
-    GROQ_API_KEY,
-    GROQ_MODEL,
-    GROQ_TIMEOUT_SECONDS,
-    GROQ_MAX_ATTEMPTS,
     KNOWLEDGE_SCHEMA,
     KNOWLEDGE_PROMPT_VERSION,
     KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
@@ -32,7 +27,6 @@ from knowledge_settings import (
     NULL_STRINGS,
     ORGANIZATION_NAME_PATTERN,
 )
-from knowledge_tracing import set_langsmith_usage, trace_llm
 
 
 def normalize_name(value: str) -> str:
@@ -273,85 +267,6 @@ def recover_explicit_country_entities(content: str, result: dict) -> dict:
         known_names.add(identity)
 
     return result
-
-
-@trace_llm(
-    name="groq-knowledge-extraction",
-    provider="groq",
-    model=GROQ_MODEL,
-)
-def call_groq(prompt: str, output_schema: dict) -> dict:
-    if not GROQ_API_KEY:
-        raise ValueError("Chưa cấu hình GROQ_API_KEY trong .env")
-
-    client = Groq(
-        api_key = GROQ_API_KEY,
-        timeout = GROQ_TIMEOUT_SECONDS,
-    )
-
-    last_error = None
-
-    for attempt in range(1, GROQ_MAX_ATTEMPTS + 1):
-        try:
-            response = client.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0,
-                reasoning_effort="low",
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "knowledge_extraction",
-                        "strict": True,
-                        "schema": output_schema,
-                    },
-                },
-            )
-
-            raw_response = response.choices[0].message.content
-            if not raw_response:
-                raise ValueError("Groq trả về content rỗng")
-
-            LOGGER.info(
-                "Groq hoàn tất | model=%s | attempt=%s/%s | "
-                "prompt_tokens=%s | output_tokens=%s",
-
-                GROQ_MODEL,
-                attempt,
-                GROQ_MAX_ATTEMPTS,
-                getattr(response.usage, "prompt_tokens", None),
-                getattr(response.usage, "completion_tokens", None)
-            )
-
-            set_langsmith_usage(
-                input_tokens=int(
-                    getattr(response.usage, "prompt_tokens", None) or 0
-                ),
-                output_tokens=int(
-                    getattr(response.usage, "completion_tokens", None) or 0
-                ),
-            )
-
-            return json.loads(raw_response)
-        except Exception as error:
-            last_error = error
-
-            LOGGER.warning(
-                "Groq lỗi | model=%s | attempt=%s/%s | error=%s",
-                GROQ_MODEL,
-                attempt,
-                GROQ_MAX_ATTEMPTS,
-                error
-            )
-    raise ValueError(
-        f"Groq không trả về kết quả hợp lệ sau "
-        f"{GROQ_MAX_ATTEMPTS} lần thử: {last_error}"
-    ) from last_error
 
 
 @traceable(

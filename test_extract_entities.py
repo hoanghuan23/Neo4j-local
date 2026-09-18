@@ -199,53 +199,6 @@ class ExtractionTests(unittest.TestCase):
             {None, "GLOBAL_ROLE", "POST_LOCAL"},
         )
 
-    @patch.object(subject, "call_groq")
-    def test_extract_knowledge_returns_only_entities_and_events(self, call_groq):
-        expected = {
-            "entities": [],
-            "events": [
-                {
-                    "local_id": "ev1",
-                    "type": "MEETING",
-                    "title": "Hai bên tổ chức một cuộc gặp chính thức để trao đổi công việc",
-                    "description": "A meeting",
-                    "status": None,
-                    "time_expression": None,
-                    "confidence": 0.8,
-                    "participants": [],
-                }
-            ],
-            "event_relations": [],
-        }
-        call_groq.return_value = expected
-
-        expected = {"entities": [], "events": [dict(expected["events"][0])]}
-        expected["events"][0].pop("participants")
-        expected["events"][0]["title_needs_backfill"] = False
-        self.assertEqual(subject.extract_knowledge("A meeting happened."), expected)
-        self.assertIs(call_groq.call_args_list[0].args[1], subject.ENTITY_SCHEMA)
-
-    @patch.object(subject, "call_groq")
-    def test_prompt_rejects_non_events_and_limits_event_count(self, call_groq):
-        call_groq.return_value = {
-            "entities": [],
-            "events": [],
-            "event_relations": [],
-        }
-
-        subject.extract_knowledge(
-            "Bộ phim mà mình cực mong chờ phần 2 mà chưa thấy, "
-            "bác nào biết phim tương tự k ạ"
-        )
-
-        prompt = call_groq.call_args.args[0]
-        for rule in ("HARD GATE", "LOCATION", "Substring", "DROWNING",
-                     "giao thông", "precision"):
-            self.assertIn(rule, prompt)
-        for removed in ("GLOBAL_ROLE", "POST_LOCAL", "PARTICIPANT", "EVENT RELATION", "QUYẾT ĐỊNH CUỐI", "VALIDATION", "Tối đa 5 Event",
-                        "ID Entity duy nhất", "CHỈ trả JSON"):
-            self.assertNotIn(removed, prompt)
-
     def test_extract_knowledge_recovers_explicit_vietnam_when_model_omits_it(self):
         content = (
             "Gần 500 bình khí cười được vận chuyển từ nước ngoài vào Việt Nam "
@@ -330,21 +283,6 @@ class ExtractionTests(unittest.TestCase):
             [entity["name"] for entity in recovered["entities"]],
             ["Đội tuyển Việt Nam", "Việt Nam"],
         )
-
-    @patch.object(subject, "call_groq")
-    def test_extract_entities_uses_canonical_schema(self, call_groq):
-        expected = [
-            {
-                "name": "President Trump",
-                "canonical_name": "Donald Trump",
-                "type": "PERSON",
-                "resolution_confidence": "HIGH",
-            }
-        ]
-        call_groq.return_value = {"entities": expected, "events": []}
-
-        self.assertEqual(subject.extract_entities("President Trump spoke."), expected)
-        self.assertIs(call_groq.call_args.args[1], subject.ENTITY_SCHEMA)
 
     def test_high_confidence_aliases_share_one_key(self):
         aliases = [

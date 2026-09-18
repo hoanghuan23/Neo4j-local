@@ -27,10 +27,6 @@ GEMINI_OUTPUT_PRICE_PER_MILLION = os.getenv(
 GEMINI_TIMEOUT_SECONDS = max(
     1, float(os.getenv("GEMINI_KNOWLEDGE_TIMEOUT_SECONDS", "120"))
 )
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
-GROQ_TIMEOUT_SECONDS = 120
-GROQ_MAX_ATTEMPTS = 2
 KNOWLEDGE_ERROR_MAX_CHARS = 2_000
 POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 # Số EventMention tối đa cho mỗi lượt chạy gộp bài hôm nay/hôm qua.
@@ -43,7 +39,7 @@ PARTICIPANT_ROLE_PROMPT_VERSION = "participant-role-v1"
 PARTICIPANT_EXTRACTION_PROMPT_VERSION = "participant-extraction-v1"
 EVENT_RELATION_PROMPT_VERSION = "event-relation-v1"
 LOCATION_HIERARCHY_MODULE_VERSION = "location-hierarchy-v3-photon"
-EVENT_CONSOLIDATION_VERSION = "event-consolidation-v3"
+EVENT_CONSOLIDATION_VERSION = "event-consolidation-v4"
 EVENT_SUMMARY_VERSION = "event-summary-v3"
 EVENT_AUTO_MERGE_THRESHOLD = float(
     os.getenv("EVENT_AUTO_MERGE_THRESHOLD", "0.90")

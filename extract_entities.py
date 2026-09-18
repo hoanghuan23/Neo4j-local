@@ -59,14 +59,9 @@ def call_gemini(prompt: str, output_schema: dict) -> dict:
     return get_gemini_caller()(prompt, output_schema)
 
 
-def call_groq(prompt: str, output_schema: dict) -> dict:
-    """Legacy patch point; route historical callers through Gemini."""
-    return call_gemini(prompt, output_schema)
-
-
 def extract_knowledge(content: str) -> dict:
-    """Extract raw knowledge while preserving the legacy patch point."""
-    return _extraction.extract_knowledge(content, call_model=call_groq)
+    """Extract raw knowledge with the configured Gemini model."""
+    return _extraction.extract_knowledge(content, call_model=call_gemini)
 
 
 def extract_entities(content: str) -> list[dict]:
