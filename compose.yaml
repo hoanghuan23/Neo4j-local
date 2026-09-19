@@ -20,8 +20,30 @@ services:
 
     restart: unless-stopped
 
+  neo4j_filtered:
+    image: neo4j:5.26-community
+    container_name: neo4j-filtered
+
+    ports:
+      - "7475:7474"
+      - "7688:7687"
+
+    environment:
+      NEO4J_AUTH: "${NEO4J_TARGET_USER:-neo4j}/${NEO4J_TARGET_PASSWORD:-${NEO4J_PASSWORD}}"
+      NEO4J_PLUGINS: '["apoc"]'
+
+    volumes:
+      - neo4j_filtered_data:/data
+      - neo4j_filtered_logs:/logs
+      - neo4j_filtered_plugins:/plugins
+
+    restart: unless-stopped
+
 volumes:
   neo4j_data:
   neo4j_logs:
   neo4j_import:
   neo4j_plugins:
+  neo4j_filtered_data:
+  neo4j_filtered_logs:
+  neo4j_filtered_plugins:

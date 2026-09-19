@@ -1,10 +1,31 @@
 import unittest
-from unittest.mock import Mock, call
+from unittest.mock import Mock, call, patch
 
 import import_database.import_facebook_from_postgreSQL as subject
 
 
 class FacebookPostSyncTests(unittest.TestCase):
+    def test_import_defaults_to_filtered_neo4j_instance(self):
+        with patch.dict(subject.os.environ, {}, clear=True):
+            uri, user, password = subject.get_neo4j_import_config()
+
+        self.assertEqual(uri, "bolt://localhost:7688")
+        self.assertEqual(user, subject.NEO4J_USER)
+        self.assertEqual(password, subject.NEO4J_PASSWORD)
+
+    def test_import_config_can_be_overridden(self):
+        with patch.dict(
+            subject.os.environ,
+            {
+                "NEO4J_IMPORT_URI": "bolt://example:9999",
+                "NEO4J_IMPORT_USER": "importer",
+                "NEO4J_IMPORT_PASSWORD": "secret",
+            },
+        ):
+            config = subject.get_neo4j_import_config()
+
+        self.assertEqual(config, ("bolt://example:9999", "importer", "secret"))
+
     def test_updates_recent_existing_posts_when_there_are_no_new_posts(self):
         session = Mock()
         session.run.return_value = [
