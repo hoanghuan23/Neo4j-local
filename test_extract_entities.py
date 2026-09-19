@@ -55,27 +55,6 @@ class NormalizationTests(unittest.TestCase):
 
 
 class GeminiPipelineTests(unittest.TestCase):
-    def test_analysis_defaults_to_filtered_neo4j_instance(self):
-        with patch.dict(subject.os.environ, {}, clear=True):
-            uri, user, password = subject.get_neo4j_analysis_config()
-
-        self.assertEqual(uri, "bolt://localhost:7688")
-        self.assertEqual(user, subject.NEO4J_USER)
-        self.assertEqual(password, subject.NEO4J_PASSWORD)
-
-    def test_analysis_destination_can_be_overridden(self):
-        with patch.dict(
-            subject.os.environ,
-            {
-                "NEO4J_ANALYSIS_URI": "bolt://example:9999",
-                "NEO4J_ANALYSIS_USER": "analyzer",
-                "NEO4J_ANALYSIS_PASSWORD": "secret",
-            },
-        ):
-            config = subject.get_neo4j_analysis_config()
-
-        self.assertEqual(config, ("bolt://example:9999", "analyzer", "secret"))
-
     @patch.object(subject, "_process_new_posts")
     @patch.object(subject, "consolidate_pending_mentions")
     @patch.object(subject._extraction, "extract_knowledge")

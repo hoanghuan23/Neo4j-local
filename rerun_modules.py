@@ -100,6 +100,7 @@ def main() -> None:
         level=logging.WARNING,
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
+    print(f"Chạy lại module trên Neo4j: {NEO4J_URI}")
     driver = GraphDatabase.driver(
         NEO4J_URI,
         auth=(NEO4J_USER, NEO4J_PASSWORD),

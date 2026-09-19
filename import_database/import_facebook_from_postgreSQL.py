@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from knowledge_settings import NEO4J_PASSWORD, NEO4J_USER
+from knowledge_settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 
 load_dotenv()
 
@@ -22,25 +22,6 @@ POSTGRES_CONFIG = {
     "user": os.getenv("POSTGRES_USER", "scraper"),
     "password": os.environ["POSTGRES_PASSWORD"],
 }
-
-
-def get_neo4j_import_config():
-    """Return the dedicated destination for the Facebook importer."""
-    uri = os.getenv(
-        "NEO4J_IMPORT_URI",
-        os.getenv("NEO4J_TARGET_URI", "bolt://localhost:7688"),
-    )
-    user = os.getenv(
-        "NEO4J_IMPORT_USER",
-        os.getenv("NEO4J_TARGET_USER", NEO4J_USER),
-    )
-    password = os.getenv(
-        "NEO4J_IMPORT_PASSWORD",
-        os.getenv("NEO4J_TARGET_PASSWORD", NEO4J_PASSWORD),
-    )
-    return uri, user, password
-
-
 def get_posts():
     connection = psycopg2.connect(**POSTGRES_CONFIG)
 
@@ -200,11 +181,9 @@ def sync_posts(session, posts):
 def main():
     posts = get_posts()
 
-    neo4j_uri, neo4j_user, neo4j_password = get_neo4j_import_config()
-
     driver = GraphDatabase.driver(
-        neo4j_uri,
-        auth=(neo4j_user, neo4j_password),
+        NEO4J_URI,
+        auth=(NEO4J_USER, NEO4J_PASSWORD),
     )
 
     try:
@@ -212,7 +191,7 @@ def main():
             stats = sync_posts(session, posts)
 
         print(
-            f"Đã import {stats['new_posts']} post mới vào Neo4j {neo4j_uri}; "
+            f"Đã import {stats['new_posts']} post mới vào Neo4j {NEO4J_URI}; "
             f"cập nhật metric_tier và last_engagement_velocity cho "
             f"{stats['updated_metric_tiers']} post "
             f"trong 24 giờ gần nhất; "

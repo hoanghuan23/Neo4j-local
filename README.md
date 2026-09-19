@@ -33,13 +33,12 @@ docker compose up -d neo4j_filtered
 
 ## Biến môi trường
 
-Database phân tích có thể dùng chung `NEO4J_PASSWORD` hiện tại hoặc cấu hình
-tài khoản riêng:
+Tất cả chương trình dùng chung cấu hình Neo4j trong `.env`:
 
 ```env
-NEO4J_TARGET_URI=bolt://localhost:7688
-NEO4J_TARGET_USER=neo4j
-NEO4J_TARGET_PASSWORD=target_password
+NEO4J_URI=bolt://localhost:7688
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_password
 ```
 
 ## Import Facebook vào database mới
@@ -50,9 +49,7 @@ Importer Facebook mặc định ghi vào `bolt://localhost:7688`:
 python3 import_database/import_facebook_from_postgreSQL.py
 ```
 
-Có thể đổi riêng đích của importer bằng `NEO4J_IMPORT_URI`,
-`NEO4J_IMPORT_USER` và `NEO4J_IMPORT_PASSWORD` mà không làm thay đổi cấu hình
-Neo4j chung của các chương trình khác.
+Importer lấy địa chỉ từ `NEO4J_URI` trong `.env`.
 
 ## Chạy phân tích trên database mới
 
@@ -62,5 +59,5 @@ Neo4j chung của các chương trình khác.
 python3 extract_entities.py
 ```
 
-Có thể đổi riêng database phân tích bằng `NEO4J_ANALYSIS_URI`,
-`NEO4J_ANALYSIS_USER` và `NEO4J_ANALYSIS_PASSWORD`.
+`extract_entities.py` và `rerun_modules.py` cùng lấy địa chỉ từ `NEO4J_URI`
+trong `.env`.

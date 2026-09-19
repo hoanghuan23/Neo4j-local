@@ -1,5 +1,4 @@
 import logging
-import os
 
 from neo4j import GraphDatabase
 
@@ -46,23 +45,6 @@ from knowledge_validation import (
 )
 
 _gemini_caller: GeminiKnowledgeCaller | None = None
-
-
-def get_neo4j_analysis_config() -> tuple[str, str, str]:
-    """Return the dedicated Neo4j destination for knowledge analysis."""
-    uri = os.getenv(
-        "NEO4J_ANALYSIS_URI",
-        os.getenv("NEO4J_TARGET_URI", "bolt://localhost:7688"),
-    )
-    user = os.getenv(
-        "NEO4J_ANALYSIS_USER",
-        os.getenv("NEO4J_TARGET_USER", NEO4J_USER),
-    )
-    password = os.getenv(
-        "NEO4J_ANALYSIS_PASSWORD",
-        os.getenv("NEO4J_TARGET_PASSWORD", NEO4J_PASSWORD),
-    )
-    return uri, user, password
 
 
 def get_gemini_caller() -> GeminiKnowledgeCaller:
@@ -141,11 +123,10 @@ def main() -> None:
         level=logging.WARNING,
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
-    neo4j_uri, neo4j_user, neo4j_password = get_neo4j_analysis_config()
-    print(f"Phân tích dữ liệu trên Neo4j: {neo4j_uri}")
+    print(f"Phân tích dữ liệu trên Neo4j: {NEO4J_URI}")
     driver = GraphDatabase.driver(
-        neo4j_uri,
-        auth=(neo4j_user, neo4j_password),
+        NEO4J_URI,
+        auth=(NEO4J_USER, NEO4J_PASSWORD),
     )
 
     try:
