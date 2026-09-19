@@ -1,4 +1,4 @@
-from knowledge_gemini import log_post_calls
+from knowledge_openai import log_post_calls
 
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed

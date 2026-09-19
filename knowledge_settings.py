@@ -13,19 +13,19 @@ NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.environ["NEO4J_PASSWORD"]
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv(
-    "GEMINI_KNOWLEDGE_MODEL", "gemini-3.1-flash-lite"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv(
+    "OPENAI_KNOWLEDGE_MODEL", "gpt-5.6-luna"
 )
-# Standard paid-tier text pricing from the official Gemini API pricing page.
-GEMINI_INPUT_PRICE_PER_MILLION = os.getenv(
-    "GEMINI_INPUT_PRICE_PER_MILLION", "0.25"
+# Standard text pricing for the configured OpenAI model.
+OPENAI_INPUT_PRICE_PER_MILLION = os.getenv(
+    "OPENAI_INPUT_PRICE_PER_MILLION", "0.20"
 )
-GEMINI_OUTPUT_PRICE_PER_MILLION = os.getenv(
-    "GEMINI_OUTPUT_PRICE_PER_MILLION", "1.50"
+OPENAI_OUTPUT_PRICE_PER_MILLION = os.getenv(
+    "OPENAI_OUTPUT_PRICE_PER_MILLION", "1.20"
 )
-GEMINI_TIMEOUT_SECONDS = max(
-    1, float(os.getenv("GEMINI_KNOWLEDGE_TIMEOUT_SECONDS", "120"))
+OPENAI_TIMEOUT_SECONDS = max(
+    1, float(os.getenv("OPENAI_KNOWLEDGE_TIMEOUT_SECONDS", "120"))
 )
 KNOWLEDGE_ERROR_MAX_CHARS = 2_000
 POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))

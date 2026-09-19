@@ -31,7 +31,7 @@ def test_api_total_counts_distinct_events_before_pagination(related, size):
     endpoint = "/api/search/related" if related else "/api/chat"
     payload = ({"query": {"location": "Hà Nội", "hours": 48}} if related else
                {"message": "sự kiện Hà Nội 48h qua"})
-    with TestClient(create_app(Settings(gemini_api_key=""), repository)) as client:
+    with TestClient(create_app(Settings(openai_api_key=""), repository)) as client:
         first = client.post(endpoint, json={**payload, "limit": 2})
         assert first.status_code == 200
         first = first.json()

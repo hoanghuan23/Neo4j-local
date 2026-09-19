@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
@@ -465,7 +466,7 @@ def test_chat_returns_structured_graph_results():
             }
         ]
     )
-    app = create_app(Settings(gemini_api_key=""), repository)
+    app = create_app(Settings(openai_api_key=""), repository)
 
     with TestClient(app) as client:
         response = client.post(
@@ -523,7 +524,7 @@ def test_detail_command_returns_related_entity_post_counts():
             },
         ]
     )
-    app = create_app(Settings(gemini_api_key=""), repository)
+    app = create_app(Settings(openai_api_key=""), repository)
 
     with TestClient(app) as client:
         response = client.post(
@@ -555,7 +556,7 @@ def test_detail_command_returns_related_entity_post_counts():
 
 def test_detail_command_requires_a_subject():
     repository = FakeRepository()
-    app = create_app(Settings(gemini_api_key=""), repository)
+    app = create_app(Settings(openai_api_key=""), repository)
 
     with TestClient(app) as client:
         response = client.post(
@@ -609,7 +610,7 @@ def test_detail_query_prefers_exact_subject_before_contains_matches():
 def test_search_endpoint_and_empty_answer():
     repository = FakeRepository()
     app = create_app(
-        Settings(gemini_api_key="", default_search_hours=24),
+        Settings(openai_api_key="", default_search_hours=24),
         repository,
     )
 
@@ -630,7 +631,7 @@ def test_search_endpoint_and_empty_answer():
     assert health.json() == {"status": "ok", "neo4j": "connected"}
 
 
-def test_chat_endpoint_uses_gemini_parser_and_answer_generator():
+def test_chat_endpoint_uses_openai_parser_and_answer_generator():
     repository = FakeRepository(
         [
             {
@@ -651,21 +652,27 @@ def test_chat_endpoint_uses_gemini_parser_and_answer_generator():
             }
         ]
     )
-    gemini_client = Mock()
-    gemini_client.models.generate_content.side_effect = [
+    openai_client = Mock()
+    openai_client.chat.completions.create.side_effect = [
         SimpleNamespace(
-            parsed={
-                "intent": "search_events",
-                "location": "Đà Nẵng",
-                "hours": 48,
-            }
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
+                "intent": "search_events", "location": "Đà Nẵng",
+                "entity": None, "hours": 48, "posted_date": None,
+                "clarification_question": None, "hot_only": False,
+            })))],
+            usage=None,
         ),
-        SimpleNamespace(parsed={"answer": "Câu trả lời Gemini có kiểm chứng."}),
+        SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(
+                {"answer": "Câu trả lời OpenAI có kiểm chứng."}
+            )))],
+            usage=None,
+        ),
     ]
 
-    with patch("google.genai.Client", return_value=gemini_client):
+    with patch("openai.OpenAI", return_value=openai_client):
         app = create_app(
-            Settings(gemini_api_key="test-key", chat_gemini_model="test-model"),
+            Settings(openai_api_key="test-key", chat_openai_model="test-model"),
             repository,
         )
         with TestClient(app) as client:
@@ -679,7 +686,7 @@ def test_chat_endpoint_uses_gemini_parser_and_answer_generator():
 
     assert response.status_code == 200
     body = response.json()
-    assert body["answer"] == "Câu trả lời Gemini có kiểm chứng."
+    assert body["answer"] == "Câu trả lời OpenAI có kiểm chứng."
     assert body["query"] == {
         "intent": "search_events",
         "location": "Đà Nẵng",
@@ -698,8 +705,8 @@ def test_chat_endpoint_uses_gemini_parser_and_answer_generator():
         "limit": 6,
         "after": None,
     }
-    assert gemini_client.models.generate_content.call_count == 2
-    gemini_client.close.assert_called_once_with()
+    assert openai_client.chat.completions.create.call_count == 2
+    openai_client.close.assert_called_once_with()
 
 
 def test_chat_cursor_returns_next_page_with_continuous_numbering():
@@ -707,7 +714,7 @@ def test_chat_cursor_returns_next_page_with_continuous_numbering():
         [pagination_event(index) for index in range(1, 13)]
     )
     app = create_app(
-        Settings(gemini_api_key="", default_search_hours=24),
+        Settings(openai_api_key="", default_search_hours=24),
         repository,
     )
 
@@ -750,7 +757,7 @@ def test_chat_cursor_does_not_repeat_when_a_newer_event_is_inserted():
         [pagination_event(index) for index in range(1, 13)]
     )
     app = create_app(
-        Settings(gemini_api_key="", default_search_hours=24),
+        Settings(openai_api_key="", default_search_hours=24),
         repository,
     )
 
@@ -786,7 +793,7 @@ def test_chat_cursor_does_not_repeat_when_a_newer_event_is_inserted():
 
 def test_chat_rejects_invalid_or_missing_continuation_cursor():
     app = create_app(
-        Settings(gemini_api_key="", default_search_hours=24),
+        Settings(openai_api_key="", default_search_hours=24),
         FakeRepository(),
     )
 

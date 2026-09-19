@@ -54,13 +54,13 @@ class NormalizationTests(unittest.TestCase):
         )
 
 
-class GeminiPipelineTests(unittest.TestCase):
+class OpenAIPipelineTests(unittest.TestCase):
     @patch.object(subject, "_process_new_posts")
     @patch.object(subject, "consolidate_pending_mentions")
     @patch.object(subject._extraction, "extract_knowledge")
     @patch.object(subject._extraction, "classify_knowledge_potential")
-    @patch.object(subject, "get_gemini_caller")
-    def test_pipeline_uses_gemini_for_every_model_stage(
+    @patch.object(subject, "get_openai_caller")
+    def test_pipeline_uses_openai_for_every_model_stage(
         self,
         get_caller,
         classify,
@@ -69,7 +69,7 @@ class GeminiPipelineTests(unittest.TestCase):
         process,
     ):
         process.return_value = {"deep": 1}
-        call_gemini = get_caller.return_value
+        call_openai = get_caller.return_value
 
         result = subject.process_new_posts("session")
 
@@ -78,9 +78,9 @@ class GeminiPipelineTests(unittest.TestCase):
         kwargs["classify_post_fn"]("content")
         kwargs["extract_knowledge_fn"]("content")
         kwargs["consolidate_fn"]("session")
-        classify.assert_called_once_with("content", call_model=call_gemini)
-        extract.assert_called_once_with("content", call_model=call_gemini)
-        consolidate.assert_called_once_with("session", call_model=call_gemini)
+        classify.assert_called_once_with("content", call_model=call_openai)
+        extract.assert_called_once_with("content", call_model=call_openai)
+        consolidate.assert_called_once_with("session", call_model=call_openai)
 
 
 class ExtractionTests(unittest.TestCase):

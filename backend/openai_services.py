@@ -25,13 +25,20 @@ class GeneratedAnswer(BaseModel):
     answer: str = Field(min_length=1)
 
 
+def _strict_schema(model: type[BaseModel]) -> dict:
+    schema = model.model_json_schema()
+    schema["additionalProperties"] = False
+    schema["required"] = list(schema.get("properties", {}))
+    return schema
+
+
 def _price(value: str | Decimal) -> Decimal:
     try:
         price = Decimal(value)
     except (InvalidOperation, TypeError) as exc:
-        raise ValueError("Giá Gemini phải là số USD hợp lệ") from exc
+        raise ValueError("Giá OpenAI phải là số USD hợp lệ") from exc
     if price < 0:
-        raise ValueError("Giá Gemini không được âm")
+        raise ValueError("Giá OpenAI không được âm")
     return price
 
 
@@ -43,27 +50,22 @@ def _log_usage(
     input_price_per_million_usd: Decimal,
     output_price_per_million_usd: Decimal,
 ) -> None:
-    metadata = getattr(response, "usage_metadata", None)
+    metadata = getattr(response, "usage", None)
     if metadata is None:
         LOGGER.warning(
-            "Gemini usage unavailable | stage=%s | model=%s",
+            "OpenAI usage unavailable | stage=%s | model=%s",
             stage,
             model,
         )
         return
 
-    input_tokens = int(getattr(metadata, "prompt_token_count", None) or 0)
-    output_tokens = int(
-        getattr(metadata, "candidates_token_count", None) or 0
-    )
-    thinking_tokens = int(
-        getattr(metadata, "thoughts_token_count", None) or 0
-    )
-    billable_output_tokens = output_tokens + thinking_tokens
-    total_tokens = int(
-        getattr(metadata, "total_token_count", None)
-        or input_tokens + billable_output_tokens
-    )
+    input_tokens = int(getattr(metadata, "prompt_tokens", None) or 0)
+    completion_tokens = int(getattr(metadata, "completion_tokens", None) or 0)
+    details = getattr(metadata, "completion_tokens_details", None)
+    thinking_tokens = int(getattr(details, "reasoning_tokens", None) or 0)
+    output_tokens = max(completion_tokens - thinking_tokens, 0)
+    billable_output_tokens = completion_tokens
+    total_tokens = int(getattr(metadata, "total_tokens", None) or input_tokens + completion_tokens)
     input_cost = (
         Decimal(input_tokens)
         * input_price_per_million_usd
@@ -76,7 +78,7 @@ def _log_usage(
     )
 
     LOGGER.info(
-        "Gemini usage | stage=%s | model=%s | input_tokens=%d | "
+        "OpenAI usage | stage=%s | model=%s | input_tokens=%d | "
         "output_tokens=%d | thinking_tokens=%d | total_tokens=%d | "
         "input_cost_usd=%.8f | output_cost_usd=%.8f | total_cost_usd=%.8f",
         stage,
@@ -96,30 +98,25 @@ def _validate_structured_response(
     schema: type[BaseModel],
 ) -> BaseModel:
     parsed = getattr(response, "parsed", None)
-    if isinstance(parsed, schema):
-        return parsed
     if parsed is not None:
         return schema.model_validate(parsed)
-
-    text = getattr(response, "text", None)
+    text = response.choices[0].message.content if response.choices else None
     if not text:
-        raise ValueError("Gemini trả về nội dung rỗng")
+        raise ValueError("OpenAI trả về nội dung rỗng")
     return schema.model_validate_json(text)
 
 
-class GeminiQuestionParser:
+class OpenAIQuestionParser:
     def __init__(
         self,
         *,
         client: Any,
-        types_module: Any,
         model: str,
         default_hours: int = 24,
-        input_price_per_million_usd: str | Decimal = "0.25",
-        output_price_per_million_usd: str | Decimal = "1.50",
+        input_price_per_million_usd: str | Decimal = "0.20",
+        output_price_per_million_usd: str | Decimal = "1.20",
     ):
         self.client = client
-        self.types = types_module
         self.model = model
         self.default_hours = default_hours
         self.input_price_per_million_usd = _price(
@@ -130,9 +127,9 @@ class GeminiQuestionParser:
         )
 
     def parse(self, question: str) -> ParsedQuestion:
-        response = self.client.models.generate_content(
+        response = self.client.chat.completions.create(
             model=self.model,
-            contents=(
+            messages=[{"role": "user", "content": (
                 "Phân tích câu hỏi tìm kiếm sự kiện tiếng Việt dưới đây. "
                 "Quy tắc:\n"
                 "1. location:\n"
@@ -182,15 +179,15 @@ class GeminiQuestionParser:
                 "thành phố Hồ Chí Minh' cần hỏi rõ 'công' là tổ chức hay chủ đề nào. "
                 "Chủ đề rộng nhưng rõ nghĩa như 'giao thông' không cần hỏi lại.\n\n"
                 f"Câu hỏi: {question}"
-            ),
-            config=self.types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=ParsedQuestion,
-                temperature=0,
-                automatic_function_calling=(
-                    self.types.AutomaticFunctionCallingConfig(disable=True)
-                ),
-            ),
+            )}],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "parsed_question",
+                    "strict": True,
+                    "schema": _strict_schema(ParsedQuestion),
+                },
+            },
         )
         _log_usage(
             response,
@@ -251,24 +248,22 @@ class FallbackQuestionParser:
             return self.primary.parse(question)
         except Exception as exc:
             LOGGER.warning(
-                "Gemini question parsing failed; using rule-based fallback: %s",
+                "OpenAI question parsing failed; using rule-based fallback: %s",
                 type(exc).__name__,
             )
             return self.fallback.parse(question)
 
 
-class GeminiAnswerGenerator:
+class OpenAIAnswerGenerator:
     def __init__(
         self,
         *,
         client: Any,
-        types_module: Any,
         model: str,
-        input_price_per_million_usd: str | Decimal = "0.25",
-        output_price_per_million_usd: str | Decimal = "1.50",
+        input_price_per_million_usd: str | Decimal = "0.20",
+        output_price_per_million_usd: str | Decimal = "1.20",
     ):
         self.client = client
-        self.types = types_module
         self.model = model
         self.input_price_per_million_usd = _price(
             input_price_per_million_usd
@@ -294,9 +289,9 @@ class GeminiAnswerGenerator:
                 for event in events
             ],
         }
-        response = self.client.models.generate_content(
+        response = self.client.chat.completions.create(
             model=self.model,
-            contents=(
+            messages=[{"role": "user", "content": (
             "Bạn là bộ tạo câu trả lời từ dữ liệu sự kiện đã truy xuất.\n\n"
 
             "QUY TẮC BẮT BUỘC:\n"
@@ -343,15 +338,15 @@ class GeminiAnswerGenerator:
 
             "DỮ LIỆU:\n"
             + json.dumps(payload, ensure_ascii=False)
-        ),
-            config=self.types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=GeneratedAnswer,
-                temperature=0,
-                automatic_function_calling=(
-                    self.types.AutomaticFunctionCallingConfig(disable=True)
-                ),
-            ),
+        )}],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "generated_answer",
+                    "strict": True,
+                    "schema": _strict_schema(GeneratedAnswer),
+                },
+            },
         )
         _log_usage(
             response,
@@ -363,7 +358,7 @@ class GeminiAnswerGenerator:
         result = _validate_structured_response(response, GeneratedAnswer)
         answer = GeneratedAnswer.model_validate(result).answer.strip()
         if not answer:
-            raise ValueError("Gemini trả về câu trả lời rỗng")
+            raise ValueError("OpenAI trả về câu trả lời rỗng")
         return answer
 
 
@@ -393,7 +388,7 @@ class FallbackAnswerGenerator:
             )
         except Exception as exc:
             LOGGER.warning(
-                "Gemini answer generation failed; using template fallback: %s",
+                "OpenAI answer generation failed; using template fallback: %s",
                 type(exc).__name__,
             )
             return self.fallback.generate(

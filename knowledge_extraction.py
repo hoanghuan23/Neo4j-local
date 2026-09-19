@@ -3,7 +3,7 @@ import math
 import re
 import unicodedata
 from functools import lru_cache
-from knowledge_gemini import call_gemini
+from knowledge_openai import call_openai
 
 from langsmith import traceable
 
@@ -303,7 +303,7 @@ def classify_knowledge_potential(content: str, call_model=None) -> dict:
     """.strip()
 
     if call_model is None:
-        call_model = call_gemini
+        call_model = call_openai
     result = call_model(prompt, KNOWLEDGE_CLASSIFIER_SCHEMA)
     if not isinstance(result, dict):
         raise ValueError("Classifier không trả về JSON object")
@@ -356,7 +356,7 @@ def extract_knowledge(content: str, call_model=None) -> dict:
     """.strip()
 
     if call_model is None:
-        call_model = call_gemini
+        call_model = call_openai
     raw = call_model(prompt, KNOWLEDGE_SCHEMA)
     if not isinstance(raw, dict) or any(
         not isinstance(raw.get(key), list) for key in ("entities", "events")

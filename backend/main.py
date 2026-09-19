@@ -11,11 +11,11 @@ from backend.chat_service import (
     TemplateAnswerGenerator,
 )
 from backend.config import Settings
-from backend.gemini_services import (
+from backend.openai_services import (
     FallbackAnswerGenerator,
     FallbackQuestionParser,
-    GeminiAnswerGenerator,
-    GeminiQuestionParser,
+    OpenAIAnswerGenerator,
+    OpenAIQuestionParser,
 )
 from backend.models import ChatRequest, ChatResponse, HealthResponse, RelatedSearchRequest
 from backend.neo4j_repository import Neo4jRepository
@@ -25,11 +25,11 @@ from backend.question_parser import RuleBasedQuestionParser
 LOGGER = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 # Neo4j notifications include the full Cypher query; keep routine chat logs
-# focused on Gemini usage while still reporting operational errors.
+# focused on model usage while still reporting operational errors.
 logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("google.genai").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 
 def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
     settings = settings or Settings()
@@ -39,58 +39,50 @@ def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
     async def lifespan(app: FastAPI):
         repository.connect()
         app.state.repository = repository
-        gemini_client = None
+        openai_client = None
         rule_parser = RuleBasedQuestionParser(
             default_hours=settings.default_search_hours,
             max_hours=settings.max_search_hours,
         )
         template_generator = TemplateAnswerGenerator()
 
-        if settings.gemini_api_key:
-            from google import genai
-            from google.genai import types
+        if settings.openai_api_key:
+            from openai import OpenAI
 
-            gemini_client = genai.Client(
-                api_key=settings.gemini_api_key,
-                http_options=types.HttpOptions(
-                    timeout=max(
-                        1,
-                        int(settings.chat_gemini_timeout_seconds * 1_000),
-                    )
-                ),
+            openai_client = OpenAI(
+                api_key=settings.openai_api_key,
+                timeout=max(1, settings.chat_openai_timeout_seconds),
             )
             parser = FallbackQuestionParser(
-                GeminiQuestionParser(
-                    client=gemini_client,
-                    types_module=types,
-                    model=settings.chat_gemini_model,
+                OpenAIQuestionParser(
+                    client=openai_client,
+                    model=settings.chat_openai_model,
                     default_hours=settings.default_search_hours,
                     input_price_per_million_usd=(
-                        settings.chat_gemini_input_price_per_million_usd
+                        settings.chat_openai_input_price_per_million_usd
                     ),
                     output_price_per_million_usd=(
-                        settings.chat_gemini_output_price_per_million_usd
+                        settings.chat_openai_output_price_per_million_usd
                     ),
                 ),
                 rule_parser,
             )
             answer_generator = FallbackAnswerGenerator(
-                GeminiAnswerGenerator(
-                    client=gemini_client,
-                    types_module=types,
-                    model=settings.chat_gemini_model,
+                OpenAIAnswerGenerator(
+                    client=openai_client,
+                    model=settings.chat_openai_model,
                     input_price_per_million_usd=(
-                        settings.chat_gemini_input_price_per_million_usd
+                        settings.chat_openai_input_price_per_million_usd
                     ),
                     output_price_per_million_usd=(
-                        settings.chat_gemini_output_price_per_million_usd
+                        settings.chat_openai_output_price_per_million_usd
                     ),
                 ),
                 template_generator,
             )
         else:
             LOGGER.warning(
-                "GEMINI_API_KEY is not configured; using deterministic "
+                "OPENAI_API_KEY is not configured; using deterministic "
                 "question parsing and answer generation"
             )
             parser = rule_parser
@@ -105,8 +97,8 @@ def create_app(settings: Settings | None = None, repository=None) -> FastAPI:
             yield
         finally:
             try:
-                if gemini_client is not None:
-                    gemini_client.close()
+                if openai_client is not None:
+                    openai_client.close()
             finally:
                 repository.close()
 

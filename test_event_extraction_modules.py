@@ -199,7 +199,7 @@ def test_entrypoint_passes_shared_model_to_both_modules():
 
 
 def test_new_model_stages_are_identified_in_usage_logs():
-    from knowledge_gemini import _stage_for_schema
+    from knowledge_openai import _stage_for_schema
     from knowledge_settings import PARTICIPANT_EXTRACTION_SCHEMA, EVENT_RELATION_SCHEMA
     assert _stage_for_schema(PARTICIPANT_EXTRACTION_SCHEMA) == 'participant_extraction'
     assert _stage_for_schema(EVENT_RELATION_SCHEMA) == 'event_relation'

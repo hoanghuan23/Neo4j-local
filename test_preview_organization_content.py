@@ -52,7 +52,7 @@ def test_location_run_saves_by_default(monkeypatch):
     import io
     monkeypatch.setattr('sys.argv', ['preview_location_content.py'])
     monkeypatch.setattr('sys.stdin', io.StringIO(''))
-    with patch.object(location, 'GeminiKnowledgeCaller') as caller, \
+    with patch.object(location, 'OpenAIKnowledgeCaller') as caller, \
          patch('neo4j.GraphDatabase.driver') as driver, \
          patch('preview_organization_content.save_content', return_value={'mode': 'saved_to_neo4j'}) as save:
         assert location.main() == 0

@@ -7,24 +7,15 @@ from unittest.mock import Mock
 import pytest
 
 from backend.chat_service import ChatService, TemplateAnswerGenerator
-from backend.gemini_services import (
+from backend.openai_services import (
     FallbackAnswerGenerator,
     FallbackQuestionParser,
-    GeminiAnswerGenerator,
-    GeminiQuestionParser,
+    OpenAIAnswerGenerator,
+    OpenAIQuestionParser,
+    _strict_schema,
 )
 from backend.models import EventResult, ParsedQuestion
 from backend.question_parser import RuleBasedQuestionParser
-
-
-class FakeTypes:
-    @staticmethod
-    def GenerateContentConfig(**kwargs):
-        return kwargs
-
-    @staticmethod
-    def AutomaticFunctionCallingConfig(**kwargs):
-        return kwargs
 
 
 def event_data():
@@ -79,17 +70,16 @@ def event_data():
         ),
     ],
 )
-def test_gemini_question_parser_returns_validated_structure(
+def test_openai_question_parser_returns_validated_structure(
     question, payload, location, entity, hours
 ):
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(
+    client.chat.completions.create.return_value = SimpleNamespace(
         parsed=payload,
         text=json.dumps(payload),
     )
-    parser = GeminiQuestionParser(
+    parser = OpenAIQuestionParser(
         client=client,
-        types_module=FakeTypes,
         model="test-model",
     )
 
@@ -100,38 +90,39 @@ def test_gemini_question_parser_returns_validated_structure(
         entity=entity,
         hours=hours,
     )
-    call = client.models.generate_content.call_args.kwargs
+    call = client.chat.completions.create.call_args.kwargs
     assert call["model"] == "test-model"
-    assert question in call["contents"]
-    assert call["config"]["response_schema"] is ParsedQuestion
+    assert question in call["messages"][0]["content"]
+    assert call["response_format"]["json_schema"]["schema"] == (
+        _strict_schema(ParsedQuestion)
+    )
 
 
-def test_gemini_question_parser_broadens_administrative_location():
+def test_openai_question_parser_broadens_administrative_location():
     payload = {
         "intent": "search_events",
         "location": "thành phố Lạng Sơn",
         "hours": 168,
     }
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(
+    client.chat.completions.create.return_value = SimpleNamespace(
         parsed=payload,
         text=json.dumps(payload),
     )
-    parser = GeminiQuestionParser(
+    parser = OpenAIQuestionParser(
         client=client,
-        types_module=FakeTypes,
         model="test-model",
     )
 
     parsed = parser.parse("Sự kiện thành phố Lạng Sơn trong 1 tuần")
 
     assert parsed.location == "Lạng Sơn"
-    prompt = client.models.generate_content.call_args.kwargs["contents"]
+    prompt = client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
     assert "tên địa lý ngắn gọn" in prompt
     assert "'thành phố Lạng Sơn', 'tỉnh Lạng Sơn' -> 'Lạng Sơn'" in prompt
 
 
-def test_gemini_question_parser_normalizes_between_entities():
+def test_openai_question_parser_normalizes_between_entities():
     payload = {
         "intent": "search_events",
         "location": None,
@@ -139,21 +130,20 @@ def test_gemini_question_parser_normalizes_between_entities():
         "hours": 24,
     }
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(parsed=payload)
-    parser = GeminiQuestionParser(
+    client.chat.completions.create.return_value = SimpleNamespace(parsed=payload)
+    parser = OpenAIQuestionParser(
         client=client,
-        types_module=FakeTypes,
         model="test-model",
     )
 
     parsed = parser.parse("sự kiện có liên quan giữa hà nội và lào cai")
 
     assert parsed.entity == "Hà Nội và Lào Cai"
-    prompt = client.models.generate_content.call_args.kwargs["contents"]
+    prompt = client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
     assert "chỉ trả 'A và B'" in prompt
 
 
-def test_gemini_question_parser_uses_deterministic_month_duration():
+def test_openai_question_parser_uses_deterministic_month_duration():
     payload = {
         "intent": "search_events",
         "location": None,
@@ -161,10 +151,9 @@ def test_gemini_question_parser_uses_deterministic_month_duration():
         "hours": 168,
     }
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(parsed=payload)
-    parser = GeminiQuestionParser(
+    client.chat.completions.create.return_value = SimpleNamespace(parsed=payload)
+    parser = OpenAIQuestionParser(
         client=client,
-        types_module=FakeTypes,
         model="test-model",
         default_hours=168,
     )
@@ -177,7 +166,7 @@ def test_gemini_question_parser_uses_deterministic_month_duration():
     assert parsed.hours == 720
 
 
-def test_gemini_question_parser_keeps_model_hours_for_unrecognized_duration():
+def test_openai_question_parser_keeps_model_hours_for_unrecognized_duration():
     payload = {
         "intent": "search_events",
         "location": "Hà Nội",
@@ -185,10 +174,9 @@ def test_gemini_question_parser_keeps_model_hours_for_unrecognized_duration():
         "hours": 360,
     }
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(parsed=payload)
-    parser = GeminiQuestionParser(
+    client.chat.completions.create.return_value = SimpleNamespace(parsed=payload)
+    parser = OpenAIQuestionParser(
         client=client,
-        types_module=FakeTypes,
         model="test-model",
         default_hours=168,
     )
@@ -198,18 +186,17 @@ def test_gemini_question_parser_keeps_model_hours_for_unrecognized_duration():
     assert parsed.hours == 360
 
 
-def test_gemini_question_parser_uses_deterministic_exact_date():
+def test_openai_question_parser_uses_deterministic_exact_date():
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(
+    client.chat.completions.create.return_value = SimpleNamespace(
         parsed={
             "intent": "search_events",
             "location": "Hà Nội",
             "hours": 24,
         },
     )
-    parser = GeminiQuestionParser(
+    parser = OpenAIQuestionParser(
         client=client,
-        types_module=FakeTypes,
         model="test-model",
     )
 
@@ -218,27 +205,26 @@ def test_gemini_question_parser_uses_deterministic_exact_date():
     assert parsed.posted_date == date(2025, 8, 24)
 
 
-def test_gemini_question_parser_uses_configured_default_hours_in_prompt():
+def test_openai_question_parser_uses_configured_default_hours_in_prompt():
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(
+    client.chat.completions.create.return_value = SimpleNamespace(
         parsed={"location": "Hà Nội", "hours": 168},
     )
-    parser = GeminiQuestionParser(
+    parser = OpenAIQuestionParser(
         client=client,
-        types_module=FakeTypes,
         model="test-model",
         default_hours=168,
     )
 
     parsed = parser.parse("sự kiện Hà Nội")
 
-    prompt = client.models.generate_content.call_args.kwargs["contents"]
+    prompt = client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
     assert "Nếu không nêu khoảng thời gian, dùng hours=168" in prompt
     assert parsed.hours == 168
 
-def test_gemini_question_parser_keeps_broad_topic_as_search_condition():
+def test_openai_question_parser_keeps_broad_topic_as_search_condition():
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(
+    client.chat.completions.create.return_value = SimpleNamespace(
         parsed={
             "intent": "search_events",
             "location": None,
@@ -246,9 +232,8 @@ def test_gemini_question_parser_keeps_broad_topic_as_search_condition():
             "hours": 168,
         },
     )
-    parser = GeminiQuestionParser(
+    parser = OpenAIQuestionParser(
         client=client,
-        types_module=FakeTypes,
         model="test-model",
         default_hours=168,
     )
@@ -256,15 +241,15 @@ def test_gemini_question_parser_keeps_broad_topic_as_search_condition():
     parsed = parser.parse("bóng đá việt nam")
 
     assert parsed.entity == "bóng đá việt nam"
-    prompt = client.models.generate_content.call_args.kwargs["contents"]
+    prompt = client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
     assert "'bóng đá Việt Nam'" in prompt
     assert "phải được giữ trong entity, không trả null" in prompt
 
 
 @pytest.mark.parametrize("question", ["các sự kiện mới nhất", "sự kiện hôm nay", "các sự kiện hot trong ngày"])
-def test_gemini_question_parser_uses_default_sort_for_latest_events_query(question):
+def test_openai_question_parser_uses_default_sort_for_latest_events_query(question):
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(
+    client.chat.completions.create.return_value = SimpleNamespace(
         parsed={
             "intent": "search_events",
             "location": "mới nhất",
@@ -272,9 +257,8 @@ def test_gemini_question_parser_uses_default_sort_for_latest_events_query(questi
             "hours": 168,
         },
     )
-    parser = GeminiQuestionParser(
+    parser = OpenAIQuestionParser(
         client=client,
-        types_module=FakeTypes,
         model="test-model",
         default_hours=168,
     )
@@ -320,12 +304,11 @@ def test_parsed_question_schema_includes_optional_clarification():
         ),
     ],
 )
-def test_question_parser_falls_back_on_invalid_gemini_output(response):
+def test_question_parser_falls_back_on_invalid_openai_output(response):
     client = Mock()
-    client.models.generate_content.return_value = response
-    primary = GeminiQuestionParser(
+    client.chat.completions.create.return_value = response
+    primary = OpenAIQuestionParser(
         client=client,
-        types_module=FakeTypes,
         model="test-model",
     )
     parser = FallbackQuestionParser(primary, RuleBasedQuestionParser())
@@ -346,14 +329,13 @@ def test_question_parser_falls_back_on_client_error():
     assert parsed.hours == 48
 
 
-def test_gemini_parser_uses_168_hours_for_previous_week():
+def test_openai_parser_uses_168_hours_for_previous_week():
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(
+    client.chat.completions.create.return_value = SimpleNamespace(
         parsed={"location": "Lạng Sơn", "hours": 168},
     )
-    parser = GeminiQuestionParser(
+    parser = OpenAIQuestionParser(
         client=client,
-        types_module=FakeTypes,
         model="test-model",
     )
 
@@ -363,14 +345,13 @@ def test_gemini_parser_uses_168_hours_for_previous_week():
     assert parsed.hours == 168
 
 
-def test_gemini_answer_generator_uses_structured_graph_data():
+def test_openai_answer_generator_uses_structured_graph_data():
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(
+    client.chat.completions.create.return_value = SimpleNamespace(
         parsed={"answer": "Trong 24 giờ qua có một vụ tai nạn tại Hà Nội."}
     )
-    generator = GeminiAnswerGenerator(
+    generator = OpenAIAnswerGenerator(
         client=client,
-        types_module=FakeTypes,
         model="test-model",
     )
     event = EventResult.model_validate(event_data())
@@ -383,7 +364,7 @@ def test_gemini_answer_generator_uses_structured_graph_data():
     )
 
     assert answer == "Trong 24 giờ qua có một vụ tai nạn tại Hà Nội."
-    contents = client.models.generate_content.call_args.kwargs["contents"]
+    contents = client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
     assert '"event_key": "event-1"' in contents
     assert '"source_name": "Nguồn thử nghiệm"' in contents
     assert '"title":' not in contents
@@ -409,7 +390,7 @@ def test_answer_generator_falls_back_on_invalid_output():
     assert answer.startswith("Tìm thấy 1 sự kiện tại Hà Nội:")
 
 
-def test_answer_generator_skips_gemini_for_empty_results():
+def test_answer_generator_skips_openai_for_empty_results():
     primary = Mock()
     generator = FallbackAnswerGenerator(primary, TemplateAnswerGenerator())
 
@@ -423,7 +404,7 @@ def test_answer_generator_skips_gemini_for_empty_results():
     primary.generate.assert_not_called()
 
 
-def test_chat_service_preserves_results_with_injected_gemini_dependencies():
+def test_chat_service_preserves_results_with_injected_openai_dependencies():
     parser = Mock()
     parser.parse.return_value = ParsedQuestion(
         location="Hà Nội",
@@ -432,12 +413,12 @@ def test_chat_service_preserves_results_with_injected_gemini_dependencies():
     repository = Mock()
     repository.search_events.return_value = [event_data()]
     answer_generator = Mock()
-    answer_generator.generate.return_value = "Câu trả lời Gemini"
+    answer_generator.generate.return_value = "Câu trả lời OpenAI"
     service = ChatService(parser, repository, answer_generator)
 
     response = service.chat("Hà Nội 24h qua có gì?", limit=5)
 
-    assert response.answer == "Câu trả lời Gemini"
+    assert response.answer == "Câu trả lời OpenAI"
     assert response.count == 1
     assert response.results[0].event_key == "event-1"
     repository.search_events.assert_called_once_with(
@@ -467,7 +448,7 @@ def test_chat_continuation_reuses_query_without_parser_or_answer_model():
         [second_event],
     ]
     answer_generator = Mock()
-    answer_generator.generate.return_value = "Câu trả lời Gemini"
+    answer_generator.generate.return_value = "Câu trả lời OpenAI"
     service = ChatService(parser, repository, answer_generator)
 
     first = service.chat("Hà Nội 24h qua có gì?", limit=1)
@@ -503,37 +484,35 @@ def test_template_answer_describes_entity_as_subject_not_location():
 
 def test_logs_tokens_and_cost_for_parser_and_answer(caplog):
     parser_client = Mock()
-    parser_client.models.generate_content.return_value = SimpleNamespace(
+    parser_client.chat.completions.create.return_value = SimpleNamespace(
         parsed={"intent": "search_events", "entity": "Phú Lê", "hours": 24},
-        usage_metadata=SimpleNamespace(
-            prompt_token_count=1_000,
-            candidates_token_count=100,
-            thoughts_token_count=50,
-            total_token_count=1_150,
+        usage=SimpleNamespace(
+            prompt_tokens=1_000,
+            completion_tokens=150,
+            completion_tokens_details=SimpleNamespace(reasoning_tokens=50),
+            total_tokens=1_150,
         ),
     )
     answer_client = Mock()
-    answer_client.models.generate_content.return_value = SimpleNamespace(
+    answer_client.chat.completions.create.return_value = SimpleNamespace(
         parsed={"answer": "Một sự kiện kiểm thử."},
-        usage_metadata=SimpleNamespace(
-            prompt_token_count=2_000,
-            candidates_token_count=200,
-            thoughts_token_count=100,
-            total_token_count=2_300,
+        usage=SimpleNamespace(
+            prompt_tokens=2_000,
+            completion_tokens=300,
+            completion_tokens_details=SimpleNamespace(reasoning_tokens=100),
+            total_tokens=2_300,
         ),
     )
-    parser = GeminiQuestionParser(
+    parser = OpenAIQuestionParser(
         client=parser_client,
-        types_module=FakeTypes,
         model="test-model",
     )
-    generator = GeminiAnswerGenerator(
+    generator = OpenAIAnswerGenerator(
         client=answer_client,
-        types_module=FakeTypes,
         model="test-model",
     )
 
-    with caplog.at_level(logging.INFO, logger="backend.gemini_services"):
+    with caplog.at_level(logging.INFO, logger="backend.openai_services"):
         parsed = parser.parse("Sự kiện liên quan tới Phú Lê")
         generator.generate(
             question="Sự kiện liên quan tới Phú Lê",
@@ -546,21 +525,21 @@ def test_logs_tokens_and_cost_for_parser_and_answer(caplog):
     assert "input_tokens=1000" in logs
     assert "output_tokens=100" in logs
     assert "thinking_tokens=50" in logs
-    assert "total_cost_usd=0.00047500" in logs
+    assert "total_cost_usd=0.00038000" in logs
     assert "stage=answer_generator" in logs
     assert "input_tokens=2000" in logs
     assert "output_tokens=200" in logs
     assert "thinking_tokens=100" in logs
-    assert "total_cost_usd=0.00095000" in logs
+    assert "total_cost_usd=0.00076000" in logs
 
 
-def test_gemini_weekly_hot_query_overrides_incorrect_model_time():
+def test_openai_weekly_hot_query_overrides_incorrect_model_time():
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(parsed={
+    client.chat.completions.create.return_value = SimpleNamespace(parsed={
         'hours': 24, 'posted_date': '2026-09-15',
         'entity': 'sự kiện hot trong tuần',
     })
-    parser = GeminiQuestionParser(client=client, types_module=FakeTypes, model='test-model')
+    parser = OpenAIQuestionParser(client=client, model='test-model')
     parsed = parser.parse('sự kiện hot trong tuần')
     assert parsed.hot_only
     assert parsed.hours == 168
@@ -570,12 +549,12 @@ def test_gemini_weekly_hot_query_overrides_incorrect_model_time():
 
 
 @pytest.mark.parametrize('question', ['các sự kiện hot Hà Nội', 'sự kiện hot tại Hà Nội trong tuần'])
-def test_gemini_preserves_hot_location(question):
+def test_openai_preserves_hot_location(question):
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(parsed={
+    client.chat.completions.create.return_value = SimpleNamespace(parsed={
         'hours': 24, 'location': None, 'entity': question,
     })
-    parser = GeminiQuestionParser(client=client, types_module=FakeTypes, model='test-model')
+    parser = OpenAIQuestionParser(client=client, model='test-model')
     parsed = parser.parse(question)
     assert parsed.hot_only
     assert parsed.location == 'Hà Nội'
@@ -584,14 +563,14 @@ def test_gemini_preserves_hot_location(question):
 
 
 @pytest.mark.parametrize('question', ['các sự kiện trong tuần', 'sự kiện tuần này'])
-def test_gemini_weekly_feed_overrides_incorrect_filters_and_time(question):
+def test_openai_weekly_feed_overrides_incorrect_filters_and_time(question):
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(parsed={
+    client.chat.completions.create.return_value = SimpleNamespace(parsed={
         'hours': 24, 'posted_date': '2026-09-15',
         'location': 'trong tuần', 'entity': question, 'hot_only': True,
         'clarification_question': 'Bạn muốn tìm ở đâu?',
     })
-    parser = GeminiQuestionParser(client=client, types_module=FakeTypes, model='test-model')
+    parser = OpenAIQuestionParser(client=client, model='test-model')
     parsed = parser.parse(question)
     assert parsed.hours == 168
     assert parsed.posted_date is None

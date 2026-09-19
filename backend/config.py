@@ -29,16 +29,16 @@ class Settings:
     posted_at_utc_offset_hours: int = int(
         os.getenv("POSTED_AT_UTC_OFFSET_HOURS", "7")
     )
-    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-    chat_gemini_model: str = os.getenv(
-        "CHAT_GEMINI_MODEL", "gemini-3.1-flash-lite"
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    chat_openai_model: str = os.getenv(
+        "CHAT_OPENAI_MODEL", "gpt-5.6-luna"
     )
-    chat_gemini_timeout_seconds: float = float(
-        os.getenv("CHAT_GEMINI_TIMEOUT_SECONDS", "10")
+    chat_openai_timeout_seconds: float = float(
+        os.getenv("CHAT_OPENAI_TIMEOUT_SECONDS", "10")
     )
-    chat_gemini_input_price_per_million_usd: str = os.getenv(
-        "CHAT_GEMINI_INPUT_PRICE_PER_MILLION_USD", "0.25"
+    chat_openai_input_price_per_million_usd: str = os.getenv(
+        "CHAT_OPENAI_INPUT_PRICE_PER_MILLION_USD", "0.20"
     )
-    chat_gemini_output_price_per_million_usd: str = os.getenv(
-        "CHAT_GEMINI_OUTPUT_PRICE_PER_MILLION_USD", "1.50"
+    chat_openai_output_price_per_million_usd: str = os.getenv(
+        "CHAT_OPENAI_OUTPUT_PRICE_PER_MILLION_USD", "1.20"
     )

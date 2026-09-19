@@ -5,7 +5,7 @@ import logging
 from neo4j import GraphDatabase
 
 from event_titles import generate_event_title
-from knowledge_gemini import GeminiKnowledgeCaller
+from knowledge_openai import OpenAIKnowledgeCaller
 from knowledge_settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 
 
@@ -124,7 +124,7 @@ def main() -> None:
     if args.limit is not None and args.limit < 1:
         raise SystemExit("--limit phải lớn hơn 0")
 
-    caller = GeminiKnowledgeCaller()
+    caller = OpenAIKnowledgeCaller()
     result = {"selected": 0}
     driver = GraphDatabase.driver(
         NEO4J_URI,

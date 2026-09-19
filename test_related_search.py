@@ -18,7 +18,7 @@ class RelatedRepository(PagingRepository):
 def test_related_paging_and_cursor_isolation():
     repository = RelatedRepository([pagination_event(i) for i in range(1, 5)])
     query = dict(intent='search_events', location='Hà Nội', entity=None, hours=48)
-    with TestClient(create_app(Settings(gemini_api_key=''), repository)) as client:
+    with TestClient(create_app(Settings(openai_api_key=''), repository)) as client:
         payload = dict(query=query, limit=2)
         first = client.post('/api/search/related', json=payload).json()
         assert first['count'] == 2
@@ -49,7 +49,7 @@ def test_related_paging_and_cursor_isolation():
 
 @pytest.mark.parametrize('location', [None, '', '   '])
 def test_related_requires_location_or_entity(location):
-    with TestClient(create_app(Settings(gemini_api_key=''), RelatedRepository())) as client:
+    with TestClient(create_app(Settings(openai_api_key=''), RelatedRepository())) as client:
         assert client.post('/api/search/related', json={
             'query': {'location': location, 'hours': 48},
         }).status_code == 422
@@ -57,7 +57,7 @@ def test_related_requires_location_or_entity(location):
 
 def test_related_empty_and_database_failure():
     repository = RelatedRepository()
-    with TestClient(create_app(Settings(gemini_api_key=''), repository)) as client:
+    with TestClient(create_app(Settings(openai_api_key=''), repository)) as client:
         payload = {'query': {'location': 'Hà Nội', 'hours': 48}}
         response = client.post('/api/search/related', json=payload)
         assert response.status_code == 200
@@ -101,7 +101,7 @@ def test_related_accepts_entity_only_and_preserves_reason_metadata(kind, relatio
         'label': 'Liên quan qua: Đại học Y Hà Nội',
     }
     event['relation_reasons'] = [reason]
-    with TestClient(create_app(Settings(gemini_api_key=''), RelatedRepository([event]))) as client:
+    with TestClient(create_app(Settings(openai_api_key=''), RelatedRepository([event]))) as client:
         response = client.post('/api/search/related', json={
             'query': {'entity': ' Hà Nội ', 'hours': 48},
         })
@@ -126,7 +126,7 @@ def test_old_or_unversioned_cursors_require_new_search(scope, version):
     if version is not None:
         cursor['version'] = version
     encoded = base64.urlsafe_b64encode(json.dumps(cursor).encode()).decode()
-    with TestClient(create_app(Settings(gemini_api_key=''), RelatedRepository())) as client:
+    with TestClient(create_app(Settings(openai_api_key=''), RelatedRepository())) as client:
         for endpoint, payload in [
             ('/api/chat', {'message': 'tiếp', 'cursor': encoded}),
             ('/api/search/related', {'query': query, 'cursor': encoded}),

@@ -54,7 +54,7 @@ def test_recent_batch_uses_vietnam_calendar_days_and_ordered_keys():
 def test_empty_batch_does_not_create_model_or_consolidate_all_mentions():
     session = Mock()
     session.run.return_value = []
-    with patch.object(subject, "get_gemini_caller") as model, patch.object(
+    with patch.object(subject, "get_openai_caller") as model, patch.object(
         subject, "consolidate_pending_mentions"
     ) as run:
         assert subject.consolidate_recent_posts(session)["total"] == 0

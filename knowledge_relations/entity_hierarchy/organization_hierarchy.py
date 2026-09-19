@@ -2,7 +2,7 @@
 import json
 import re
 
-from knowledge_extraction import normalize_name, make_search_name, call_gemini
+from knowledge_extraction import normalize_name, make_search_name, call_openai
 from knowledge_relations.entity_hierarchy.location_hierarchy import _search_variants
 
 VERSION = 'organization-hierarchy-v1'
@@ -87,7 +87,7 @@ Không coi trụ sở, nơi xảy ra sự kiện, nơi công tác là địa bà
 Không dùng kiến thức nền. Chỉ dùng ID trong entities. evidence_text là đoạn
 nguyên văn chứa tên cả hai thực thể. Không đủ bằng chứng trả relations rỗng.
 '''+json.dumps({'entities': list(by_id.values()), 'content': content}, ensure_ascii=False)
-    raw = (call_model or call_gemini)(prompt, SCHEMA)
+    raw = (call_model or call_openai)(prompt, SCHEMA)
     result = []
     for edge in raw.get('relations', []) if isinstance(raw, dict) else []:
         if not isinstance(edge, dict):

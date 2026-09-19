@@ -6,7 +6,7 @@ import logging
 
 from neo4j import GraphDatabase
 
-from knowledge_gemini import GeminiKnowledgeCaller
+from knowledge_openai import OpenAIKnowledgeCaller
 from knowledge_relations.entity_hierarchy.location_hierarchy import enrich_location_hierarchy
 from knowledge_settings import (
     LOCATION_HIERARCHY_MODULE_VERSION,
@@ -69,7 +69,7 @@ def main() -> None:
     if args.limit < 1:
         raise SystemExit("--limit phải lớn hơn 0")
     logging.basicConfig(level=logging.WARNING)
-    caller = GeminiKnowledgeCaller()
+    caller = OpenAIKnowledgeCaller()
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     try:
         with driver.session(database="neo4j") as session:

@@ -4,7 +4,7 @@ import json
 
 from langsmith import traceable
 
-from knowledge_gemini import call_gemini
+from knowledge_openai import call_openai
 from knowledge_settings import EVENT_RELATION_PROMPT_VERSION, EVENT_RELATION_SCHEMA
 
 
@@ -40,7 +40,7 @@ văn ngắn nhất đủ chứng minh quan hệ và có trong content. Không đ
 {content}
 </content>
 """.strip()
-    raw = (call_model or call_gemini)(prompt, EVENT_RELATION_SCHEMA)
+    raw = (call_model or call_openai)(prompt, EVENT_RELATION_SCHEMA)
     if not isinstance(raw, dict) or not isinstance(raw.get("event_relations"), list):
         raise ValueError("Event relation extraction phải trả về event_relations dạng array")
     result["event_relations"] = raw["event_relations"]

@@ -12,13 +12,13 @@ from zoneinfo import ZoneInfo
 
 from neo4j import GraphDatabase
 
-from knowledge_gemini import GeminiKnowledgeCaller
+from knowledge_openai import OpenAIKnowledgeCaller
 from knowledge_persistence import complete_consolidated_modules
 from knowledge_relations.event_hierarchy import consolidate_pending_mentions
 from knowledge_settings import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, EVENT_MENTION_LIMIT
 
 MODULES_TO_RERUN = ("EVENT_HIERARCHY",)
-_gemini_caller: GeminiKnowledgeCaller | None = None
+_openai_caller: OpenAIKnowledgeCaller | None = None
 
 EVENT_CONSOLIDATION_TIMEZONE = "Asia/Ho_Chi_Minh"
 # Các posted_at không có timezone trong nguồn được hiểu là UTC.
@@ -60,7 +60,7 @@ def consolidate_recent_posts(session, call_model=None, *, now=None) -> dict:
         return {"total": 0, "consolidation": {}}
     stats = consolidate_pending_mentions(
         session,
-        call_model=call_model if call_model is not None else get_gemini_caller(),
+        call_model=call_model if call_model is not None else get_openai_caller(),
         mention_keys=mention_keys,
         preserve_mention_order=True,
     )
@@ -69,12 +69,12 @@ def consolidate_recent_posts(session, call_model=None, *, now=None) -> dict:
     return {"total": total, "consolidation": stats}
 
 
-def get_gemini_caller() -> GeminiKnowledgeCaller:
-    """Create one Gemini client and reuse it for the whole pipeline."""
-    global _gemini_caller
-    if _gemini_caller is None:
-        _gemini_caller = GeminiKnowledgeCaller()
-    return _gemini_caller
+def get_openai_caller() -> OpenAIKnowledgeCaller:
+    """Create one OpenAI client and reuse it for the whole pipeline."""
+    global _openai_caller
+    if _openai_caller is None:
+        _openai_caller = OpenAIKnowledgeCaller()
+    return _openai_caller
 
 
 def rerun_modules(session, call_model=None, *, modules=None, now=None) -> dict:
@@ -109,14 +109,14 @@ def main() -> None:
     try:
         with driver.session(database="neo4j") as session:
             summary = rerun_modules(session)
-            if _gemini_caller is not None:
-                _gemini_caller.print_cost_summary(
+            if _openai_caller is not None:
+                _openai_caller.print_cost_summary(
                     target_posts=summary["total"],
                     stage_label="chạy lại module",
                 )
     finally:
-        if _gemini_caller is not None:
-            _gemini_caller.close()
+        if _openai_caller is not None:
+            _openai_caller.close()
         driver.close()
 
 

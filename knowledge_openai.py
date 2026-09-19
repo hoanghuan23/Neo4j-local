@@ -10,11 +10,11 @@ from decimal import Decimal
 from typing import Any
 
 from knowledge_settings import (
-    GEMINI_API_KEY,
-    GEMINI_INPUT_PRICE_PER_MILLION,
-    GEMINI_MODEL,
-    GEMINI_OUTPUT_PRICE_PER_MILLION,
-    GEMINI_TIMEOUT_SECONDS,
+    OPENAI_API_KEY,
+    OPENAI_INPUT_PRICE_PER_MILLION,
+    OPENAI_MODEL,
+    OPENAI_OUTPUT_PRICE_PER_MILLION,
+    OPENAI_TIMEOUT_SECONDS,
 )
 from knowledge_tracing import (
     set_langsmith_model,
@@ -24,7 +24,7 @@ from knowledge_tracing import (
 
 
 API_LOGGER = logging.getLogger("knowledge.api")
-_POST_CONTEXT = ContextVar("gemini_post", default="batch")
+_POST_CONTEXT = ContextVar("openai_post", default="batch")
 
 
 def log_post_calls(function):
@@ -67,7 +67,7 @@ TOKENS_PER_MILLION = Decimal("1000000")
 
 
 @dataclass(frozen=True)
-class GeminiUsage:
+class OpenAIUsage:
     requests: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -78,54 +78,46 @@ class GeminiUsage:
         return self.output_tokens + self.thinking_tokens
 
 
-class GeminiKnowledgeCaller:
-    """Structured Gemini caller that accumulates actual API token usage."""
+class OpenAIKnowledgeCaller:
+    """Structured OpenAI caller that accumulates actual API token usage."""
 
     def __init__(
         self,
         *,
-        api_key: str | None = GEMINI_API_KEY,
-        model: str = GEMINI_MODEL,
+        api_key: str | None = OPENAI_API_KEY,
+        model: str = OPENAI_MODEL,
         client: Any = None,
-        types_module: Any = None,
     ) -> None:
         if client is None:
             if not api_key:
-                raise ValueError("Chưa cấu hình GEMINI_API_KEY trong .env")
+                raise ValueError("Chưa cấu hình OPENAI_API_KEY trong .env")
             try:
-                from google import genai
-                from google.genai import types
+                from openai import OpenAI
             except ImportError as error:
                 raise RuntimeError(
-                    "Chưa cài google-genai. Hãy chạy: pip install google-genai"
+                    "Chưa cài openai. Hãy chạy: pip install openai"
                 ) from error
-            client = genai.Client(
+            client = OpenAI(
                 api_key=api_key,
-                http_options=types.HttpOptions(
-                    timeout=int(GEMINI_TIMEOUT_SECONDS * 1_000),
-                ),
+                timeout=OPENAI_TIMEOUT_SECONDS,
             )
-            types_module = types
-        elif types_module is None:
-            raise ValueError("types_module là bắt buộc khi truyền client tùy chỉnh")
 
         self.client = client
         self.model = model
-        self.types = types_module
-        self._usage = GeminiUsage()
+        self._usage = OpenAIUsage()
         self._usage_lock = threading.Lock()
         self._stages = {}
         self._attempts = 0
 
     @trace_llm(
-        name="gemini-knowledge-extraction",
-        provider="google_genai",
-        model=GEMINI_MODEL,
+        name="openai-knowledge-extraction",
+        provider="openai",
+        model=OPENAI_MODEL,
     )
     def __call__(self, prompt: str, output_schema: dict) -> dict:
         stage = _stage_for_schema(output_schema)
         started = time.monotonic()
-        record = {"usage": GeminiUsage()}
+        record = {"usage": OpenAIUsage()}
         with self._usage_lock:
             self._attempts += 1
             request_id = self._attempts
@@ -151,7 +143,7 @@ class GeminiKnowledgeCaller:
                 stats["thinking"] += usage.thinking_tokens
             cost = self._cost(usage.input_tokens, usage.billable_output_tokens)
             API_LOGGER.debug(
-                "Gemini function=%s call=%s stage=%s post=%s status=%s seconds=%.2f "
+                "OpenAI function=%s call=%s stage=%s post=%s status=%s seconds=%.2f "
                 "input=%s output=%s thinking=%s usage_known=%s cost_usd=%.8f",
                 "extract_knowledge" if stage == "extraction" else stage,
                 request_id, stage, _POST_CONTEXT.get(), status, elapsed,
@@ -161,21 +153,22 @@ class GeminiKnowledgeCaller:
 
     @staticmethod
     def _cost(input_tokens, output_tokens):
-        return (Decimal(input_tokens) * Decimal(GEMINI_INPUT_PRICE_PER_MILLION)
-                + Decimal(output_tokens) * Decimal(GEMINI_OUTPUT_PRICE_PER_MILLION)) / TOKENS_PER_MILLION
+        return (Decimal(input_tokens) * Decimal(OPENAI_INPUT_PRICE_PER_MILLION)
+                + Decimal(output_tokens) * Decimal(OPENAI_OUTPUT_PRICE_PER_MILLION)) / TOKENS_PER_MILLION
 
     def _request(self, prompt, output_schema, record):
         set_langsmith_model(self.model)
-        response = self.client.models.generate_content(
+        response = self.client.chat.completions.create(
             model=self.model,
-            contents=prompt,
-            config=self.types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_json_schema=output_schema,
-                automatic_function_calling=(
-                    self.types.AutomaticFunctionCallingConfig(disable=True)
-                ),
-            ),
+            messages=[{"role": "user", "content": prompt}],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "knowledge_response",
+                    "strict": True,
+                    "schema": output_schema,
+                },
+            },
         )
         usage = _usage_from_response(response)
         self._add_usage(usage)
@@ -186,24 +179,26 @@ class GeminiKnowledgeCaller:
             reasoning_tokens=usage.thinking_tokens,
         )
 
-        raw_response = getattr(response, "text", None)
+        raw_response = (
+            response.choices[0].message.content if response.choices else None
+        )
         if not raw_response:
-            raise ValueError("Gemini trả về nội dung rỗng")
+            raise ValueError("OpenAI trả về nội dung rỗng")
         try:
             result = json.loads(raw_response)
         except json.JSONDecodeError as error:
             raise ValueError(
-                "Gemini trả về nội dung không phải JSON hợp lệ"
+                "OpenAI trả về nội dung không phải JSON hợp lệ"
             ) from error
         if not isinstance(result, dict):
-            raise ValueError("Gemini không trả về JSON object theo schema yêu cầu")
+            raise ValueError("OpenAI không trả về JSON object theo schema yêu cầu")
 
         return result
 
-    def _add_usage(self, usage: GeminiUsage) -> None:
+    def _add_usage(self, usage: OpenAIUsage) -> None:
         with self._usage_lock:
             current = self._usage
-            self._usage = GeminiUsage(
+            self._usage = OpenAIUsage(
                 requests=current.requests + 1,
                 input_tokens=current.input_tokens + usage.input_tokens,
                 output_tokens=current.output_tokens + usage.output_tokens,
@@ -213,7 +208,7 @@ class GeminiKnowledgeCaller:
             )
 
     @property
-    def usage(self) -> GeminiUsage:
+    def usage(self) -> OpenAIUsage:
         with self._usage_lock:
             return self._usage
 
@@ -224,8 +219,8 @@ class GeminiKnowledgeCaller:
         stage_label: str | None = None,
     ) -> None:
         usage = self.usage
-        input_price = Decimal(GEMINI_INPUT_PRICE_PER_MILLION)
-        output_price = Decimal(GEMINI_OUTPUT_PRICE_PER_MILLION)
+        input_price = Decimal(OPENAI_INPUT_PRICE_PER_MILLION)
+        output_price = Decimal(OPENAI_OUTPUT_PRICE_PER_MILLION)
         input_cost = (
             Decimal(usage.input_tokens) * input_price / TOKENS_PER_MILLION
         )
@@ -238,7 +233,7 @@ class GeminiKnowledgeCaller:
         print("\n" + "=" * 72)
         label = f" - {stage_label}" if stage_label else ""
         print(
-            f"TỔNG KẾT CHI PHÍ GEMINI{label} "
+            f"TỔNG KẾT CHI PHÍ OPENAI{label} "
             f"CHO {target_posts} POST"
         )
         print(f"Model: {self.model}")
@@ -295,31 +290,33 @@ class GeminiKnowledgeCaller:
             close()
 
 
-def _usage_from_response(response: Any) -> GeminiUsage:
-    metadata = getattr(response, "usage_metadata", None)
+def _usage_from_response(response: Any) -> OpenAIUsage:
+    metadata = getattr(response, "usage", None)
     if metadata is None:
-        raise ValueError("Gemini không trả về usage_metadata")
+        raise ValueError("OpenAI không trả về usage")
 
-    input_tokens = getattr(metadata, "prompt_token_count", None)
-    output_tokens = getattr(metadata, "candidates_token_count", None)
-    if input_tokens is None or output_tokens is None:
+    input_tokens = getattr(metadata, "prompt_tokens", None)
+    completion_tokens = getattr(metadata, "completion_tokens", None)
+    if input_tokens is None or completion_tokens is None:
         raise ValueError(
-            "Gemini usage_metadata thiếu prompt_token_count hoặc "
-            "candidates_token_count"
+            "OpenAI usage thiếu prompt_tokens hoặc completion_tokens"
         )
-    return GeminiUsage(
+    details = getattr(metadata, "completion_tokens_details", None)
+    thinking_tokens = int(
+        getattr(details, "reasoning_tokens", None) or 0
+    )
+    completion_tokens = int(completion_tokens)
+    return OpenAIUsage(
         requests=1,
         input_tokens=int(input_tokens),
-        output_tokens=int(output_tokens),
-        thinking_tokens=int(
-            getattr(metadata, "thoughts_token_count", None) or 0
-        ),
+        output_tokens=max(completion_tokens - thinking_tokens, 0),
+        thinking_tokens=thinking_tokens,
     )
 
 
-def call_gemini(prompt: str, output_schema: dict) -> dict:
-    """Call the configured Gemini model and release the client afterward."""
-    caller = GeminiKnowledgeCaller()
+def call_openai(prompt: str, output_schema: dict) -> dict:
+    """Call the configured OpenAI model and release the client afterward."""
+    caller = OpenAIKnowledgeCaller()
     try:
         return caller(prompt, output_schema)
     finally:

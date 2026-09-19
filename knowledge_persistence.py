@@ -2,7 +2,7 @@ import json
 
 from knowledge_settings import (
     EVENT_RELATION_TYPES,
-    GEMINI_MODEL,
+    OPENAI_MODEL,
     KNOWLEDGE_CLASSIFIER_PROMPT_VERSION,
     KNOWLEDGE_PROMPT_VERSION,
     KNOWLEDGE_ERROR_MAX_CHARS,
@@ -397,7 +397,7 @@ def upsert_events(
             status=event["status"],
             time_expression=event["time_expression"],
             confidence=event["confidence"],
-            knowledge_model=GEMINI_MODEL,
+            knowledge_model=OPENAI_MODEL,
             knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
         ).consume()
 
@@ -715,7 +715,7 @@ def save_knowledge_tx(
         """,
         platform=platform,
         post_id=post_id,
-        knowledge_model=GEMINI_MODEL,
+        knowledge_model=OPENAI_MODEL,
         knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
         classifier_should_deep=(
             classification.get("should_deep_analyze") if classification else None
@@ -805,7 +805,7 @@ def mark_knowledge_failure(tx, platform: str, post_id: str, error: str) -> None:
         """,
         platform=platform,
         post_id=post_id,
-        knowledge_model=GEMINI_MODEL,
+        knowledge_model=OPENAI_MODEL,
         knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
         knowledge_error=error[:KNOWLEDGE_ERROR_MAX_CHARS],
     ).consume()

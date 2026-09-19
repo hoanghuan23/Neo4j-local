@@ -12,7 +12,7 @@ from knowledge_relations.event_hierarchy import (
     effective_match_decision,
     select_candidates,
 )
-from knowledge_gemini import GeminiKnowledgeCaller
+from knowledge_openai import OpenAIKnowledgeCaller
 from knowledge_persistence import create_knowledge_schema
 from knowledge_settings import (
     EVENT_CONSOLIDATION_SCHEMA,
@@ -144,7 +144,7 @@ def migrate_legacy_relations(tx, mention_keys: list[str]) -> None:
         ).consume()
 
 
-def dry_run(rows: list[dict], caller: GeminiKnowledgeCaller) -> dict:
+def dry_run(rows: list[dict], caller: OpenAIKnowledgeCaller) -> dict:
     events = [
         {
             "event_key": row["event_key"],
@@ -234,7 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    caller = GeminiKnowledgeCaller()
+    caller = OpenAIKnowledgeCaller()
     driver = GraphDatabase.driver(
         NEO4J_URI,
         auth=(NEO4J_USER, NEO4J_PASSWORD),

@@ -11,7 +11,7 @@ from knowledge_extraction import (
     normalize_null,
     prepare_entity,
 )
-from knowledge_gemini import GeminiKnowledgeCaller
+from knowledge_openai import OpenAIKnowledgeCaller
 from knowledge_persistence import (
     create_entity_schema,
     create_knowledge_schema,
@@ -44,24 +44,24 @@ from knowledge_validation import (
     validate_knowledge,
 )
 
-_gemini_caller: GeminiKnowledgeCaller | None = None
+_openai_caller: OpenAIKnowledgeCaller | None = None
 
 
-def get_gemini_caller() -> GeminiKnowledgeCaller:
-    """Create one Gemini client and reuse it for the whole pipeline."""
-    global _gemini_caller
-    if _gemini_caller is None:
-        _gemini_caller = GeminiKnowledgeCaller()
-    return _gemini_caller
+def get_openai_caller() -> OpenAIKnowledgeCaller:
+    """Create one OpenAI client and reuse it for the whole pipeline."""
+    global _openai_caller
+    if _openai_caller is None:
+        _openai_caller = OpenAIKnowledgeCaller()
+    return _openai_caller
 
 
-def call_gemini(prompt: str, output_schema: dict) -> dict:
-    return get_gemini_caller()(prompt, output_schema)
+def call_openai(prompt: str, output_schema: dict) -> dict:
+    return get_openai_caller()(prompt, output_schema)
 
 
 def extract_knowledge(content: str) -> dict:
-    """Extract raw knowledge with the configured Gemini model."""
-    return _extraction.extract_knowledge(content, call_model=call_gemini)
+    """Extract raw knowledge with the configured OpenAI model."""
+    return _extraction.extract_knowledge(content, call_model=call_openai)
 
 
 def extract_entities(content: str) -> list[dict]:
@@ -70,9 +70,9 @@ def extract_entities(content: str) -> list[dict]:
 
 
 def process_new_posts(session, call_model=None) -> dict:
-    """Process and consolidate posts entirely with the configured Gemini model."""
+    """Process and consolidate posts entirely with the configured OpenAI model."""
     if call_model is None:
-        call_model = get_gemini_caller()
+        call_model = get_openai_caller()
 
     def consolidate_batch(session, mention_keys=None):
         kwargs = {"call_model": call_model}
@@ -132,14 +132,14 @@ def main() -> None:
     try:
         with driver.session(database="neo4j") as session:
             summary = process_new_posts(session)
-            if _gemini_caller is not None:
-                _gemini_caller.print_cost_summary(
+            if _openai_caller is not None:
+                _openai_caller.print_cost_summary(
                     target_posts=summary["total"],
                     stage_label="toàn bộ pipeline",
                 )
     finally:
-        if _gemini_caller is not None:
-            _gemini_caller.close()
+        if _openai_caller is not None:
+            _openai_caller.close()
         driver.close()
 
 

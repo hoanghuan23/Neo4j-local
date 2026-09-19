@@ -134,8 +134,8 @@ def main():
             if content is None:
                 result = run(session, limit=args.limit, retry=args.retry)
             else:
-                from knowledge_gemini import GeminiKnowledgeCaller
-                caller = GeminiKnowledgeCaller()
+                from knowledge_openai import OpenAIKnowledgeCaller
+                caller = OpenAIKnowledgeCaller()
                 try:
                     result = save_content(session, content, caller)
                 finally:

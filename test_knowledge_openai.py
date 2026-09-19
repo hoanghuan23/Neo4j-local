@@ -4,56 +4,47 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from knowledge_gemini import GeminiKnowledgeCaller
+from knowledge_openai import OpenAIKnowledgeCaller
 
 
-class FakeTypes:
-    @staticmethod
-    def GenerateContentConfig(**kwargs):
-        return kwargs
+def openai_response(text, prompt_tokens, completion_tokens, reasoning_tokens=0):
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+        usage=SimpleNamespace(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            completion_tokens_details=SimpleNamespace(
+                reasoning_tokens=reasoning_tokens,
+            ),
+        ),
+    )
 
-    @staticmethod
-    def AutomaticFunctionCallingConfig(**kwargs):
-        return kwargs
 
-
-class GeminiKnowledgeCallerTests(unittest.TestCase):
+class OpenAIKnowledgeCallerTests(unittest.TestCase):
     def test_accumulates_actual_usage_and_calculates_standard_cost(self):
         client = Mock()
-        client.models.generate_content.side_effect = [
-            SimpleNamespace(
-                text=json.dumps(
-                    {"entities": [], "events": [], "event_relations": []}
-                ),
-                usage_metadata=SimpleNamespace(
-                    prompt_token_count=1_000_000,
-                    candidates_token_count=100_000,
-                    thoughts_token_count=200_000,
-                ),
+        client.chat.completions.create.side_effect = [
+            openai_response(
+                json.dumps({"entities": [], "events": [], "event_relations": []}),
+                1_000_000,
+                300_000,
+                200_000,
             ),
-            SimpleNamespace(
-                text=json.dumps(
-                    {"entities": [], "events": [], "event_relations": []}
-                ),
-                usage_metadata=SimpleNamespace(
-                    prompt_token_count=20,
-                    candidates_token_count=30,
-                    thoughts_token_count=None,
-                ),
+            openai_response(
+                json.dumps({"entities": [], "events": [], "event_relations": []}),
+                20,
+                30,
             ),
         ]
-        caller = GeminiKnowledgeCaller(
-            client=client,
-            types_module=FakeTypes,
-        )
+        caller = OpenAIKnowledgeCaller(client=client)
 
         caller("post one", {})
         caller("post two", {})
 
-        config = client.models.generate_content.call_args.kwargs["config"]
+        config = client.chat.completions.create.call_args.kwargs["response_format"]
         self.assertEqual(
-            config["automatic_function_calling"],
-            {"disable": True},
+            config["type"],
+            "json_schema",
         )
 
         self.assertEqual(caller.usage.requests, 2)
@@ -67,22 +58,19 @@ class GeminiKnowledgeCallerTests(unittest.TestCase):
 
         summary = output.getvalue()
         self.assertIn("Số request có usage thực tế: 2", summary)
-        self.assertIn("Chi phí input (Standard): $0.25000500", summary)
-        self.assertIn("Chi phí output (Standard): $0.45004500", summary)
-        self.assertIn("TỔNG CHI PHÍ (USD, Standard): $0.70005000", summary)
+        self.assertIn("Chi phí input (Standard): $0.20000400", summary)
+        self.assertIn("Chi phí output (Standard): $0.36003600", summary)
+        self.assertIn("TỔNG CHI PHÍ (USD, Standard): $0.56004000", summary)
 
     def test_requires_usage_metadata(self):
         client = Mock()
-        client.models.generate_content.return_value = SimpleNamespace(
-            text="{}",
-            usage_metadata=None,
+        client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))],
+            usage=None,
         )
-        caller = GeminiKnowledgeCaller(
-            client=client,
-            types_module=FakeTypes,
-        )
+        caller = OpenAIKnowledgeCaller(client=client)
 
-        with self.assertRaisesRegex(ValueError, "usage_metadata"):
+        with self.assertRaisesRegex(ValueError, "usage"):
             caller("post", {})
 
 
@@ -94,13 +82,12 @@ def test_stage_logs_and_failed_json_usage(caplog, capsys):
     from knowledge_settings import KNOWLEDGE_SCHEMA, EVENT_TITLE_SCHEMA
     caplog.set_level('INFO', logger='knowledge.api')
     client = Mock()
-    metadata = SimpleNamespace(prompt_token_count=100, candidates_token_count=20, thoughts_token_count=3)
-    client.models.generate_content.side_effect = [
-        SimpleNamespace(text='{}', usage_metadata=metadata),
-        SimpleNamespace(text='not json', usage_metadata=metadata),
+    client.chat.completions.create.side_effect = [
+        openai_response('{}', 100, 23, 3),
+        openai_response('not json', 100, 23, 3),
         RuntimeError('network failure'),
     ]
-    caller = GeminiKnowledgeCaller(client=client, types_module=FakeTypes)
+    caller = OpenAIKnowledgeCaller(client=client)
     caller('private content', KNOWLEDGE_SCHEMA)
     import pytest
     with pytest.raises(ValueError):
@@ -118,7 +105,7 @@ def test_stage_logs_and_failed_json_usage(caplog, capsys):
     assert caller.usage.input_tokens == 200
     assert caller.usage.billable_output_tokens == 46
     assert 'CHI PHÍ RIÊNG extract_knowledge (1 lần gọi API)' in summary
-    assert 'TỔNG CHI PHÍ extract_knowledge: $0.00005950' in summary
+    assert 'TỔNG CHI PHÍ extract_knowledge: $0.00004760' in summary
     assert 'function=extract_knowledge' not in caplog.text
     assert 'stage=title' not in caplog.text
     assert 'private content' not in caplog.text
@@ -128,13 +115,8 @@ def test_summary_totals_only_deep_extraction_calls(capsys):
     from knowledge_settings import KNOWLEDGE_CLASSIFIER_SCHEMA, KNOWLEDGE_SCHEMA
 
     client = Mock()
-    client.models.generate_content.return_value = SimpleNamespace(
-        text='{}',
-        usage_metadata=SimpleNamespace(
-            prompt_token_count=100, candidates_token_count=20, thoughts_token_count=3,
-        ),
-    )
-    caller = GeminiKnowledgeCaller(client=client, types_module=FakeTypes)
+    client.chat.completions.create.return_value = openai_response('{}', 100, 23, 3)
+    caller = OpenAIKnowledgeCaller(client=client)
     for index in range(100):
         caller('classify', KNOWLEDGE_CLASSIFIER_SCHEMA)
         if index < 80:
@@ -143,16 +125,16 @@ def test_summary_totals_only_deep_extraction_calls(capsys):
     caller.print_cost_summary(target_posts=100)
     summary = capsys.readouterr().out
     assert 'CHI PHÍ RIÊNG extract_knowledge (80 lần gọi API)' in summary
-    assert 'Chi phí input extract_knowledge: $0.00200000' in summary
-    assert 'Chi phí output extract_knowledge: $0.00276000' in summary
-    assert 'TỔNG CHI PHÍ extract_knowledge: $0.00476000' in summary
-    assert 'TỔNG CHI PHÍ (USD, Standard): $0.01071000' in summary
+    assert 'Chi phí input extract_knowledge: $0.00160000' in summary
+    assert 'Chi phí output extract_knowledge: $0.00220800' in summary
+    assert 'TỔNG CHI PHÍ extract_knowledge: $0.00380800' in summary
+    assert 'TỔNG CHI PHÍ (USD, Standard): $0.00856800' in summary
 
 
 def test_post_context_is_thread_local_and_resets():
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
-    from knowledge_gemini import log_post_calls, _POST_CONTEXT
+    from knowledge_openai import log_post_calls, _POST_CONTEXT
     barrier = Barrier(2)
 
     @log_post_calls
