@@ -42,8 +42,6 @@ def _stage_for_schema(schema):
         ("KNOWLEDGE_CLASSIFIER_SCHEMA", "classifier"),
         ("KNOWLEDGE_SCHEMA", "extraction"),
         ("EVENT_TITLE_SCHEMA", "title"),
-        ("PARTICIPANT_ROLE_SCHEMA", "participant_role"),
-        ("PARTICIPANT_EXTRACTION_SCHEMA", "participant_extraction"),
         ("EVENT_RELATION_SCHEMA", "event_relation"),
         ("LOCATION_HIERARCHY_SCHEMA", "location_hierarchy"),
         ("EVENT_CONSOLIDATION_SCHEMA", "consolidation_match"),
@@ -234,8 +232,6 @@ class GeminiKnowledgeCaller:
         ))
         additional_names = {
             "title": "tạo tiêu đề sự kiện (title)",
-            "participant_role": "vai trò tham gia (participant_role)",
-            "participant_extraction": "trích xuất bên tham gia (participant_extraction)",
             "event_relation": "quan hệ sự kiện (event_relation)",
             "location_hierarchy": "phân cấp địa điểm (location_hierarchy)",
             "organization_hierarchy": "phân cấp tổ chức (organization_hierarchy)",

@@ -778,10 +778,7 @@ def complete_consolidated_modules(tx, mention_keys):
 
 def save_module_knowledge_tx(tx, platform, post_id, knowledge, module):
     """Persist module output separately from the committed base result."""
-    if module == "PARTICIPANT_ROLE":
-        lookup = upsert_entities(tx, platform, post_id, knowledge["entities"], knowledge.get("organization_context", []))
-        upsert_events(tx, platform, post_id, knowledge["events"], lookup)
-    elif module == "EVENT_RELATION":
+    if module == "EVENT_RELATION":
         upsert_event_relations(tx, knowledge["events"], knowledge["event_relations"])
     mark_module_completed(tx, platform, post_id, module)
 

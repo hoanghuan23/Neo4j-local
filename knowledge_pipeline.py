@@ -13,7 +13,6 @@ from knowledge_settings import (
     POST_LIMIT,
 )
 from knowledge_extraction import classify_knowledge_potential, extract_knowledge
-from knowledge_relations.participant_role import extract_participants
 from knowledge_relations.event_relation import extract_event_relations
 from knowledge_relations.entity_hierarchy.location_hierarchy import enrich_location_hierarchy
 from knowledge_relations.entity_hierarchy.organization_hierarchy import extract_context, enrich_organization_hierarchy
@@ -38,7 +37,6 @@ def _extract_post(
     platform: str,
     post_id: str,
     content: str,
-    extract_participants_fn=extract_participants,
     extract_event_relations_fn=extract_event_relations,
 ) -> dict:
     if not KNOWLEDGE_PIPELINE_ENABLED:
@@ -124,7 +122,6 @@ def process_new_posts(
     session,
     extract_knowledge_fn=extract_knowledge,
     classify_post_fn=classify_knowledge_potential,
-    extract_participants_fn=extract_participants,
     extract_event_relations_fn=extract_event_relations,
     enrich_locations_fn=enrich_location_hierarchy,
     consolidate_fn=None,
@@ -153,7 +150,6 @@ def process_new_posts(
                 post["platform"],
                 post["post_id"],
                 post["content"],
-                extract_participants_fn,
                 extract_event_relations_fn,
             ): (index, post)
             for index, post in enumerate(posts, start=1)
@@ -183,7 +179,6 @@ def process_new_posts(
                 mention_keys_out=batch_mention_keys,
                 enrich_locations_fn=enrich_locations_fn,
                 location_summary=summary["location_hierarchy"],
-                extract_participants_fn=extract_participants_fn,
                 extract_event_relations_fn=extract_event_relations_fn,
                 enrich_organizations_fn=enrich_organizations_fn,
                 organization_context_fn=organization_context_fn,
@@ -253,7 +248,6 @@ def _save_extracted_post(
     mention_keys_out: list[str] | None = None,
     enrich_locations_fn=enrich_location_hierarchy,
     location_summary: dict | None = None,
-    extract_participants_fn=extract_participants,
     extract_event_relations_fn=extract_event_relations,
     enrich_organizations_fn=enrich_organization_hierarchy,
     organization_context_fn=extract_context,
@@ -301,7 +295,6 @@ def _save_extracted_post(
             analyzed_counts["locations"].update(node_ids.get("LOCATION", []))
             analyzed_counts["events"] += counts["events"]
         for module, extract_fn in (
-            ("PARTICIPANT_ROLE", extract_participants_fn),
             ("EVENT_RELATION", extract_event_relations_fn),
         ):
             if module not in runnable_modules:
@@ -390,7 +383,6 @@ def runnable_modules_for(knowledge: dict) -> set[str]:
     inputs = {
         "ENTITY_HIERARCHY": any(e.get("type") in {"LOCATION", "ORGANIZATION"}
                                 for e in knowledge.get("entities", [])),
-        "PARTICIPANT_ROLE": bool(events),
         "EVENT_HIERARCHY": bool(events),
         "EVENT_RELATION": len(events) >= 2,
     }

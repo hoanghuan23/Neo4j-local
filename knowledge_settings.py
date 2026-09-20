@@ -114,7 +114,6 @@ EVENT_RELATION_TYPES = {
     "RELATED_TO",
 }
 RELATION_GROUPS = {
-    "PARTICIPANT_ROLE",
     "ENTITY_HIERARCHY",
     "TEMPORAL_RELATION",
     "EVENT_HIERARCHY",
@@ -125,7 +124,6 @@ RELATION_GROUPS = {
 # Modules execute when enabled and validated input is available.
 KNOWLEDGE_MODULES = {
     "ENTITY_HIERARCHY": True,
-    "PARTICIPANT_ROLE": False,
     "EVENT_RELATION": False,
     "EVENT_HIERARCHY": False,
     "TEMPORAL_RELATION": False,
@@ -133,7 +131,7 @@ KNOWLEDGE_MODULES = {
     "STANCE_PERSPECTIVE": False,
 }
 IMPLEMENTED_KNOWLEDGE_MODULES = {
-    "ENTITY_HIERARCHY", "PARTICIPANT_ROLE", "EVENT_RELATION", "EVENT_HIERARCHY",
+    "ENTITY_HIERARCHY", "EVENT_RELATION", "EVENT_HIERARCHY",
 }
 
 
@@ -145,7 +143,6 @@ def validate_module_config():
             raise ValueError(f"Module chưa được triển khai: {name}")
 
 
-CONCRETE_EVENT_ROLES = EVENT_ROLES - {"PARTICIPANT"}
 CONFIDENCE_LEVELS = {"HIGH", "MEDIUM", "LOW"}
 MAX_EVENTS_PER_POST = 5
 
@@ -201,26 +198,6 @@ PARTICIPANT_ITEM_SCHEMA = _strict_object(
         "role",
         "confidence",
     ],
-)
-
-PARTICIPANT_ROLE_ASSIGNMENT_SCHEMA = _strict_object(
-    {
-        "event_id": {"type": "string"},
-        "participant_index": {"type": "integer", "minimum": 0},
-        "role": {"type": "string", "enum": sorted(CONCRETE_EVENT_ROLES)},
-        "evidence_text": {"type": "string"},
-    },
-    ["event_id", "participant_index", "role", "evidence_text"],
-)
-
-PARTICIPANT_ROLE_SCHEMA = _strict_object(
-    {
-        "assignments": {
-            "type": "array",
-            "items": PARTICIPANT_ROLE_ASSIGNMENT_SCHEMA,
-        }
-    },
-    ["assignments"],
 )
 
 LOCATION_HIERARCHY_RELATION_SCHEMA = _strict_object(
@@ -285,21 +262,6 @@ KNOWLEDGE_SCHEMA = _strict_object(
     ["entities", "events"],
 )
 
-PARTICIPANT_EXTRACTION_SCHEMA = _strict_object(
-    {
-        "events": {
-            "type": "array",
-            "items": _strict_object(
-                {
-                    "event_id": {"type": "string"},
-                    "participants": {"type": "array", "items": PARTICIPANT_ITEM_SCHEMA},
-                },
-                ["event_id", "participants"],
-            ),
-        },
-    },
-    ["events"],
-)
 EVENT_RELATION_SCHEMA = _strict_object(
     {"event_relations": {"type": "array", "items": EVENT_RELATION_ITEM_SCHEMA}},
     ["event_relations"],
