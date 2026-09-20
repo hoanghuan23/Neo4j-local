@@ -174,6 +174,33 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(event_properties["confidence"]["maximum"], 1)
         self.assertEqual(properties["events"]["maxItems"], 5)
 
+    def test_extraction_prompt_rejects_vague_occurrence_times(self):
+        call_model = Mock(return_value={"entities": [], "events": []})
+
+        subject._extraction.extract_knowledge(
+            "Trong những ngày qua, công an tiếp tục điều tra vụ việc.",
+            call_model=call_model,
+        )
+
+        prompt, schema = call_model.call_args.args
+        self.assertIn("TIME_EXPRESSION", prompt)
+        for expression in (
+            "trong những ngày qua",
+            "sau 30 năm",
+            "trước trận đấu tới",
+            "trong ngày đấu",
+            "trước giờ G lên thành phố",
+            "gần đây",
+            "vào tuần tới",
+        ):
+            self.assertIn(f"“{expression}”", prompt)
+        self.assertIn("time_expression=null", prompt)
+        self.assertNotIn(
+            "description",
+            schema["properties"]["events"]["items"]
+            ["properties"]["time_expression"],
+        )
+
     def test_knowledge_schema_is_strict_and_uses_bounded_enums(self):
         schema = subject.KNOWLEDGE_SCHEMA
         event = schema["properties"]["events"]["items"]
@@ -1104,9 +1131,7 @@ class PersistenceTests(unittest.TestCase):
 
         subject.create_knowledge_schema(session)
 
-        self.assertEqual(session.run.call_count, 10)
-        queries = "\n".join(call.args[0] for call in session.run.call_args_list)
-        self.assertIn("event_mention_occurrence_date", queries)
+        self.assertEqual(session.run.call_count, 9)
         queries = "\n".join(call.args[0] for call in session.run.call_args_list)
         self.assertIn("entity_identity_unique", queries)
         self.assertIn("event_key_unique", queries)
@@ -1216,8 +1241,6 @@ class PersistenceTests(unittest.TestCase):
         )
         self.assertIn("mention.extracted_type = $extracted_type", event_call.args[0])
         self.assertEqual(event_call.kwargs["extracted_type"], "ASSAULT")
-        self.assertIn("mention.occurrence_date = $occurrence_date", event_call.args[0])
-        self.assertIn("occurrence_date_source", event_call.kwargs)
 
     def test_upsert_global_role_uses_shared_scope_and_safe_cleanup(self):
         tx = Mock()

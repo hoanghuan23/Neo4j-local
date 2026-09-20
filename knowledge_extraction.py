@@ -334,6 +334,10 @@ def extract_knowledge(content: str, call_model=None) -> dict:
     Gặp/họp: MEETING; thăm/ghé thăm/tham quan: VISIT; ASSAULT chỉ là bạo lực thực tế. Chết đuối: DROWNING, không thêm DEATH cùng occurrence. Trận đấu/diễn biến/kết quả thi đấu: SPORTS_EVENT. RESIGNATION/TRANSFER phải được nói trực tiếp. OTHER chỉ cho occurrence hợp lệ không có type cụ thể hơn.
     Status: PLANNED đã lên lịch chưa xảy ra; ONGOING đang diễn ra; COMPLETED đã xảy ra/kết thúc; ALLEGED cáo buộc/chưa xác thực; REPORTED được báo cáo nhưng chưa rõ trạng thái mạnh hơn; UNKNOWN không đủ thông tin.
 
+    TIME_EXPRESSION
+    `time_expression` chỉ là thời gian xảy ra của chính occurrence và phải có thể quy về một ngày cụ thể từ ngày đăng bài: ngày/tháng[/năm] nêu rõ, hoặc mốc tương đối có độ lệch ngày xác định như “hôm nay”, “hôm qua”, “hôm kia”, “ngày mai”, “N ngày trước”. Giữ nguyên cụm thời gian ngắn nhất đủ nghĩa; nếu có cả mô tả chung và ngày cụ thể thì chỉ lấy phần ngày cụ thể.
+    Trả `time_expression=null` khi không có mốc đạt điều kiện. Không lấy khoảng hoặc mốc mơ hồ/không xác định được một ngày; thời lượng đã trôi qua; thời gian của bối cảnh, cập nhật, điều tra, hành trình hay một sự kiện khác. Các cụm phải bỏ như: “trong những ngày qua”, “sau 30 năm”, “trước trận đấu tới”, “trong ngày đấu”, “trước giờ G lên thành phố”, “gần đây”, “vào tuần tới” và các cách nói tương đương. Không dùng ngày đăng bài làm `time_expression` và không suy ra thời gian xảy ra chỉ vì bài đang tường thuật/cập nhật sự kiện.
+
     <content>
     {content}
     </content>

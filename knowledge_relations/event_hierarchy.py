@@ -204,17 +204,6 @@ def comparison_profile(item: dict) -> dict:
         actors = [p for p in participants if p["role"] == "SUBJECT"]
     targets = [p for p in participants if p["role"] in _TARGET_ROLES]
     locations = [p for p in participants if p["role"] == "LOCATION"]
-    normalized_dates = item.get("occurrence_dates")
-    if normalized_dates is None:
-        normalized_dates = [item.get("occurrence_date")]
-    if item.get("occurrence_date_source") in {"POSTED_AT_FALLBACK", "UNKNOWN"}:
-        # Ignore legacy fallback properties until the cleanup backfill removes them.
-        normalized_dates = []
-    normalized_dates = {
-        value.isoformat() if isinstance(value, date) else str(value)[:10]
-        for value in normalized_dates
-        if value
-    }
     occurrence_times = item.get("occurrence_times")
     if occurrence_times is None:
         occurrence_times = [item.get("time_expression")]
@@ -223,10 +212,9 @@ def comparison_profile(item: dict) -> dict:
         or item.get("first_seen_at")
         or item.get("last_seen_at")
     )
-    parsed_dates, has_unparsed_time = _date_values(occurrence_times, reference_date)
-    occurrence_dates = normalized_dates or parsed_dates
-    if normalized_dates:
-        has_unparsed_time = False
+    occurrence_dates, has_unparsed_time = _date_values(
+        occurrence_times, reference_date
+    )
     return {
         "action_family": action_family(text),
         "actors": actors,
@@ -361,8 +349,6 @@ def _load_pending_mentions(
                    mention.evidence_text AS evidence_text,
                    mention.status AS status,
                    mention.time_expression AS time_expression,
-                   mention.occurrence_date AS occurrence_date,
-                   mention.occurrence_date_source AS occurrence_date_source,
                    post.posted_at AS posted_at,
                    event.event_key AS current_event_key,
                    event.created_at AS current_event_created_at,
@@ -384,14 +370,9 @@ def _load_canonical_events(session) -> list[dict]:
             OPTIONAL MATCH (mention:EventMention)-[:EVIDENCE_FOR]->(event)
             WITH event,
                  collect(DISTINCT mention.description) AS descriptions,
-                 collect(DISTINCT mention.time_expression) AS occurrence_times,
-                 collect(DISTINCT CASE
-                     WHEN mention.occurrence_date_source IN ['EXPLICIT', 'RELATIVE']
-                     THEN mention.occurrence_date
-                     ELSE null
-                 END) AS occurrence_dates
+                 collect(DISTINCT mention.time_expression) AS occurrence_times
             OPTIONAL MATCH (event)-[participation:HAS_PARTICIPANT]->(participant)
-            WITH event, descriptions, occurrence_times, occurrence_dates,
+            WITH event, descriptions, occurrence_times,
                  collect(DISTINCT CASE WHEN participant IS NULL THEN null ELSE {
                      name: coalesce(participant.normalized_name,
                                     participant.normalized_text,
@@ -408,7 +389,6 @@ def _load_canonical_events(session) -> list[dict]:
                    event.created_at AS created_at,
                    descriptions,
                    occurrence_times,
-                   occurrence_dates,
                    participants
             """
         )
