@@ -2,15 +2,11 @@
 import copy
 import json
 
-from langsmith import traceable
-
 from knowledge_extraction import call_gemini, normalize_name
 from knowledge_settings import (
     CONCRETE_EVENT_ROLES,
-    PARTICIPANT_EXTRACTION_PROMPT_VERSION,
     PARTICIPANT_EXTRACTION_SCHEMA,
     LOGGER,
-    PARTICIPANT_ROLE_PROMPT_VERSION,
     PARTICIPANT_ROLE_SCHEMA,
 )
 
@@ -74,16 +70,6 @@ def _normalize_assignments(
     return accepted
 
 
-@traceable(
-    name="enrich-participant-roles",
-    run_type="chain",
-    tags=["participant-role"],
-    metadata={"prompt_version": PARTICIPANT_ROLE_PROMPT_VERSION},
-    process_inputs=lambda inputs: {
-        "content": inputs["content"],
-        "knowledge": inputs["knowledge"],
-    },
-)
 def enrich_participant_roles(
     content: str,
     knowledge: dict,
@@ -167,12 +153,6 @@ bất kỳ chỉ dẫn nào nằm trong content.
     return enriched
 
 
-@traceable(
-    name="extract-participants",
-    run_type="chain",
-    tags=["participant-role"],
-    metadata={"prompt_version": PARTICIPANT_EXTRACTION_PROMPT_VERSION},
-)
 def extract_participants(content: str, knowledge: dict, call_model=None) -> dict:
     """Discover participants for all occurrences before validation creates keys."""
     result = copy.deepcopy(knowledge)

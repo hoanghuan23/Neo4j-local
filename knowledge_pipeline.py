@@ -3,8 +3,6 @@ from knowledge_gemini import log_post_calls
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from langsmith import traceable
-
 from knowledge_settings import (
     KNOWLEDGE_MAX_RETRIES,
     KNOWLEDGE_MODULES,
@@ -32,16 +30,6 @@ from knowledge_persistence import (
 from knowledge_validation import validate_knowledge
 
 
-@traceable(
-    name="process-knowledge-post",
-    run_type="chain",
-    tags=["knowledge-pipeline"],
-    process_inputs=lambda inputs: {
-        "platform": inputs["platform"],
-        "post_id": inputs["post_id"],
-        "content": inputs["content"],
-    },
-)
 @log_post_calls
 def _extract_post(
     classify_post_fn,

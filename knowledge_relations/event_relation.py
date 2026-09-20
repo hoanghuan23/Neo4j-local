@@ -2,18 +2,10 @@
 import copy
 import json
 
-from langsmith import traceable
-
 from knowledge_gemini import call_gemini
-from knowledge_settings import EVENT_RELATION_PROMPT_VERSION, EVENT_RELATION_SCHEMA
+from knowledge_settings import EVENT_RELATION_SCHEMA
 
 
-@traceable(
-    name="extract-event-relations",
-    run_type="chain",
-    tags=["event-relation"],
-    metadata={"prompt_version": EVENT_RELATION_PROMPT_VERSION},
-)
 def extract_event_relations(content: str, knowledge: dict, call_model=None) -> dict:
     """Attach raw relations; final validation checks evidence and remaps IDs."""
     result = copy.deepcopy(knowledge)

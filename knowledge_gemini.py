@@ -16,13 +16,6 @@ from knowledge_settings import (
     GEMINI_OUTPUT_PRICE_PER_MILLION,
     GEMINI_TIMEOUT_SECONDS,
 )
-from knowledge_tracing import (
-    set_langsmith_model,
-    set_langsmith_usage,
-    trace_llm,
-)
-
-
 API_LOGGER = logging.getLogger("knowledge.api")
 _POST_CONTEXT = ContextVar("gemini_post", default="batch")
 
@@ -117,11 +110,6 @@ class GeminiKnowledgeCaller:
         self._stages = {}
         self._attempts = 0
 
-    @trace_llm(
-        name="gemini-knowledge-extraction",
-        provider="google_genai",
-        model=GEMINI_MODEL,
-    )
     def __call__(self, prompt: str, output_schema: dict) -> dict:
         stage = _stage_for_schema(output_schema)
         started = time.monotonic()
@@ -165,7 +153,6 @@ class GeminiKnowledgeCaller:
                 + Decimal(output_tokens) * Decimal(GEMINI_OUTPUT_PRICE_PER_MILLION)) / TOKENS_PER_MILLION
 
     def _request(self, prompt, output_schema, record):
-        set_langsmith_model(self.model)
         response = self.client.models.generate_content(
             model=self.model,
             contents=prompt,
@@ -180,12 +167,6 @@ class GeminiKnowledgeCaller:
         usage = _usage_from_response(response)
         self._add_usage(usage)
         record["usage"] = usage
-        set_langsmith_usage(
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
-            reasoning_tokens=usage.thinking_tokens,
-        )
-
         raw_response = getattr(response, "text", None)
         if not raw_response:
             raise ValueError("Gemini trả về nội dung rỗng")
