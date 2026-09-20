@@ -1,5 +1,6 @@
 import json
 
+from event_time import normalize_occurrence_date
 from knowledge_settings import (
     EVENT_RELATION_TYPES,
     GEMINI_MODEL,
@@ -306,11 +307,25 @@ def upsert_events(
     entity_lookup: dict,
     replace_participants: bool = True,
 ) -> None:
+    post_record = tx.run(
+        """
+        MATCH (p:Post {platform: $platform, platform_id: $post_id})
+        RETURN p.posted_at AS posted_at
+        """,
+        platform=platform,
+        post_id=post_id,
+    ).single()
+    posted_at = post_record.get("posted_at") if post_record else None
     mention_keys = [event.get("mention_key", event["event_key"]) for event in events]
     _delete_stale_events(tx, platform, post_id, mention_keys)
     post_key = f"{platform}:{post_id}"
 
     for event in events:
+        normalized_time = normalize_occurrence_date(
+            event.get("time_expression"),
+            posted_at,
+            evidence_text=event.get("evidence_text"),
+        )
         mention_key = event.get("mention_key", event["event_key"])
         tx.run(
             """
@@ -326,6 +341,10 @@ def upsert_events(
                   OR coalesce(mention.status, '') <> $status
                   OR coalesce(mention.time_expression, '')
                      <> coalesce($time_expression, '')
+                  OR coalesce(toString(mention.occurrence_date), '')
+                     <> coalesce(toString($occurrence_date), '')
+                  OR coalesce(mention.occurrence_date_source, '')
+                     <> coalesce($occurrence_date_source, '')
                 THEN 'PENDING'
                 ELSE mention.consolidation_status
             END
@@ -337,6 +356,8 @@ def upsert_events(
                 mention.evidence_text = $evidence_text,
                 mention.status = $status,
                 mention.time_expression = $time_expression,
+                mention.occurrence_date = $occurrence_date,
+                mention.occurrence_date_source = $occurrence_date_source,
                 mention.confidence = $confidence,
                 mention.platform = $platform,
                 mention.post_id = $post_id,
@@ -396,6 +417,8 @@ def upsert_events(
             evidence_text=event["evidence_text"],
             status=event["status"],
             time_expression=event["time_expression"],
+            occurrence_date=normalized_time["occurrence_date"],
+            occurrence_date_source=normalized_time["occurrence_date_source"],
             confidence=event["confidence"],
             knowledge_model=GEMINI_MODEL,
             knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
@@ -852,6 +875,10 @@ def create_knowledge_schema(session) -> None:
     session.run("""
         CREATE INDEX event_mention_consolidation_status IF NOT EXISTS
         FOR (mention:EventMention) ON (mention.consolidation_status)
+    """).consume()
+    session.run("""
+        CREATE INDEX event_mention_occurrence_date IF NOT EXISTS
+        FOR (mention:EventMention) ON (mention.occurrence_date)
     """).consume()
     session.run("""
         CREATE INDEX entity_osm_identity IF NOT EXISTS

@@ -79,7 +79,7 @@ def test_pipeline_calls_real_persistence_signature_for_skipped():
 
 
 def test_enabled_participant_runs_after_base_and_preserves_keys():
-    from test_event_extraction_modules import base, CONTENT, participant
+    from tests.test_event_extraction_modules import base, CONTENT, participant
     from knowledge_validation import validate_knowledge
     knowledge = validate_knowledge(CONTENT, base(), 'test', '1')
     future = Future()

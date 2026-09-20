@@ -148,7 +148,7 @@ def test_preview_does_not_write_and_reports_conflict():
 def test_retry_uses_saved_input_and_restores_resolution_before_enrichment():
     import json
     from unittest.mock import Mock, patch
-    from preview_organization_content import run
+    from scripts.preview_organization_content import run
     knowledge = {'entities': [{'local_id': 'a', 'name': 'A', 'type': 'ORGANIZATION'}], 'events': []}
     session = Mock()
     session.run.return_value = [{'platform': 'x', 'post_id': 'y', 'content': 'A', 'snapshot': json.dumps(knowledge)}]
@@ -156,7 +156,7 @@ def test_retry_uses_saved_input_and_restores_resolution_before_enrichment():
     session.execute_write.side_effect = lambda fn, *args: fn(tx, *args)
     with patch('knowledge_persistence.upsert_entities', return_value={'a': {}}) as resolve, \
          patch('knowledge_persistence.upsert_events') as events, \
-         patch('preview_organization_content.enrich_organization_hierarchy', return_value={'reviews': []}) as enrich:
+         patch('scripts.preview_organization_content.enrich_organization_hierarchy', return_value={'reviews': []}) as enrich:
         result = run(session, retry=True)
     resolve.assert_called_once()
     events.assert_called_once()

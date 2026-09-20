@@ -53,11 +53,20 @@ Importer lấy địa chỉ từ `NEO4J_URI` trong `.env`.
 
 ## Chạy phân tích trên database mới
 
-`extract_entities.py` cũng mặc định kết nối tới `bolt://localhost:7688`:
+Script `scripts/extract_entities.py` cũng mặc định kết nối tới `bolt://localhost:7688`:
 
 ```bash
-python3 extract_entities.py
+python -m scripts.extract_entities
 ```
 
-`extract_entities.py` và `rerun_modules.py` cùng lấy địa chỉ từ `NEO4J_URI`
+`scripts/extract_entities.py` và `scripts/rerun_modules.py` cùng lấy địa chỉ từ `NEO4J_URI`
 trong `.env`.
+
+## Cấu trúc thư mục
+
+- `backend/`: API và truy vấn Neo4j phục vụ tìm kiếm/chat.
+- `knowledge_relations/`: logic quan hệ, phân cấp entity và hợp nhất event.
+- `import_database/`: các chương trình nhập dữ liệu nguồn.
+- `scripts/`: các entrypoint vận hành, backfill, migration và preview. Chạy từ thư mục gốc bằng `python -m scripts.<tên_script>`.
+- `tests/`: toàn bộ automated test; chạy bằng `python -m pytest`.
+- `docs/`: tài liệu thiết kế và kế hoạch kỹ thuật.

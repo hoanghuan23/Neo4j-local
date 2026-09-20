@@ -1,6 +1,6 @@
 from unittest.mock import Mock
 
-from backfill_event_titles import backfill_event_titles
+from scripts.backfill_event_titles import backfill_event_titles
 from event_titles import (
     generate_event_title,
     is_valid_event_title,

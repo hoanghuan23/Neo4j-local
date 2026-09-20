@@ -8,7 +8,7 @@ from backend.config import Settings
 from backend.neo4j_repository import Neo4jRepository
 from backend.pagination import decode_event_cursor
 from backend.question_parser import RuleBasedQuestionParser
-from test_backend import pagination_event
+from tests.test_backend import pagination_event
 
 
 @pytest.mark.parametrize('question', [

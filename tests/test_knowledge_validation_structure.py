@@ -4,7 +4,7 @@ import pytest
 
 from knowledge_extraction import extract_knowledge
 from knowledge_validation import validate_knowledge
-from test_extract_entities import KnowledgeValidationTests as _Fixtures
+from tests.test_extract_entities import KnowledgeValidationTests as _Fixtures
 
 entity = _Fixtures.entity
 event = _Fixtures.event

@@ -10,7 +10,7 @@ from knowledge_relations.participant_role import extract_participants
 from knowledge_relations.event_relation import extract_event_relations
 from knowledge_settings import EVENT_RELATION_TYPES
 from knowledge_validation import validate_knowledge
-from test_knowledge_validation_structure import entity, event, participant
+from tests.test_knowledge_validation_structure import entity, event, participant
 
 
 CONTENT = 'Alice performed the first occurrence. This caused the second occurrence.'
@@ -185,7 +185,7 @@ def test_legacy_consolidation_imports_point_to_new_implementation():
 
 
 def test_entrypoint_passes_shared_model_to_both_modules():
-    import extract_entities as entrypoint
+    from scripts import extract_entities as entrypoint
     model = Mock()
     with patch.object(entrypoint, '_process_new_posts', return_value={}) as process, \
          patch.object(entrypoint, 'extract_participants') as participants, \

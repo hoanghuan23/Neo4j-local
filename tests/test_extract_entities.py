@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
-import extract_entities as subject
+from scripts import extract_entities as subject
 
 
 class NormalizationTests(unittest.TestCase):
@@ -1104,7 +1104,9 @@ class PersistenceTests(unittest.TestCase):
 
         subject.create_knowledge_schema(session)
 
-        self.assertEqual(session.run.call_count, 9)
+        self.assertEqual(session.run.call_count, 10)
+        queries = "\n".join(call.args[0] for call in session.run.call_args_list)
+        self.assertIn("event_mention_occurrence_date", queries)
         queries = "\n".join(call.args[0] for call in session.run.call_args_list)
         self.assertIn("entity_identity_unique", queries)
         self.assertIn("event_key_unique", queries)
@@ -1214,6 +1216,8 @@ class PersistenceTests(unittest.TestCase):
         )
         self.assertIn("mention.extracted_type = $extracted_type", event_call.args[0])
         self.assertEqual(event_call.kwargs["extracted_type"], "ASSAULT")
+        self.assertIn("mention.occurrence_date = $occurrence_date", event_call.args[0])
+        self.assertIn("occurrence_date_source", event_call.kwargs)
 
     def test_upsert_global_role_uses_shared_scope_and_safe_cleanup(self):
         tx = Mock()

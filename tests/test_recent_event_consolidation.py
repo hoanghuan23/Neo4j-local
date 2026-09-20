@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 from neo4j import GraphDatabase
 
-import rerun_modules as subject
+from scripts import rerun_modules as subject
 from knowledge_relations import event_hierarchy
 
 

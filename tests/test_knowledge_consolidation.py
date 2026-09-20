@@ -22,7 +22,7 @@ from knowledge_relations.event_hierarchy import (
     consolidate_pending_mentions,
 )
 from knowledge_settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
-from migrate_event_mentions import dry_run, migrate_legacy_row
+from scripts.migrate_event_mentions import dry_run, migrate_legacy_row
 
 
 class EventConsolidationTests(unittest.TestCase):
@@ -353,6 +353,25 @@ class EventConsolidationTests(unittest.TestCase):
         self.assertFalse(left["has_unparsed_time"])
         self.assertFalse(right["has_unparsed_time"])
         self.assertEqual(guard["status"], "PASS")
+
+    def test_normalized_occurrence_date_is_used_as_event_evidence(self):
+        profile = comparison_profile({
+            "description": "Sự kiện tại thành phố B",
+            "occurrence_date": date(2026, 9, 17),
+            "occurrence_date_source": "RELATIVE",
+        })
+
+        self.assertEqual(profile["occurrence_dates"], ["2026-09-17"])
+        self.assertFalse(profile["has_unparsed_time"])
+
+    def test_legacy_posted_at_fallback_is_not_occurrence_evidence(self):
+        profile = comparison_profile({
+            "description": "Sự kiện tại thành phố B",
+            "occurrence_date": date(2026, 9, 18),
+            "occurrence_date_source": "POSTED_AT_FALLBACK",
+        })
+
+        self.assertEqual(profile["occurrence_dates"], [])
 
     def test_ambiguous_participants_and_partial_time_require_review(self):
         mention = self.mention("Một quan chức dự khán chung kết ngày 25/8")
