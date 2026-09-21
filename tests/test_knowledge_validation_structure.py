@@ -95,3 +95,53 @@ def test_structured_placeholders_are_not_stringified():
     assert result['entities'] == []
     assert len(result['events']) == 1
     assert result['events'][0]['participants'] == []
+
+
+def test_distinctive_facts_are_cleaned_deduplicated_and_signed():
+    raw_event = event('ev1', 'OTHER', 'Một tân sinh viên tử vong do nước cuốn')
+    raw_event['distinctive_facts'] = [
+        ' tân sinh viên ', 'TÂN SINH VIÊN', None,
+        'Trường Đại học Mỏ - Địa chất', {},
+    ]
+    result = validate_knowledge(
+        'Một tân sinh viên tử vong do nước cuốn',
+        {'events': [raw_event]},
+        'test', 'post-1',
+    )
+
+    assert result['events'][0]['distinctive_facts'] == [
+        'tân sinh viên', 'Trường Đại học Mỏ - Địa chất',
+    ]
+
+
+def test_extraction_contract_requests_and_keeps_distinctive_facts():
+    content = (
+        'Một tân sinh viên Trường ĐH Mỏ - Địa chất tử vong '
+        'sau khi bị nước cuốn'
+    )
+    captured = {}
+
+    def model(prompt, schema):
+        captured['prompt'] = prompt
+        captured['schema'] = schema
+        return {'entities': [], 'events': [{
+            'local_id': 'ev1',
+            'type': 'DROWNING',
+            'title': 'Tân sinh viên Trường Đại học Mỏ - Địa chất tử vong do nước cuốn',
+            'description': content,
+            'evidence_text': content,
+            'status': 'COMPLETED',
+            'time_expression': None,
+            'distinctive_facts': [
+                'tân sinh viên', 'Trường Đại học Mỏ - Địa chất',
+                'bị nước cuốn', 'tử vong',
+            ],
+            'confidence': 0.99,
+        }]}
+
+    result = extract_knowledge(content, call_model=model)
+
+    assert result['events'][0]['distinctive_facts'][-1] == 'tử vong'
+    event_schema = captured['schema']['properties']['events']['items']
+    assert 'distinctive_facts' in event_schema['required']
+    assert 'Trường Đại học Mỏ - Địa chất' in captured['prompt']

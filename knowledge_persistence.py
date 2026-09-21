@@ -8,7 +8,7 @@ from knowledge_settings import (
     KNOWLEDGE_ERROR_MAX_CHARS,
     LOCATION_HIERARCHY_MODULE_VERSION,
 )
-from knowledge_extraction import normalize_name, prepare_entity
+from knowledge_extraction import make_search_name, normalize_name, prepare_entity
 from knowledge_validation import build_anonymous_participant_key
 
 
@@ -326,6 +326,8 @@ def upsert_events(
                   OR coalesce(mention.status, '') <> $status
                   OR coalesce(mention.time_expression, '')
                      <> coalesce($time_expression, '')
+                  OR coalesce(mention.distinctive_facts, [])
+                     <> $distinctive_facts
                 THEN 'PENDING'
                 ELSE mention.consolidation_status
             END
@@ -337,6 +339,8 @@ def upsert_events(
                 mention.evidence_text = $evidence_text,
                 mention.status = $status,
                 mention.time_expression = $time_expression,
+                mention.distinctive_facts = $distinctive_facts,
+                mention.distinctive_fact_keys = $distinctive_fact_keys,
                 mention.confidence = $confidence,
                 mention.platform = $platform,
                 mention.post_id = $post_id,
@@ -370,6 +374,9 @@ def upsert_events(
                 END,
                 event.description = coalesce(event.description, $description),
                 event.status = coalesce(event.status, $status),
+                event.distinctive_facts = coalesce(
+                    event.distinctive_facts, $distinctive_facts
+                ),
                 event.last_seen_at = CASE
                     WHEN event.last_seen_at IS NULL OR p.posted_at > event.last_seen_at
                     THEN p.posted_at ELSE event.last_seen_at END,
@@ -396,6 +403,11 @@ def upsert_events(
             evidence_text=event["evidence_text"],
             status=event["status"],
             time_expression=event["time_expression"],
+            distinctive_facts=event.get("distinctive_facts", []),
+            distinctive_fact_keys=[
+                make_search_name(fact)
+                for fact in event.get("distinctive_facts", [])
+            ],
             confidence=event["confidence"],
             knowledge_model=GEMINI_MODEL,
             knowledge_prompt_version=KNOWLEDGE_PROMPT_VERSION,
@@ -523,6 +535,33 @@ def upsert_events(
 
 def refresh_canonical_event_projections(tx) -> None:
     """Rebuild materialized Event fields from their source mentions."""
+    tx.run(
+        """
+        MATCH (event:Event {schema_version: 2})
+        OPTIONAL MATCH (mention:EventMention)-[:EVIDENCE_FOR]->(event)
+        WITH event, mention ORDER BY mention.created_at, mention.mention_key
+        WITH event, collect(
+            CASE
+                WHEN mention IS NULL OR size(coalesce(mention.distinctive_facts, [])) = 0
+                THEN []
+                ELSE [index IN range(0, size(mention.distinctive_facts) - 1) | {
+                    key: coalesce(
+                        mention.distinctive_fact_keys[index],
+                        toLower(trim(mention.distinctive_facts[index]))
+                    ),
+                    value: mention.distinctive_facts[index]
+                }]
+            END
+        ) AS fact_groups
+        WITH event, reduce(all_facts = [], facts IN fact_groups | all_facts + facts)
+             AS all_facts
+        WITH event, reduce(unique_facts = [], fact IN all_facts |
+            CASE WHEN any(existing IN unique_facts WHERE existing.key = fact.key)
+                 THEN unique_facts ELSE unique_facts + fact END
+        ) AS unique_facts
+        SET event.distinctive_facts = [fact IN unique_facts | fact.value]
+        """
+    ).consume()
     tx.run(
         """
         MATCH (event:Event {schema_version: 2})

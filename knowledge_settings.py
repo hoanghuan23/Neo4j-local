@@ -33,10 +33,10 @@ POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 EVENT_MENTION_LIMIT = max(1, int(os.getenv("KNOWLEDGE_EVENT_MENTION_LIMIT", "100")))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
-KNOWLEDGE_PROMPT_VERSION = "knowledge-v15"
+KNOWLEDGE_PROMPT_VERSION = "knowledge-v16-distinctive-facts"
 KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v2"
 LOCATION_HIERARCHY_MODULE_VERSION = "location-hierarchy-v3-photon"
-EVENT_CONSOLIDATION_VERSION = "event-consolidation-v4"
+EVENT_CONSOLIDATION_VERSION = "event-consolidation-v5-candidate-signals"
 EVENT_SUMMARY_VERSION = "event-summary-v3"
 EVENT_AUTO_MERGE_THRESHOLD = float(
     os.getenv("EVENT_AUTO_MERGE_THRESHOLD", "0.90")
@@ -44,8 +44,8 @@ EVENT_AUTO_MERGE_THRESHOLD = float(
 EVENT_CANDIDATE_WINDOW_DAYS = max(
     1, int(os.getenv("EVENT_CANDIDATE_WINDOW_DAYS", "7"))
 )
-EVENT_MAX_CANDIDATES = max(
-    1, int(os.getenv("EVENT_MAX_CANDIDATES", "10"))
+EVENT_CANDIDATE_BATCH_SIZE = max(
+    1, int(os.getenv("EVENT_CANDIDATE_BATCH_SIZE", "10"))
 )
 KNOWLEDGE_PIPELINE_ENABLED = os.getenv(
     "KNOWLEDGE_PIPELINE_ENABLED", "true"
@@ -222,6 +222,10 @@ EVENT_ITEM_SCHEMA = _strict_object(
         "evidence_text": {"type": "string"},
         "status": {"type": "string", "enum": sorted(EVENT_STATUSES)},
         "time_expression": {"type": ["string", "null"]},
+        "distinctive_facts": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
         "confidence": {
             "type": "number",
             "minimum": 0,
@@ -236,6 +240,7 @@ EVENT_ITEM_SCHEMA = _strict_object(
         "evidence_text",
         "status",
         "time_expression",
+        "distinctive_facts",
         "confidence",
     ],
 )

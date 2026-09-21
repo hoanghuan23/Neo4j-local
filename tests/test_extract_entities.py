@@ -1242,6 +1242,37 @@ class PersistenceTests(unittest.TestCase):
         self.assertIn("mention.extracted_type = $extracted_type", event_call.args[0])
         self.assertEqual(event_call.kwargs["extracted_type"], "ASSAULT")
 
+    def test_upsert_event_persists_distinctive_facts(self):
+        tx = Mock()
+        tx.run.return_value.consume.return_value = None
+        event = {
+            "event_key": "event-1",
+            "type": "DROWNING",
+            "description": "Tân sinh viên tử vong sau khi bị nước cuốn",
+            "evidence_text": "Tân sinh viên tử vong sau khi bị nước cuốn",
+            "status": "COMPLETED",
+            "time_expression": None,
+            "distinctive_facts": ["tân sinh viên", "bị nước cuốn", "tử vong"],
+            "confidence": 1.0,
+            "participants": [],
+        }
+
+        subject.upsert_events(tx, "facebook", "post-1", [event], {})
+
+        event_call = next(
+            call for call in tx.run.call_args_list
+            if "MERGE (created:Event" in call.args[0]
+        )
+        self.assertEqual(
+            event_call.kwargs["distinctive_facts"],
+            ["tân sinh viên", "bị nước cuốn", "tử vong"],
+        )
+        self.assertEqual(
+            event_call.kwargs["distinctive_fact_keys"],
+            ["tan sinh vien", "bi nuoc cuon", "tu vong"],
+        )
+        self.assertIn("mention.distinctive_facts", event_call.args[0])
+
     def test_upsert_global_role_uses_shared_scope_and_safe_cleanup(self):
         tx = Mock()
         tx.run.return_value.consume.return_value = None

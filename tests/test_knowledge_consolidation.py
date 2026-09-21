@@ -1,7 +1,8 @@
+import json
 import os
 import unittest
 from datetime import date
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from neo4j import GraphDatabase
 
@@ -54,11 +55,13 @@ class EventConsolidationTests(unittest.TestCase):
     def test_vetc_stop_wordings_are_candidates(self):
         mention = self.mention("VETC quyết định chưa áp dụng chính sách phí")
         event = self.event("stop", "VETC tạm dừng thu phí ví điện tử")
+        mention["entities"] = [{"identity": "vetc", "name": "VETC"}]
+        event["entities"] = [{"identity": "vetc", "name": "VETC"}]
 
         selected = select_candidates(mention, [event])
 
         self.assertEqual([item["event_key"] for item in selected], ["stop"])
-        self.assertGreater(candidate_score(mention, event), 0.3)
+        self.assertGreaterEqual(candidate_score(mention, event), 0.35)
 
     def test_actor_and_target_roles_are_not_consolidation_signals(self):
         mention = self.mention("Cùng một sự kiện tại Hà Nội")
@@ -184,9 +187,9 @@ class EventConsolidationTests(unittest.TestCase):
 
         components = candidate_score_components(mention, event)
 
-        self.assertEqual(components["action"], 0.30)
+        self.assertEqual(components["action"], 0.10)
         self.assertNotIn("actor", components)
-        self.assertGreaterEqual(candidate_score(mention, event), 0.30)
+        self.assertGreaterEqual(candidate_score(mention, event), 0.10)
 
     def test_location_participant_remains_a_location_signal(self):
         mention = self.mention("Infantino dự khán chung kết tại Hà Nội")
@@ -270,9 +273,130 @@ class EventConsolidationTests(unittest.TestCase):
             "reason": "Cùng actor và hành động",
         }, mention, event)
 
-        self.assertEqual(components["time"], -0.45)
+        self.assertEqual(components["time"], 0.0)
         self.assertEqual(effective["decision"], "DIFFERENT_EVENT")
         self.assertIn("OCCURRENCE_DATE_CONFLICT", effective["guard_reason_codes"])
+
+    def test_new_candidate_signal_weights(self):
+        mention = self.mention("Tân sinh viên bị nước cuốn và tử vong")
+        mention.update({
+            "distinctive_facts": ["Trường ĐH Mỏ - Địa chất"],
+            "entities": [{"identity": "school", "name": "Trường ĐH Mỏ - Địa chất"}],
+            "posted_at": date(2026, 9, 20),
+            "locations": [{
+                "identity": "district", "ancestor_identity": "province",
+                "name": "Quận A",
+            }],
+        })
+        event = self.event("candidate", "Một tân sinh viên tử vong do nước cuốn")
+        event.update({
+            "distinctive_facts": ["Trường Đại học Mỏ - Địa chất"],
+            "entities": [{"identity": "school", "name": "Trường Đại học Mỏ - Địa chất"}],
+            "posted_dates": [date(2026, 9, 20)],
+            "locations": [{
+                "identity": "province", "ancestor_identity": "province",
+                "name": "Tỉnh A",
+            }],
+        })
+
+        components = candidate_score_components(mention, event)
+
+        self.assertEqual(components["distinctive_facts"], 0.30)
+        self.assertEqual(components["entity"], 0.25)
+        self.assertEqual(components["lexical"], 0.20)
+        self.assertEqual(components["time"], 0.10)
+        self.assertEqual(components["location"], 0.05)
+
+    def test_distinctive_fact_numeric_conflict(self):
+        mention = self.mention("Hai người tử vong")
+        mention["distinctive_facts"] = ["2 người tử vong"]
+        event = self.event("candidate", "Ba người tử vong")
+        event["distinctive_facts"] = ["3 người tử vong"]
+
+        self.assertEqual(
+            candidate_score_components(mention, event)["distinctive_facts"],
+            -0.25,
+        )
+
+    def test_negated_related_facts_are_not_treated_as_conflicts(self):
+        mention = self.mention("Chính sách không có hiệu lực")
+        mention["distinctive_facts"] = ["không có hiệu lực"]
+        event = self.event("candidate", "Chính sách có hiệu lực")
+        event["distinctive_facts"] = ["có hiệu lực"]
+
+        self.assertEqual(
+            candidate_score_components(mention, event)["distinctive_facts"],
+            0.30,
+        )
+
+    def test_select_candidates_has_no_top_ten_limit(self):
+        mention = self.mention("Nội dung nhận diện hoàn toàn giống nhau")
+        events = [
+            self.event(f"event-{index:02d}", mention["description"])
+            for index in range(12)
+        ]
+
+        selected = select_candidates(mention, events)
+
+        self.assertEqual(len(selected), 12)
+        self.assertEqual(
+            [item["event_key"] for item in selected],
+            [f"event-{index:02d}" for index in range(12)],
+        )
+
+    def test_consolidation_sends_every_candidate_in_multiple_batches(self):
+        mention = self.mention("Nội dung nhận diện hoàn toàn giống nhau")
+        mention.update({
+            "consolidation_status": "PENDING",
+            "current_event_consolidation_version": None,
+        })
+        candidates = [
+            dict(
+                self.event(f"event-{index:02d}", mention["description"]),
+                retrieval_score=0.20,
+            )
+            for index in range(12)
+        ]
+        calls = []
+
+        def model(prompt, _schema):
+            payload = json.loads(prompt.split("Dữ liệu:\n", 1)[1])
+            calls.append(payload)
+            return {"decisions": [{
+                "candidate_event_key": item["event_key"],
+                "decision": "DIFFERENT_EVENT",
+                "confidence": 0.99,
+                "reason": "Khác occurrence",
+            } for item in payload["candidates"]]}
+
+        session = Mock()
+        with patch(
+            "knowledge_relations.event_hierarchy._load_pending_mentions",
+            return_value=[mention],
+        ), patch(
+            "knowledge_relations.event_hierarchy._load_canonical_events",
+            return_value=candidates,
+        ), patch(
+            "knowledge_relations.event_hierarchy._refresh_current_event",
+            return_value=mention,
+        ), patch(
+            "knowledge_relations.event_hierarchy.select_candidates",
+            return_value=candidates,
+        ), patch(
+            "knowledge_relations.event_hierarchy.summarize_event",
+            return_value=False,
+        ):
+            result = consolidate_pending_mentions(session, model)
+
+        self.assertEqual([len(call["candidates"]) for call in calls], [10, 2])
+        self.assertEqual(
+            {
+                item["event_key"]
+                for call in calls for item in call["candidates"]
+            },
+            {f"event-{index:02d}" for index in range(12)},
+        )
+        self.assertEqual(result["failed"], 0)
 
     def test_partial_dates_use_posted_year_and_match_time_of_day_variant(self):
         mention = self.mention("Infantino thăm PVF ngày 27/8")
