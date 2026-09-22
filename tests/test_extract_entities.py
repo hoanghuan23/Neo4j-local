@@ -201,6 +201,20 @@ class ExtractionTests(unittest.TestCase):
             ["properties"]["time_expression"],
         )
 
+    def test_extraction_prompt_uses_bare_vietnamese_location_canonical_name(self):
+        call_model = Mock(return_value={"entities": [], "events": []})
+
+        subject._extraction.extract_knowledge(
+            "Sự kiện diễn ra tại thành phố Bắc Ninh, tỉnh Bắc Ninh.",
+            call_model=call_model,
+        )
+
+        prompt, _schema = call_model.call_args.args
+        self.assertIn("`canonical_name` phải chỉ là tên riêng", prompt)
+        self.assertIn('`canonical_name="Bắc Ninh"`', prompt)
+        self.assertIn("chỉ trả một Entity", prompt)
+        self.assertIn("tái sử dụng tên trần", prompt)
+
     def test_knowledge_schema_is_strict_and_uses_bounded_enums(self):
         schema = subject.KNOWLEDGE_SCHEMA
         event = schema["properties"]["events"]["items"]
