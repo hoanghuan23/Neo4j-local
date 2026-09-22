@@ -540,28 +540,44 @@ def select_candidates(
 
 
 def _resolve_prompt(mention: dict, candidates: list[dict]) -> str:
+    def compact_item(item: dict, keys: tuple[str, ...]) -> dict:
+        return {
+            key: item.get(key)
+            for key in keys
+            if item.get(key) not in (None, "", [], {})
+        }
+
     def resolver_item(item: dict, *, mention_item: bool = False) -> dict:
         profile = comparison_profile(item)
         result = {
             key: item.get(key)
             for key in (
                 (
-                    "mention_key", "type", "description", "evidence_text",
-                    "status", "distinctive_facts",
+                    "type", "description", "evidence_text", "status",
                 )
                 if mention_item else
                 (
                     "event_key", "type", "description", "status",
-                    "descriptions", "distinctive_facts",
+                    "descriptions",
                 )
             )
         }
         result["comparison_profile"] = {
-            key: profile[key]
-            for key in (
-                "action_family", "distinctive_facts", "entities", "locations",
-                "posted_dates", "occurrence_times", "occurrence_dates",
-            )
+            "action_family": profile["action_family"],
+            "distinctive_facts": profile["distinctive_facts"],
+            "entities": [
+                compact_item(entity, ("identity", "name", "type"))
+                for entity in profile["entities"]
+            ],
+            "locations": [
+                compact_item(
+                    location, ("name", "identity", "ancestor_identity")
+                )
+                for location in profile["locations"]
+            ],
+            "posted_dates": profile["posted_dates"],
+            "occurrence_times": profile["occurrence_times"],
+            "occurrence_dates": profile["occurrence_dates"],
         }
         # Retrieval scores are backend ranking metadata, not occurrence evidence.
         # Remove only exact duplicate prose; retain every distinct source detail.
@@ -586,7 +602,7 @@ def _resolve_prompt(mention: dict, candidates: list[dict]) -> str:
         "mention": resolver_item(mention, mention_item=True),
         "candidates": [resolver_item(candidate) for candidate in candidates],
     }
-    return f"""
+    event = f"""
 Đối chiếu EventMention với từng candidate theo danh tính occurrence; trả một decision cho mỗi candidate_event_key.
 SAME_EVENT: cùng một occurrence cụ thể; DIFFERENT_EVENT: occurrence khác nhau; POSSIBLE_SAME_EVENT: có dấu hiệu trùng nhưng chưa đủ kết luận.
 
@@ -604,7 +620,10 @@ reason: một câu tiếng Việt tối đa khoảng 25 từ, chỉ nêu điểm
 Dữ liệu:
 {json.dumps(payload, ensure_ascii=False, default=str, separators=(",", ":"))}
     """.strip()
-
+    print("Start Event")
+    print(event)
+    print("End Event")
+    return event
 
 def evaluate_merge_guard(mention: dict, candidate: dict) -> dict:
     """Block contradictions and review ambiguity before an automatic merge.

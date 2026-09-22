@@ -72,23 +72,51 @@ def test_failed_persistence_does_not_cache_summary():
 
 
 def test_match_payload_keeps_distinct_sources_and_all_candidates():
+    from copy import deepcopy
     import json
+
     from knowledge_relations.event_hierarchy import _resolve_prompt
-    current = mention()
+    current = mention(
+        distinctive_facts=['Fact'],
+        entities=[{'identity': 'entity-1', 'name': 'Entity', 'type': 'PERSON',
+                   'unused': 'metadata'}],
+        locations=[{'identity': 'location-1', 'ancestor_identity': 'location-2',
+                    'name': 'Location', 'role': 'LOCATION', 'identified': True}],
+    )
     candidates = [dict(event_key='candidate1', type='OTHER', status='COMPLETED',
                        description='Occurrence',
                        descriptions=['Occurrence', 'Distinct detail', 'Distinct detail'],
+                       distinctive_facts=['Candidate fact'],
                        score_components={'total': .9}, retrieval_score=.9),
                   dict(event_key='candidate2', type='OTHER', status='ALLEGED',
                        description='Conflicting account', descriptions=[])]
+    original_current = deepcopy(current)
+    original_candidates = deepcopy(candidates)
     prompt = _resolve_prompt(current, candidates)
     payload = json.loads(prompt.split('Dữ liệu:\n', 1)[1])
     assert len(payload['candidates']) == 2
+    assert payload['candidates'][0]['event_key'] == 'candidate1'
     assert payload['candidates'][0]['descriptions'] == ['Distinct detail']
+    assert 'distinctive_facts' not in payload['candidates'][0]
+    assert payload['candidates'][0]['comparison_profile'][
+        'distinctive_facts'
+    ] == ['Candidate fact']
     assert payload['candidates'][1]['status'] == 'ALLEGED'
+    assert 'mention_key' not in payload['mention']
+    assert 'distinctive_facts' not in payload['mention']
+    assert payload['mention']['comparison_profile']['distinctive_facts'] == ['Fact']
+    assert payload['mention']['comparison_profile']['entities'] == [{
+        'identity': 'entity-1', 'name': 'Entity', 'type': 'PERSON',
+    }]
+    assert payload['mention']['comparison_profile']['locations'] == [{
+        'name': 'Location', 'identity': 'location-1',
+        'ancestor_identity': 'location-2',
+    }]
     assert 'evidence_text' not in payload['mention']
     assert 'semantic_score_components' not in prompt
     assert candidates[0]['descriptions'] == ['Occurrence', 'Distinct detail', 'Distinct detail']
+    assert current == original_current
+    assert candidates == original_candidates
     current['evidence_text'] = 'Separate original evidence'
     changed = json.loads(_resolve_prompt(current, candidates).split('Dữ liệu:\n', 1)[1])
     assert changed['mention']['evidence_text'] == 'Separate original evidence'
