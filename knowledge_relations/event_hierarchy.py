@@ -313,14 +313,14 @@ def candidate_score_components(mention: dict, candidate: dict) -> dict:
     right_facts = right["distinctive_facts"]
     if left_facts and right_facts:
         if any(_fact_conflicts(a, b) for a in left_facts for b in right_facts):
-            components["distinctive_facts"] = -0.25
+            components["distinctive_facts"] = -0.20
         elif any(_fact_matches(a, b) for a in left_facts for b in right_facts):
-            components["distinctive_facts"] = 0.30
+            components["distinctive_facts"] = 0.25
 
     left_entities = _identities(left["entities"])
     right_entities = _identities(right["entities"])
     if left_entities and right_entities and left_entities & right_entities:
-        components["entity"] = 0.25
+        components["entity"] = 0.05
 
     raw_lexical = _jaccard(left["tokens"], right["tokens"])
     left_text = left["normalized_text"]
@@ -329,23 +329,23 @@ def candidate_score_components(mention: dict, candidate: dict) -> dict:
         left_text and right_text
         and (left_text in right_text or right_text in left_text)
     ):
-        components["lexical"] = 0.20
+        components["lexical"] = 0.15
     components["raw_lexical"] = raw_lexical
     left_action, right_action = left["action_family"], right["action_family"]
     if left_action and right_action:
         if left_action == right_action:
-            components["action"] = 0.10
+            components["action"] = 0.15
         elif frozenset((left_action, right_action)) in _EXCLUSIVE_ACTION_PAIRS:
-            components["action"] = -0.20
+            components["action"] = -0.10
 
     left_dates = set(left["posted_dates"])
     right_dates = set(right["posted_dates"])
     if left_dates and right_dates:
-        components["time"] = 0.10 if left_dates & right_dates else -0.15
+        components["time"] = 0.05 if left_dates & right_dates else 0.0
     if left["locations"] and right["locations"]:
         components["location"] = (
             0.05 if _locations_compatible(left["locations"], right["locations"])
-            else -0.10
+            else 0.0
         )
     components["total"] = max(-1.0, min(1.0, sum(
         value for key, value in components.items()
@@ -529,7 +529,7 @@ def select_candidates(
             continue
         components = candidate_score_components(mention, event)
         score = components["total"]
-        if score < 0.20:
+        if score < 0.35:
             continue
         ranked.append((score, event, components))
     ranked.sort(key=lambda item: (-item[0], str(item[1]["event_key"])))
@@ -644,8 +644,6 @@ def evaluate_merge_guard(mention: dict, candidate: dict) -> dict:
                 block.append("ACTION_FAMILY_CONFLICT")
             else:
                 review.append("ACTION_FAMILY_UNCERTAIN")
-    elif bool(left["action_family"]) != bool(right["action_family"]) and not follow_up:
-        review.append("ACTION_FAMILY_MISSING_ONE_SIDE")
 
     left_dates = set(left["occurrence_dates"])
     right_dates = set(right["occurrence_dates"])
@@ -658,20 +656,12 @@ def evaluate_merge_guard(mention: dict, candidate: dict) -> dict:
     ):
         warnings.append("OCCURRENCE_TIME_UNCERTAIN")
 
-    left_locations = _identities(left["locations"])
-    right_locations = _identities(right["locations"])
-    if left_locations and right_locations and not left_locations & right_locations:
-        review.append("LOCATION_CONFLICT")
-    weakly_compatible_types = "OTHER" in {left["type"], right["type"]}
     if (
-        left["type"]
-        and right["type"]
-        and left["type"] != right["type"]
-        and not follow_up
-        and not weakly_compatible_types
+        left["locations"]
+        and right["locations"]
+        and not _locations_compatible(left["locations"], right["locations"])
     ):
-        review.append("EVENT_TYPE_MISMATCH")
-
+        review.append("LOCATION_CONFLICT")
     status = "BLOCK" if block else "REVIEW" if review else "PASS"
     return {"status": status, "reason_codes": block + review + warnings}
 
@@ -1143,6 +1133,7 @@ def consolidate_pending_mentions(
                         _resolve_prompt(mention, batch),
                         EVENT_CONSOLIDATION_SCHEMA,
                     )
+                    print(f"kết quả AI", raw)
                     batch_decisions = _validated_decisions(raw, batch)
                     expected = {item["event_key"] for item in batch}
                     received = {

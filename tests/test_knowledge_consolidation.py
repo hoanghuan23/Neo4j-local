@@ -109,6 +109,7 @@ class EventConsolidationTests(unittest.TestCase):
         mention.update({
             "type": "INVESTIGATION",
             "participants": ["công an phường hoàng mai"],
+            "distinctive_facts": ["người đàn ông mặc đồ bảo vệ"],
         })
         event = self.event(
             "assault",
@@ -118,12 +119,13 @@ class EventConsolidationTests(unittest.TestCase):
         event.update({
             "type": "ASSAULT",
             "participants": ["tài xế xe ôm công nghệ", "louis city hoàng mai"],
+            "distinctive_facts": ["người đàn ông mặc đồ bảo vệ"],
         })
 
         selected = select_candidates(mention, [event])
 
         self.assertEqual([item["event_key"] for item in selected], ["assault"])
-        self.assertGreaterEqual(selected[0]["retrieval_score"], 0.20)
+        self.assertGreaterEqual(selected[0]["retrieval_score"], 0.35)
 
     def test_unrelated_investigation_is_not_a_candidate(self):
         mention = self.mention(
@@ -187,7 +189,7 @@ class EventConsolidationTests(unittest.TestCase):
 
         components = candidate_score_components(mention, event)
 
-        self.assertEqual(components["action"], 0.10)
+        self.assertEqual(components["action"], 0.15)
         self.assertNotIn("actor", components)
         self.assertGreaterEqual(candidate_score(mention, event), 0.10)
 
@@ -253,6 +255,48 @@ class EventConsolidationTests(unittest.TestCase):
 
         self.assertEqual(evaluate_merge_guard(mention, event)["status"], "PASS")
 
+    def test_parent_and_child_locations_do_not_conflict(self):
+        mention = self.mention(
+            "Phát hiện 71 bộ hài cốt liệt sĩ ở Ngũ Hiệp"
+        )
+        mention["locations"] = [{
+            "identity": "ngu-hiep",
+            "ancestor_identity": "dong-thap",
+            "name": "Ngũ Hiệp",
+        }]
+        event = self.event(
+            "dong-thap",
+            "Phát hiện 71 bộ hài cốt liệt sĩ ở Đồng Tháp",
+        )
+        event["locations"] = [{
+            "identity": "dong-thap",
+            "ancestor_identity": "dong-thap",
+            "name": "Đồng Tháp",
+        }]
+
+        guard = evaluate_merge_guard(mention, event)
+
+        self.assertEqual(guard, {"status": "PASS", "reason_codes": []})
+
+    def test_unrelated_locations_still_require_review(self):
+        mention = self.mention("Một sự việc ở Ngũ Hiệp")
+        mention["locations"] = [{
+            "identity": "ngu-hiep",
+            "ancestor_identity": "dong-thap",
+            "name": "Ngũ Hiệp",
+        }]
+        event = self.event("ha-noi", "Một sự việc ở Hà Nội")
+        event["locations"] = [{
+            "identity": "ha-noi",
+            "ancestor_identity": "ha-noi",
+            "name": "Hà Nội",
+        }]
+
+        guard = evaluate_merge_guard(mention, event)
+
+        self.assertEqual(guard["status"], "REVIEW")
+        self.assertEqual(guard["reason_codes"], ["LOCATION_CONFLICT"])
+
     def test_full_occurrence_date_conflict_blocks_high_confidence_merge(self):
         mention = self.mention("Infantino dự khán trận ngày 25/8/2026")
         mention.update({
@@ -301,10 +345,10 @@ class EventConsolidationTests(unittest.TestCase):
 
         components = candidate_score_components(mention, event)
 
-        self.assertEqual(components["distinctive_facts"], 0.30)
-        self.assertEqual(components["entity"], 0.25)
-        self.assertEqual(components["lexical"], 0.20)
-        self.assertEqual(components["time"], 0.10)
+        self.assertEqual(components["distinctive_facts"], 0.25)
+        self.assertEqual(components["entity"], 0.20)
+        self.assertEqual(components["lexical"], 0.15)
+        self.assertEqual(components["time"], 0.05)
         self.assertEqual(components["location"], 0.05)
 
     def test_distinctive_fact_numeric_conflict(self):
@@ -315,7 +359,7 @@ class EventConsolidationTests(unittest.TestCase):
 
         self.assertEqual(
             candidate_score_components(mention, event)["distinctive_facts"],
-            -0.25,
+            -0.20,
         )
 
     def test_negated_related_facts_are_not_treated_as_conflicts(self):
@@ -326,15 +370,18 @@ class EventConsolidationTests(unittest.TestCase):
 
         self.assertEqual(
             candidate_score_components(mention, event)["distinctive_facts"],
-            0.30,
+            0.25,
         )
 
     def test_select_candidates_has_no_top_ten_limit(self):
         mention = self.mention("Nội dung nhận diện hoàn toàn giống nhau")
+        mention["entities"] = [{"identity": "shared", "name": "Shared"}]
         events = [
             self.event(f"event-{index:02d}", mention["description"])
             for index in range(12)
         ]
+        for event in events:
+            event["entities"] = [{"identity": "shared", "name": "Shared"}]
 
         selected = select_candidates(mention, events)
 
@@ -424,7 +471,7 @@ class EventConsolidationTests(unittest.TestCase):
         self.assertFalse(right["has_unparsed_time"])
         self.assertEqual(guard["status"], "PASS")
 
-    def test_partial_time_requires_review_without_participant_signal(self):
+    def test_partial_time_warning_does_not_require_review(self):
         mention = self.mention("Một quan chức dự khán chung kết ngày 25/8")
         mention.update({
             "time_expression": "25/8",
@@ -438,7 +485,7 @@ class EventConsolidationTests(unittest.TestCase):
 
         guard = evaluate_merge_guard(mention, event)
 
-        self.assertEqual(guard["status"], "REVIEW")
+        self.assertEqual(guard["status"], "PASS")
         self.assertNotIn("MAIN_ACTOR_ANONYMOUS_OR_UNSTABLE", guard["reason_codes"])
         self.assertIn("OCCURRENCE_TIME_UNCERTAIN", guard["reason_codes"])
 
@@ -571,6 +618,50 @@ class EventConsolidationTests(unittest.TestCase):
 
         self.assertEqual(evaluate_merge_guard(mention, event)["status"], "PASS")
 
+    def test_different_event_types_do_not_require_review(self):
+        mention = self.mention(
+            "Một người đàn ông bị khởi tố sau khi nhận 1,3 tỷ đồng chuyển nhầm"
+        )
+        mention["type"] = "ASSAULT"
+        event = self.event(
+            "candidate",
+            "Một đối tượng bị khởi tố vì nhận 1,3 tỷ đồng chuyển nhầm",
+        )
+        event["type"] = "INVESTIGATION"
+
+        effective = effective_match_decision({
+            "candidate_event_key": "candidate",
+            "decision": "SAME_EVENT",
+            "confidence": 0.99,
+            "reason": "Cùng hành động khởi tố và số tiền chuyển nhầm",
+        }, mention, event, threshold=0.90)
+
+        self.assertEqual(effective["guard_status"], "PASS")
+        self.assertEqual(effective["guard_reason_codes"], [])
+        self.assertEqual(effective["decision"], "SAME_EVENT")
+
+    def test_action_missing_on_one_side_does_not_require_review(self):
+        mention = self.mention(
+            "Một người đàn ông bị khởi tố sau khi nhận 1,3 tỷ đồng chuyển nhầm"
+        )
+        event = self.event(
+            "candidate",
+            "Vụ nhận 1,3 tỷ đồng chuyển nhầm rồi mang sang Campuchia",
+        )
+
+        effective = effective_match_decision({
+            "candidate_event_key": "candidate",
+            "decision": "SAME_EVENT",
+            "confidence": 0.99,
+            "reason": "Cùng số tiền chuyển nhầm và diễn biến tại Campuchia",
+        }, mention, event, threshold=0.90)
+
+        self.assertEqual(action_family(mention["description"]), "CHARGE")
+        self.assertIsNone(action_family(event["description"]))
+        self.assertEqual(effective["guard_status"], "PASS")
+        self.assertEqual(effective["guard_reason_codes"], [])
+        self.assertEqual(effective["decision"], "SAME_EVENT")
+
     def test_resolver_prompt_centers_occurrence_and_omits_retrieval_score(self):
         mention = self.mention("Infantino dự khán chung kết")
         mention["participants"] = [self.participant("ParticipantOnlyA", "ACTOR")]
@@ -609,7 +700,7 @@ class EventConsolidationTests(unittest.TestCase):
             "confidence": 0.95,
             "reason": "Cùng hành động nhưng cần review",
             "guard_status": "REVIEW",
-            "guard_reason_codes": ["EVENT_TYPE_MISMATCH"],
+            "guard_reason_codes": ["LOCATION_CONFLICT"],
             "retrieval_score": 0.56,
         }
 
@@ -626,7 +717,7 @@ class EventConsolidationTests(unittest.TestCase):
         )
         self.assertEqual(
             params["rows"][0]["guard_reason_codes"],
-            ["EVENT_TYPE_MISMATCH"],
+            ["LOCATION_CONFLICT"],
         )
 
     def test_sync_different_decision_only_deletes_evaluated_pair(self):
@@ -659,7 +750,10 @@ class EventConsolidationTests(unittest.TestCase):
                 "evidence_text": f"{actor} dự khán chung kết Việt Nam - Thái Lan",
                 "status": "COMPLETED",
                 "time_expression": "25/8/2026",
-                "participants": [self.participant(actor)],
+                "participants": [
+                    self.participant(actor),
+                    self.participant("Việt Nam", "LOCATION"),
+                ],
                 "posted_at": None,
                 "created_at": None,
             })
