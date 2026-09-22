@@ -1,5 +1,4 @@
 fastapi
-google-genai
 neo4j
 psycopg2-binary
 python-dotenv

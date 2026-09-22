@@ -185,10 +185,3 @@ def test_entrypoint_passes_shared_model_to_event_relation_module():
         entrypoint.process_new_posts(Mock(), call_model=model)
         process.call_args.kwargs["extract_event_relations_fn"](CONTENT, base())
     relations.assert_called_once_with(CONTENT, base(), call_model=model)
-
-
-def test_event_relation_stage_is_identified_in_usage_logs():
-    from knowledge_gemini import _stage_for_schema
-    from knowledge_settings import EVENT_RELATION_SCHEMA
-
-    assert _stage_for_schema(EVENT_RELATION_SCHEMA) == "event_relation"
