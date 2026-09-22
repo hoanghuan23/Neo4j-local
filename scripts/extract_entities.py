@@ -1,4 +1,10 @@
 import logging
+import sys
+from pathlib import Path
+
+# Allow this entry point to be run by file path as well as with ``python -m``.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from neo4j import GraphDatabase
 

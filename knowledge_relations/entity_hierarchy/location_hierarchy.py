@@ -4,7 +4,8 @@ import json
 import re
 import unicodedata
 
-from knowledge_extraction import call_gemini, location_identity_names, make_search_name, normalize_name
+from knowledge_extraction import location_identity_names, make_search_name, normalize_name
+from knowledge_openai import call_openai
 from knowledge_settings import (
     LOCATION_HIERARCHY_MODULE_VERSION,
     LOCATION_HIERARCHY_SCHEMA,

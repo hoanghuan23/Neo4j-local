@@ -2,7 +2,7 @@
 import copy
 import json
 
-from knowledge_gemini import call_gemini
+from knowledge_openai import call_openai
 from knowledge_settings import EVENT_RELATION_SCHEMA
 
 

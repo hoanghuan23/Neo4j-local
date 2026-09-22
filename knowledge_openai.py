@@ -143,7 +143,7 @@ class OpenAIKnowledgeCaller:
                 + Decimal(output_tokens) * Decimal(OPENAI_OUTPUT_PRICE_PER_MILLION)) / TOKENS_PER_MILLION
 
     def _request(self, prompt, output_schema, record):
-        response = self.client.models.generate_content(
+        response = self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             response_format={
@@ -158,7 +158,11 @@ class OpenAIKnowledgeCaller:
         usage = _usage_from_response(response)
         self._add_usage(usage)
         record["usage"] = usage
-        raw_response = getattr(response, "text", None)
+        raw_response = (
+            response.choices[0].message.content
+            if response.choices
+            else None
+        )
         if not raw_response:
             raise ValueError("OpenAI trả về nội dung rỗng")
         try:
