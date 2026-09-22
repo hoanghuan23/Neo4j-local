@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from backend.config import Settings
 from backend.main import create_app
 from backend.neo4j_repository import Neo4jRepository
-from test_backend import pagination_event
+from tests.test_backend import pagination_event
 
 
 @pytest.mark.parametrize("related", [False, True])

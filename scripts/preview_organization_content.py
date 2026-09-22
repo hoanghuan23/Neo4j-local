@@ -17,7 +17,6 @@ def save_content(session, content, call_model):
     """
     from knowledge_extraction import extract_knowledge
     from knowledge_validation import validate_knowledge
-    from knowledge_relations.participant_role import extract_participants
     from knowledge_relations.event_relation import extract_event_relations
     from knowledge_relations.entity_hierarchy.organization_hierarchy import extract_context
     from knowledge_relations.entity_hierarchy.location_hierarchy import enrich_location_hierarchy
@@ -34,8 +33,6 @@ def save_content(session, content, call_model):
     knowledge = extract_knowledge(content, call_model=call_model)
     knowledge = validate_knowledge(content, knowledge, platform, post_id)
     modules = runnable_modules_for(knowledge)
-    if 'PARTICIPANT_ROLE' in modules:
-        knowledge = extract_participants(content, knowledge, call_model=call_model)
     if 'EVENT_RELATION' in modules:
         knowledge = extract_event_relations(content, knowledge, call_model=call_model)
     knowledge = validate_knowledge(content, knowledge, platform, post_id)
@@ -58,7 +55,7 @@ def save_content(session, content, call_model):
         counts = save_knowledge_tx(tx, platform, post_id, knowledge,
                                   {'should_deep_analyze': True, 'reason_code': 'MANUAL'}, 'DEEP',
                                   runnable_modules=modules)
-        for module in ('PARTICIPANT_ROLE', 'EVENT_RELATION'):
+        for module in ('EVENT_RELATION',):
             if module in modules:
                 save_module_knowledge_tx(tx, platform, post_id, knowledge, module)
         return counts

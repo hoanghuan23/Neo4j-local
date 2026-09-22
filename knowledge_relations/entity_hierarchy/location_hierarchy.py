@@ -4,9 +4,7 @@ import json
 import re
 import unicodedata
 
-from langsmith import traceable
-
-from knowledge_extraction import call_openai, location_identity_names, make_search_name, normalize_name
+from knowledge_extraction import call_gemini, location_identity_names, make_search_name, normalize_name
 from knowledge_settings import (
     LOCATION_HIERARCHY_MODULE_VERSION,
     LOCATION_HIERARCHY_SCHEMA,
@@ -82,7 +80,6 @@ def normalize_content_edges(content: str, locations: list[dict], raw: object) ->
     return edges
 
 
-@traceable(name="location-hierarchy-content", run_type="chain", tags=["location-hierarchy"])
 def extract_content_edges(content: str, knowledge: dict, resolved: list[dict], call_model=None) -> list[dict]:
     locations = _location_inputs(knowledge, resolved)
     if len(locations) < 2:

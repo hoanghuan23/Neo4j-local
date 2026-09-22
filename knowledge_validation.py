@@ -202,11 +202,15 @@ def _event_signature(event: dict) -> str:
         _participant_signature(participant) for participant in event["participants"]
     )
     time_expression = normalize_name(event.get("time_expression") or "")
+    distinctive_facts = sorted(
+        make_search_name(fact) for fact in event.get("distinctive_facts", [])
+    )
     return "|".join(
         [
             event["type"],
             _normalized_source_text(event["evidence_text"]),
             time_expression,
+            *distinctive_facts,
             *participants,
         ]
     )
@@ -346,6 +350,21 @@ def validate_events(
         if time_expression is not None:
             time_expression = _clean_text(time_expression) or None
 
+        distinctive_facts = []
+        seen_facts = set()
+        raw_facts = raw.get("distinctive_facts")
+        if isinstance(raw_facts, list):
+            for raw_fact in raw_facts:
+                if not isinstance(raw_fact, str):
+                    _log_drop("distinctive_fact", "invalid_text_type", local_id)
+                    continue
+                fact = _clean_text(raw_fact)
+                fact_key = make_search_name(fact)
+                if not fact or not fact_key or fact_key in seen_facts:
+                    continue
+                seen_facts.add(fact_key)
+                distinctive_facts.append(fact)
+
         event = {
             "local_id": local_id,
             "type": event_type,
@@ -359,6 +378,7 @@ def validate_events(
             "evidence_text": evidence_text,
             "status": status,
             "time_expression": time_expression,
+            "distinctive_facts": distinctive_facts,
             "confidence": confidence,
             "participants": participants,
         }

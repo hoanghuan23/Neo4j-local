@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from preview_organization_content import save_content
+from scripts.preview_organization_content import save_content
 
 
 def test_empty_content_never_touches_database():
@@ -54,7 +54,7 @@ def test_location_run_saves_by_default(monkeypatch):
     monkeypatch.setattr('sys.stdin', io.StringIO(''))
     with patch.object(location, 'OpenAIKnowledgeCaller') as caller, \
          patch('neo4j.GraphDatabase.driver') as driver, \
-         patch('preview_organization_content.save_content', return_value={'mode': 'saved_to_neo4j'}) as save:
+         patch('scripts.preview_organization_content.save_content', return_value={'mode': 'saved_to_neo4j'}) as save:
         assert location.main() == 0
     assert save.call_args.args[1] == location.CONTENT
     caller.return_value.close.assert_called_once()

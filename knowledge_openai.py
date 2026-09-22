@@ -16,13 +16,6 @@ from knowledge_settings import (
     OPENAI_OUTPUT_PRICE_PER_MILLION,
     OPENAI_TIMEOUT_SECONDS,
 )
-from knowledge_tracing import (
-    set_langsmith_model,
-    set_langsmith_usage,
-    trace_llm,
-)
-
-
 API_LOGGER = logging.getLogger("knowledge.api")
 _POST_CONTEXT = ContextVar("openai_post", default="batch")
 
@@ -49,8 +42,6 @@ def _stage_for_schema(schema):
         ("KNOWLEDGE_CLASSIFIER_SCHEMA", "classifier"),
         ("KNOWLEDGE_SCHEMA", "extraction"),
         ("EVENT_TITLE_SCHEMA", "title"),
-        ("PARTICIPANT_ROLE_SCHEMA", "participant_role"),
-        ("PARTICIPANT_EXTRACTION_SCHEMA", "participant_extraction"),
         ("EVENT_RELATION_SCHEMA", "event_relation"),
         ("LOCATION_HIERARCHY_SCHEMA", "location_hierarchy"),
         ("EVENT_CONSOLIDATION_SCHEMA", "consolidation_match"),
@@ -109,11 +100,6 @@ class OpenAIKnowledgeCaller:
         self._stages = {}
         self._attempts = 0
 
-    @trace_llm(
-        name="openai-knowledge-extraction",
-        provider="openai",
-        model=OPENAI_MODEL,
-    )
     def __call__(self, prompt: str, output_schema: dict) -> dict:
         stage = _stage_for_schema(output_schema)
         started = time.monotonic()
@@ -157,8 +143,7 @@ class OpenAIKnowledgeCaller:
                 + Decimal(output_tokens) * Decimal(OPENAI_OUTPUT_PRICE_PER_MILLION)) / TOKENS_PER_MILLION
 
     def _request(self, prompt, output_schema, record):
-        set_langsmith_model(self.model)
-        response = self.client.chat.completions.create(
+        response = self.client.models.generate_content(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             response_format={
@@ -173,15 +158,7 @@ class OpenAIKnowledgeCaller:
         usage = _usage_from_response(response)
         self._add_usage(usage)
         record["usage"] = usage
-        set_langsmith_usage(
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
-            reasoning_tokens=usage.thinking_tokens,
-        )
-
-        raw_response = (
-            response.choices[0].message.content if response.choices else None
-        )
+        raw_response = getattr(response, "text", None)
         if not raw_response:
             raise ValueError("OpenAI trả về nội dung rỗng")
         try:
@@ -248,8 +225,6 @@ class OpenAIKnowledgeCaller:
         ))
         additional_names = {
             "title": "tạo tiêu đề sự kiện (title)",
-            "participant_role": "vai trò tham gia (participant_role)",
-            "participant_extraction": "trích xuất bên tham gia (participant_extraction)",
             "event_relation": "quan hệ sự kiện (event_relation)",
             "location_hierarchy": "phân cấp địa điểm (location_hierarchy)",
             "organization_hierarchy": "phân cấp tổ chức (organization_hierarchy)",

@@ -7,7 +7,7 @@ from neo4j.exceptions import ServiceUnavailable
 from backend.config import Settings
 from backend.main import create_app
 from backend.neo4j_repository import Neo4jRepository
-from test_backend import PagingRepository, pagination_event
+from tests.test_backend import PagingRepository, pagination_event
 
 
 class RelatedRepository(PagingRepository):

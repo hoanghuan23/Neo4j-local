@@ -41,25 +41,24 @@ def test_hierarchy_requires_configuration(enabled, should_run):
         'classification': {'should_deep_analyze': True}, 'classifier_decision': 'DEEP'})
     session = Mock()
     session.execute_write.return_value = {'entities': 1, 'events': 0, 'event_relations': 0}
-    enrich, participant, relations, consolidate = Mock(), Mock(), Mock(), []
+    enrich, relations, consolidate = Mock(), Mock(), []
     with patch.dict(settings.KNOWLEDGE_MODULES, {'ENTITY_HIERARCHY': enabled}):
         result = pipeline._save_extracted_post(session,
             {'platform': 'test', 'post_id': '1', 'content': 'text'}, future,
             original_index=1, completed=1, total=1, enrich_locations_fn=enrich,
-            extract_participants_fn=participant, extract_event_relations_fn=relations,
+            extract_event_relations_fn=relations,
             mention_keys_out=consolidate)
     assert result == 'deep'
     assert enrich.called is should_run
-    participant.assert_not_called()
     relations.assert_not_called()
     assert consolidate == []
 
 
 def test_skipped_does_not_call_router_or_extractors():
-    extract, participant, relations = Mock(), Mock(), Mock()
+    extract, relations = Mock(), Mock()
     result = pipeline._extract_post(lambda _: {'should_deep_analyze': False}, extract,
-        lambda c, k, p, i: k, 'test', '1', 'text', participant, relations)
-    for fn in (extract, participant, relations):
+        lambda c, k, p, i: k, 'test', '1', 'text', relations)
+    for fn in (extract, relations):
         fn.assert_not_called()
     assert result['classifier_decision'] == 'SKIPPED'
 
@@ -76,33 +75,6 @@ def test_pipeline_calls_real_persistence_signature_for_skipped():
     assert summary['skipped'] == 1
     classifier = next(c.kwargs for c in tx.run.call_args_list if 'classifier_decision' in c.kwargs)
     assert classifier['classifier_decision'] == 'SKIPPED'
-
-
-def test_enabled_participant_runs_after_base_and_preserves_keys():
-    from test_event_extraction_modules import base, CONTENT, participant
-    from knowledge_validation import validate_knowledge
-    knowledge = validate_knowledge(CONTENT, base(), 'test', '1')
-    future = Future()
-    future.set_result({'knowledge': knowledge,
-        'classification': {'should_deep_analyze': True}, 'classifier_decision': 'DEEP'})
-    session = Mock()
-    session.execute_write.return_value = {'entities': 1, 'events': 2, 'event_relations': 0}
-    def enrich(content, value):
-        import copy
-        assert session.execute_write.call_count == 1
-        enriched = copy.deepcopy(value)
-        enriched['events'][0]['participants'] = [participant(value['entities'][0]['local_id'], role='ACTOR')]
-        return enriched
-    with patch.dict(settings.KNOWLEDGE_MODULES, {'PARTICIPANT_ROLE': True}):
-        outcome = pipeline._save_extracted_post(session,
-            {'platform': 'test', 'post_id': '1', 'content': CONTENT}, future,
-            original_index=1, completed=1, total=1, extract_participants_fn=enrich)
-    assert outcome == 'deep'
-    assert session.execute_write.call_count == 2
-    saved = session.execute_write.call_args.args[3]
-    assert saved['events'][0]['participants']
-    assert saved['events'][0]['mention_key'] == knowledge['events'][0]['mention_key']
-    assert saved['events'][0]['event_key'] == knowledge['events'][0]['event_key']
 
 
 @pytest.mark.parametrize('location_errors,organization_errors', [(0, 0), (1, 0), (0, 1)])
@@ -143,8 +115,8 @@ def test_module_output_and_completion_share_transaction():
     ([{'type': 'PERSON'}], 0, set()),
     ([{'type': 'LOCATION'}], 0, {'ENTITY_HIERARCHY'}),
     ([{'type': 'ORGANIZATION'}], 0, {'ENTITY_HIERARCHY'}),
-    ([], 1, {'PARTICIPANT_ROLE', 'EVENT_HIERARCHY'}),
-    ([], 2, {'PARTICIPANT_ROLE', 'EVENT_HIERARCHY', 'EVENT_RELATION'}),
+    ([], 1, {'EVENT_HIERARCHY'}),
+    ([], 2, {'EVENT_HIERARCHY', 'EVENT_RELATION'}),
 ])
 def test_enabled_modules_require_sufficient_input(entities, event_count, expected):
     knowledge = {'entities': entities, 'events': [{'local_id': str(i)} for i in range(event_count)]}

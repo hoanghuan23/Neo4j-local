@@ -33,13 +33,10 @@ POST_LIMIT = int(os.getenv("KNOWLEDGE_POST_LIMIT", "100"))
 EVENT_MENTION_LIMIT = max(1, int(os.getenv("KNOWLEDGE_EVENT_MENTION_LIMIT", "100")))
 KNOWLEDGE_WORKERS = max(1, int(os.getenv("KNOWLEDGE_WORKERS", "1")))
 KNOWLEDGE_MAX_RETRIES = int(os.getenv("KNOWLEDGE_MAX_RETRIES", "3"))
-KNOWLEDGE_PROMPT_VERSION = "knowledge-v14"
+KNOWLEDGE_PROMPT_VERSION = "knowledge-v16-distinctive-facts"
 KNOWLEDGE_CLASSIFIER_PROMPT_VERSION = "knowledge-classifier-v2"
-PARTICIPANT_ROLE_PROMPT_VERSION = "participant-role-v1"
-PARTICIPANT_EXTRACTION_PROMPT_VERSION = "participant-extraction-v1"
-EVENT_RELATION_PROMPT_VERSION = "event-relation-v1"
 LOCATION_HIERARCHY_MODULE_VERSION = "location-hierarchy-v3-photon"
-EVENT_CONSOLIDATION_VERSION = "event-consolidation-v4"
+EVENT_CONSOLIDATION_VERSION = "event-consolidation-v5-candidate-signals"
 EVENT_SUMMARY_VERSION = "event-summary-v3"
 EVENT_AUTO_MERGE_THRESHOLD = float(
     os.getenv("EVENT_AUTO_MERGE_THRESHOLD", "0.90")
@@ -47,8 +44,8 @@ EVENT_AUTO_MERGE_THRESHOLD = float(
 EVENT_CANDIDATE_WINDOW_DAYS = max(
     1, int(os.getenv("EVENT_CANDIDATE_WINDOW_DAYS", "7"))
 )
-EVENT_MAX_CANDIDATES = max(
-    1, int(os.getenv("EVENT_MAX_CANDIDATES", "10"))
+EVENT_CANDIDATE_BATCH_SIZE = max(
+    1, int(os.getenv("EVENT_CANDIDATE_BATCH_SIZE", "10"))
 )
 KNOWLEDGE_PIPELINE_ENABLED = os.getenv(
     "KNOWLEDGE_PIPELINE_ENABLED", "true"
@@ -117,7 +114,6 @@ EVENT_RELATION_TYPES = {
     "RELATED_TO",
 }
 RELATION_GROUPS = {
-    "PARTICIPANT_ROLE",
     "ENTITY_HIERARCHY",
     "TEMPORAL_RELATION",
     "EVENT_HIERARCHY",
@@ -128,7 +124,6 @@ RELATION_GROUPS = {
 # Modules execute when enabled and validated input is available.
 KNOWLEDGE_MODULES = {
     "ENTITY_HIERARCHY": True,
-    "PARTICIPANT_ROLE": False,
     "EVENT_RELATION": False,
     "EVENT_HIERARCHY": False,
     "TEMPORAL_RELATION": False,
@@ -136,7 +131,7 @@ KNOWLEDGE_MODULES = {
     "STANCE_PERSPECTIVE": False,
 }
 IMPLEMENTED_KNOWLEDGE_MODULES = {
-    "ENTITY_HIERARCHY", "PARTICIPANT_ROLE", "EVENT_RELATION", "EVENT_HIERARCHY",
+    "ENTITY_HIERARCHY", "EVENT_RELATION", "EVENT_HIERARCHY",
 }
 
 
@@ -148,7 +143,6 @@ def validate_module_config():
             raise ValueError(f"Module chưa được triển khai: {name}")
 
 
-CONCRETE_EVENT_ROLES = EVENT_ROLES - {"PARTICIPANT"}
 CONFIDENCE_LEVELS = {"HIGH", "MEDIUM", "LOW"}
 MAX_EVENTS_PER_POST = 5
 
@@ -206,26 +200,6 @@ PARTICIPANT_ITEM_SCHEMA = _strict_object(
     ],
 )
 
-PARTICIPANT_ROLE_ASSIGNMENT_SCHEMA = _strict_object(
-    {
-        "event_id": {"type": "string"},
-        "participant_index": {"type": "integer", "minimum": 0},
-        "role": {"type": "string", "enum": sorted(CONCRETE_EVENT_ROLES)},
-        "evidence_text": {"type": "string"},
-    },
-    ["event_id", "participant_index", "role", "evidence_text"],
-)
-
-PARTICIPANT_ROLE_SCHEMA = _strict_object(
-    {
-        "assignments": {
-            "type": "array",
-            "items": PARTICIPANT_ROLE_ASSIGNMENT_SCHEMA,
-        }
-    },
-    ["assignments"],
-)
-
 LOCATION_HIERARCHY_RELATION_SCHEMA = _strict_object(
     {
         "source_entity_id": {"type": "string"},
@@ -248,6 +222,10 @@ EVENT_ITEM_SCHEMA = _strict_object(
         "evidence_text": {"type": "string"},
         "status": {"type": "string", "enum": sorted(EVENT_STATUSES)},
         "time_expression": {"type": ["string", "null"]},
+        "distinctive_facts": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
         "confidence": {
             "type": "number",
             "minimum": 0,
@@ -262,6 +240,7 @@ EVENT_ITEM_SCHEMA = _strict_object(
         "evidence_text",
         "status",
         "time_expression",
+        "distinctive_facts",
         "confidence",
     ],
 )
@@ -288,21 +267,6 @@ KNOWLEDGE_SCHEMA = _strict_object(
     ["entities", "events"],
 )
 
-PARTICIPANT_EXTRACTION_SCHEMA = _strict_object(
-    {
-        "events": {
-            "type": "array",
-            "items": _strict_object(
-                {
-                    "event_id": {"type": "string"},
-                    "participants": {"type": "array", "items": PARTICIPANT_ITEM_SCHEMA},
-                },
-                ["event_id", "participants"],
-            ),
-        },
-    },
-    ["events"],
-)
 EVENT_RELATION_SCHEMA = _strict_object(
     {"event_relations": {"type": "array", "items": EVENT_RELATION_ITEM_SCHEMA}},
     ["event_relations"],

@@ -1,6 +1,6 @@
 """Chạy các module được chỉ định trên bài đã phân tích.
 
-Chạy: python3 rerun_modules.py
+Chạy từ thư mục gốc: python -m scripts.rerun_modules
 Cấu hình MODULES_TO_RERUN độc lập với KNOWLEDGE_MODULES của pipeline bài mới.
 Hiện hỗ trợ EVENT_HIERARCHY: xử lý mention PENDING/ERROR của bài đăng
 hôm nay/hôm qua, giữ nguyên phạm vi và thứ tự của tác vụ gộp Event.

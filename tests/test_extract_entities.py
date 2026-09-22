@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
-import extract_entities as subject
+from scripts import extract_entities as subject
 
 
 class NormalizationTests(unittest.TestCase):
@@ -173,6 +173,33 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(event_properties["confidence"]["minimum"], 0)
         self.assertEqual(event_properties["confidence"]["maximum"], 1)
         self.assertEqual(properties["events"]["maxItems"], 5)
+
+    def test_extraction_prompt_rejects_vague_occurrence_times(self):
+        call_model = Mock(return_value={"entities": [], "events": []})
+
+        subject._extraction.extract_knowledge(
+            "Trong những ngày qua, công an tiếp tục điều tra vụ việc.",
+            call_model=call_model,
+        )
+
+        prompt, schema = call_model.call_args.args
+        self.assertIn("TIME_EXPRESSION", prompt)
+        for expression in (
+            "trong những ngày qua",
+            "sau 30 năm",
+            "trước trận đấu tới",
+            "trong ngày đấu",
+            "trước giờ G lên thành phố",
+            "gần đây",
+            "vào tuần tới",
+        ):
+            self.assertIn(f"“{expression}”", prompt)
+        self.assertIn("time_expression=null", prompt)
+        self.assertNotIn(
+            "description",
+            schema["properties"]["events"]["items"]
+            ["properties"]["time_expression"],
+        )
 
     def test_knowledge_schema_is_strict_and_uses_bounded_enums(self):
         schema = subject.KNOWLEDGE_SCHEMA
@@ -1214,6 +1241,37 @@ class PersistenceTests(unittest.TestCase):
         )
         self.assertIn("mention.extracted_type = $extracted_type", event_call.args[0])
         self.assertEqual(event_call.kwargs["extracted_type"], "ASSAULT")
+
+    def test_upsert_event_persists_distinctive_facts(self):
+        tx = Mock()
+        tx.run.return_value.consume.return_value = None
+        event = {
+            "event_key": "event-1",
+            "type": "DROWNING",
+            "description": "Tân sinh viên tử vong sau khi bị nước cuốn",
+            "evidence_text": "Tân sinh viên tử vong sau khi bị nước cuốn",
+            "status": "COMPLETED",
+            "time_expression": None,
+            "distinctive_facts": ["tân sinh viên", "bị nước cuốn", "tử vong"],
+            "confidence": 1.0,
+            "participants": [],
+        }
+
+        subject.upsert_events(tx, "facebook", "post-1", [event], {})
+
+        event_call = next(
+            call for call in tx.run.call_args_list
+            if "MERGE (created:Event" in call.args[0]
+        )
+        self.assertEqual(
+            event_call.kwargs["distinctive_facts"],
+            ["tân sinh viên", "bị nước cuốn", "tử vong"],
+        )
+        self.assertEqual(
+            event_call.kwargs["distinctive_fact_keys"],
+            ["tan sinh vien", "bi nuoc cuon", "tu vong"],
+        )
+        self.assertIn("mention.distinctive_facts", event_call.args[0])
 
     def test_upsert_global_role_uses_shared_scope_and_safe_cleanup(self):
         tx = Mock()
