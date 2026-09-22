@@ -1,14 +1,20 @@
 """Chạy các module được chỉ định trên bài đã phân tích.
 
 Chạy từ thư mục gốc: python -m scripts.rerun_modules
+hoặc: python scripts/rerun_modules.py
 Cấu hình MODULES_TO_RERUN độc lập với KNOWLEDGE_MODULES của pipeline bài mới.
 Hiện hỗ trợ EVENT_HIERARCHY: xử lý mention PENDING/ERROR của bài đăng
 hôm nay/hôm qua, giữ nguyên phạm vi và thứ tự của tác vụ gộp Event.
 """
 
 import logging
+import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from neo4j import GraphDatabase
 
