@@ -281,7 +281,7 @@ def classify_knowledge_potential(content: str, call_model=None) -> dict:
     Đặt `should_deep_analyze=false` khi chỉ có:
     - Chào hỏi, cảm ơn, chúc mừng hoặc nghi lễ/xã giao → `SOCIAL_OR_CEREMONIAL`.
     - Flash sale, giảm giá, minigame hoặc quảng bá thường lệ/ngắn hạn → `ROUTINE_PROMOTION`.
-    - Sinh hoạt/cập nhật vụn vặt, quá ít thông tin hoặc không đáng tra cứu → `LOW_INFORMATION_OR_TRIVIAL`.
+    - Sinh hoạt/cập nhật vụn vặt, quá ít thông tin hoặc không đáng tra cứu. Các hành động mua/bán nhà xe, chuyển nơi ở, thay đổi thu nhập... → `LOW_INFORMATION_OR_TRIVIAL`.
     - Cảm xúc, sở thích, ý kiến chung, câu hỏi tương tác/câu view, slogan hoặc chủ đề chung → `OPINION_ENGAGEMENT_OR_GENERIC`.
 
     Tên riêng, động từ, thời gian hoặc cấu trúc “ai làm gì” không tự động là true. Ngược lại, không chọn false chỉ vì có lời bình như “gây sốt”, “gây chú ý”, “phản ứng”, “ăn mừng” nếu bài vẫn chứa một diễn biến thực tế đáng lưu. Không dùng độ dài hay việc dữ liệu có thể đã tồn tại trong cơ sở dữ liệu làm tiêu chí.
